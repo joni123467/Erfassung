@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Urlaub – Erfassung{% endblock %}
+{% block content %}
+<section class="card">
+    <h1>Urlaubsantrag stellen</h1>
+    <form method="post" action="/vacations" class="form-grid">
+        <label>
+            Startdatum
+            <input type="date" name="start_date" required>
+        </label>
+        <label>
+            Enddatum
+            <input type="date" name="end_date" required>
+        </label>
+        <label class="full-width">
+            Kommentar
+            <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
+        </label>
+        <button type="submit" class="button primary full-width">Antrag senden</button>
+    </form>
+</section>
+
+<section>
+    <h2>Meine Urlaubsanträge</h2>
+    <table>
+        <thead>
+        <tr>
+            <th>Zeitraum</th>
+            <th>Status</th>
+            <th>Kommentar</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for vacation in vacations %}
+            <tr>
+                <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                <td class="status {{ vacation.status }}">{{ vacation.status }}</td>
+                <td>{{ vacation.comment or '-' }}</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="3">Es liegen keine Anträge vor.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
