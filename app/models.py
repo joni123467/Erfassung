@@ -26,6 +26,7 @@ class User(Base):
     full_name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     standard_daily_minutes = Column(Integer, default=480)
+    pin_code = Column(String(4), unique=True, nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"))
 
     group = relationship("Group", back_populates="users")

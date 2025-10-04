@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, time
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 
 class GroupBase(BaseModel):
@@ -29,11 +29,30 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pass
+    pin_code: str
+
+    @field_validator("pin_code")
+    @classmethod
+    def validate_pin(cls, value: str) -> str:
+        if len(value) != 4 or not value.isdigit():
+            raise ValueError("PIN muss aus genau 4 Ziffern bestehen")
+        return value
+
+
+class UserUpdate(UserBase):
+    pin_code: str
+
+    @field_validator("pin_code")
+    @classmethod
+    def validate_pin(cls, value: str) -> str:
+        if len(value) != 4 or not value.isdigit():
+            raise ValueError("PIN muss aus genau 4 Ziffern bestehen")
+        return value
 
 
 class User(UserBase):
     id: int
+    pin_code: str
     group: Optional[Group]
     model_config = ConfigDict(from_attributes=True)
 

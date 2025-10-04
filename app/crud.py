@@ -36,6 +36,10 @@ def get_users(db: Session) -> List[models.User]:
     return db.query(models.User).order_by(models.User.full_name).all()
 
 
+def get_user_by_pin(db: Session, pin_code: str) -> Optional[models.User]:
+    return db.query(models.User).filter(models.User.pin_code == pin_code).first()
+
+
 def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     db_user = models.User(**user.model_dump())
     db.add(db_user)
@@ -44,7 +48,7 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     return db_user
 
 
-def update_user(db: Session, user_id: int, user: schemas.UserCreate) -> Optional[models.User]:
+def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional[models.User]:
     db_user = get_user(db, user_id)
     if not db_user:
         return None
@@ -60,6 +64,28 @@ def delete_user(db: Session, user_id: int) -> bool:
     if not db_user:
         return False
     db.delete(db_user)
+    db.commit()
+    return True
+
+
+def update_group(db: Session, group_id: int, group: schemas.GroupCreate) -> Optional[models.Group]:
+    db_group = get_group(db, group_id)
+    if not db_group:
+        return None
+    for key, value in group.model_dump().items():
+        setattr(db_group, key, value)
+    db.commit()
+    db.refresh(db_group)
+    return db_group
+
+
+def delete_group(db: Session, group_id: int) -> bool:
+    db_group = get_group(db, group_id)
+    if not db_group:
+        return False
+    if db_group.users:
+        return False
+    db.delete(db_group)
     db.commit()
     return True
 

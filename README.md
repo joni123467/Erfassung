@@ -4,7 +4,8 @@
 
 ## Features
 
-- Benutzer- und Gruppenverwaltung (inkl. Admin-Gruppen für Anpassungen)
+- Anmeldung über persönlichen 4-stelligen PIN
+- Benutzer- und Gruppenverwaltung mit Administrationsoberfläche
 - Erfassung von Arbeitszeiten mit automatischer Überstundenberechnung
 - Verwaltung von Urlaubsanträgen
 - Feiertagssynchronisation für deutsche Bundesländer (via `python-holidays`)
@@ -39,6 +40,10 @@ uvicorn app.main:app --reload
 ```
 
 Die Anwendung ist dann unter <http://127.0.0.1:8000> erreichbar.
+
+## Anmeldung und Rollen
+
+Beim ersten Start wird automatisch eine Administratorgruppe sowie ein Benutzer `admin` angelegt. Dieser kann sich mit dem PIN `0000` anmelden und anschließend weitere Nutzer oder Gruppen in der Administrationsansicht verwalten.
 
 ## Feiertage synchronisieren
 
