@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Erfassung - Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+    <h1>Erfassung – Arbeitszeitübersicht</h1>
+    <p>Angemeldet als {{ user.full_name }} ({{ user.group.name if user.group else 'ohne Gruppe' }})</p>
+</header>
+<main>
+    <section class="metrics">
+        <h2>Kennzahlen</h2>
+        <div class="metric-grid">
+            <article>
+                <h3>Arbeitszeit</h3>
+                <p>{{ (metrics.total_work_minutes / 60)|round(2) }} Stunden</p>
+            </article>
+            <article>
+                <h3>Überstunden</h3>
+                <p>{{ (metrics.total_overtime_minutes / 60)|round(2) }} Stunden</p>
+            </article>
+            <article>
+                <h3>Offene Urlaubsanträge</h3>
+                <p>{{ metrics.pending_vacations }}</p>
+            </article>
+        </div>
+    </section>
+
+    <section>
+        <h2>Arbeitszeitbuchungen</h2>
+        <table>
+            <thead>
+            <tr>
+                <th>Datum</th>
+                <th>Start</th>
+                <th>Ende</th>
+                <th>Pause</th>
+                <th>Arbeitszeit</th>
+                <th>Überstunden</th>
+                <th>Notiz</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for entry in entries %}
+                <tr>
+                    <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ entry.start_time.strftime('%H:%M') }}</td>
+                    <td>{{ entry.end_time.strftime('%H:%M') }}</td>
+                    <td>{{ entry.break_minutes }} Min</td>
+                    <td>{{ (entry.worked_minutes / 60)|round(2) }} Std</td>
+                    <td>{{ (entry.overtime_minutes / 60)|round(2) }} Std</td>
+                    <td>{{ entry.notes }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7">Noch keine Buchungen vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p><a class="button" href="/api/users/{{ user.id }}/excel">Als Excel exportieren</a></p>
+    </section>
+
+    <section class="flex">
+        <div>
+            <h2>Urlaubsplanung</h2>
+            <ul>
+                {% for vacation in vacations %}
+                    <li>
+                        {{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}
+                        ({{ vacation.status }})
+                    </li>
+                {% else %}
+                    <li>Keine Urlaubsanträge vorhanden.</li>
+                {% endfor %}
+            </ul>
+        </div>
+        <div>
+            <h2>Feiertage</h2>
+            <ul>
+                {% for holiday in holidays %}
+                    <li>{{ holiday.date.strftime('%d.%m.%Y') }} – {{ holiday.name }}</li>
+                {% else %}
+                    <li>Keine Feiertage eingetragen. Bitte Synchronisation ausführen.</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </section>
+</main>
+<footer>
+    <p>Erfassung &copy; {{ now().year }}</p>
+</footer>
+</body>
+</html>
