@@ -111,6 +111,26 @@ def get_time_entries_for_user(db: Session, user_id: int, start: Optional[date] =
     return query.order_by(models.TimeEntry.work_date).all()
 
 
+def get_time_entries(db: Session, user_id: Optional[int] = None) -> List[models.TimeEntry]:
+    query = db.query(models.TimeEntry).order_by(
+        models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()
+    )
+    if user_id:
+        query = query.filter(models.TimeEntry.user_id == user_id)
+    return query.all()
+
+
+def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate) -> Optional[models.TimeEntry]:
+    db_entry = get_time_entry(db, entry_id)
+    if not db_entry:
+        return None
+    for key, value in entry.model_dump().items():
+        setattr(db_entry, key, value)
+    db.commit()
+    db.refresh(db_entry)
+    return db_entry
+
+
 def delete_time_entry(db: Session, entry_id: int) -> bool:
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
@@ -178,3 +198,40 @@ def upsert_holidays(db: Session, holidays: Iterable[schemas.HolidayCreate]) -> L
             stored.append(create_holiday(db, holiday))
     db.commit()
     return stored
+
+def get_company(db: Session, company_id: int) -> Optional[models.Company]:
+    return db.query(models.Company).filter(models.Company.id == company_id).first()
+
+
+def get_companies(db: Session) -> List[models.Company]:
+    return db.query(models.Company).order_by(models.Company.name).all()
+
+
+def create_company(db: Session, company: schemas.CompanyCreate) -> models.Company:
+    db_company = models.Company(**company.model_dump())
+    db.add(db_company)
+    db.commit()
+    db.refresh(db_company)
+    return db_company
+
+
+def update_company(db: Session, company_id: int, company: schemas.CompanyUpdate) -> Optional[models.Company]:
+    db_company = get_company(db, company_id)
+    if not db_company:
+        return None
+    for key, value in company.model_dump().items():
+        setattr(db_company, key, value)
+    db.commit()
+    db.refresh(db_company)
+    return db_company
+
+
+def delete_company(db: Session, company_id: int) -> bool:
+    db_company = get_company(db, company_id)
+    if not db_company:
+        return False
+    if db_company.time_entries:
+        return False
+    db.delete(db_company)
+    db.commit()
+    return True

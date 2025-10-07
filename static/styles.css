@@ -180,6 +180,17 @@ li {
     background: #a51d2b;
 }
 
+.button.ghost {
+    background: transparent;
+    color: var(--brand);
+    border: 1px solid var(--brand);
+}
+
+.button.ghost:hover {
+    background: var(--brand);
+    color: white;
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -236,6 +247,38 @@ li {
     gap: 1rem;
 }
 
+.admin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+}
+
+.filter-bar label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 600;
+}
+
+.table-scroll {
+    overflow-x: auto;
+}
+
 .login-card {
     max-width: 420px;
     margin: 4rem auto;
@@ -289,6 +332,21 @@ li {
 .user-form .form-actions {
     display: flex;
     gap: 0.5rem;
+}
+
+.time-entry-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+    align-items: end;
+}
+
+.time-entry-form input,
+.time-entry-form select {
+    padding: 0.6rem;
+    border: 1px solid #ccd4f3;
+    border-radius: 6px;
+    font: inherit;
 }
 
 .status.pending {
