@@ -6,7 +6,7 @@
     <p>Bitte geben Sie Ihren persönlichen 4-stelligen PIN ein.</p>
     <form method="post" action="/login" class="login-form">
         <label for="pin_code">PIN</label>
-        <input id="pin_code" type="password" name="pin_code" inputmode="numeric" pattern="\\d{4}" maxlength="4" required autofocus>
+        <input id="pin_code" type="password" name="pin_code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required autofocus>
         <button type="submit" class="button primary full-width">Anmelden</button>
     </form>
 </section>
