@@ -17,13 +17,8 @@ def calculate_dashboard_metrics(db: Session, user_id: int) -> schemas.DashboardM
         .filter(models.VacationRequest.status == models.VacationStatus.PENDING)
         .count()
     )
-    upcoming_holidays = (
-        db.query(models.Holiday)
-        .filter(models.Holiday.date >= date.today())
-        .order_by(models.Holiday.date)
-        .limit(5)
-        .all()
-    )
+    region = crud.get_default_holiday_region(db)
+    upcoming_holidays = crud.get_upcoming_holidays(db, region, limit=5)
     return schemas.DashboardMetrics(
         total_work_minutes=total_work,
         total_overtime_minutes=total_overtime,
