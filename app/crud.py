@@ -214,6 +214,26 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
     return db_entry
 
 
+def get_time_entries(db: Session, user_id: Optional[int] = None) -> List[models.TimeEntry]:
+    query = db.query(models.TimeEntry).order_by(
+        models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()
+    )
+    if user_id:
+        query = query.filter(models.TimeEntry.user_id == user_id)
+    return query.all()
+
+
+def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate) -> Optional[models.TimeEntry]:
+    db_entry = get_time_entry(db, entry_id)
+    if not db_entry:
+        return None
+    for key, value in entry.model_dump().items():
+        setattr(db_entry, key, value)
+    db.commit()
+    db.refresh(db_entry)
+    return db_entry
+
+
 def delete_time_entry(db: Session, entry_id: int) -> bool:
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
