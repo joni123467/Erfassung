@@ -2,10 +2,22 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Time
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text, Time
 from sqlalchemy.orm import relationship
 
 from .database import Base
+
+
+
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    description = Column(Text, default="")
+
+    time_entries = relationship("TimeEntry", back_populates="company")
 
 
 class Group(Base):
@@ -41,6 +53,7 @@ class TimeEntry(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     work_date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
@@ -50,6 +63,7 @@ class TimeEntry(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="time_entries")
+    company = relationship("Company", back_populates="time_entries")
 
     @property
     def worked_minutes(self) -> int:
