@@ -180,6 +180,17 @@ li {
     background: #a51d2b;
 }
 
+.button.ghost {
+    background: transparent;
+    color: var(--brand);
+    border: 1px solid var(--brand);
+}
+
+.button.ghost:hover {
+    background: var(--brand);
+    color: white;
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -236,6 +247,54 @@ li {
     gap: 1rem;
 }
 
+.admin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+}
+
+.filter-bar label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 600;
+}
+
+.table-scroll {
+    overflow-x: auto;
+}
+
+.holiday-actions {
+    display: grid;
+    gap: 1rem;
+}
+
+.holiday-actions .inline-form {
+    align-items: flex-end;
+}
+
+.holiday-actions .inline-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 600;
+}
+
 .login-card {
     max-width: 420px;
     margin: 4rem auto;
@@ -289,6 +348,106 @@ li {
 .user-form .form-actions {
     display: flex;
     gap: 0.5rem;
+}
+
+.time-entry-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+    align-items: end;
+}
+
+.time-entry-form input,
+.time-entry-form select {
+    padding: 0.6rem;
+    border: 1px solid #ccd4f3;
+    border-radius: 6px;
+    font: inherit;
+}
+
+.punch-status {
+    background: var(--accent);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+}
+
+.status-line {
+    margin: 0.25rem 0;
+    font-weight: 500;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: rgba(31, 60, 136, 0.12);
+    color: var(--brand-dark);
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.status-badge.running {
+    background: rgba(46, 125, 50, 0.15);
+    color: var(--success);
+}
+
+.status-badge.break {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ff8f00;
+}
+
+.punch-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.punch-actions form {
+    margin: 0;
+}
+
+.punch-actions .button[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.punch-start {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.punch-start label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+
+.punch-start select,
+.punch-start input[type="text"] {
+    padding: 0.6rem;
+    border-radius: 6px;
+    border: 1px solid #ccd4f3;
+    font: inherit;
+}
+
+.punch-start-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.open-entry {
+    background: rgba(31, 60, 136, 0.05);
+}
+
+.open-entry td {
+    font-weight: 500;
 }
 
 .status.pending {

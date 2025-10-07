@@ -2,10 +2,22 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Time
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text, Time
 from sqlalchemy.orm import relationship
 
 from .database import Base
+
+
+
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    description = Column(Text, default="")
+
+    time_entries = relationship("TimeEntry", back_populates="company")
 
 
 class Group(Base):
@@ -41,22 +53,31 @@ class TimeEntry(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     work_date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
     break_minutes = Column(Integer, default=0)
+    break_started_at = Column(Time, nullable=True)
+    is_open = Column(Boolean, default=False)
     notes = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="time_entries")
+    company = relationship("Company", back_populates="time_entries")
 
     @property
     def worked_minutes(self) -> int:
         start_dt = datetime.combine(self.work_date, self.start_time)
-        end_dt = datetime.combine(self.work_date, self.end_time)
-        delta = end_dt - start_dt
-        minutes = int(delta.total_seconds() // 60) - self.break_minutes
+        if self.is_open:
+            now_dt = datetime.now()
+            end_dt = datetime.combine(now_dt.date(), now_dt.time())
+        else:
+            end_dt = datetime.combine(self.work_date, self.end_time)
+        if end_dt < start_dt:
+            end_dt += timedelta(days=1)
+        minutes = int((end_dt - start_dt).total_seconds() // 60) - self.total_break_minutes
         return max(minutes, 0)
 
     @property
@@ -64,6 +85,21 @@ class TimeEntry(Base):
         if self.user and self.user.standard_daily_minutes:
             return self.worked_minutes - self.user.standard_daily_minutes
         return 0
+
+    @property
+    def total_break_minutes(self) -> int:
+        minutes = self.break_minutes
+        if self.break_started_at:
+            start_dt = datetime.combine(self.work_date, self.break_started_at)
+            if self.is_open:
+                now_dt = datetime.now()
+                end_dt = datetime.combine(now_dt.date(), now_dt.time())
+            else:
+                end_dt = datetime.combine(self.work_date, self.end_time)
+            if end_dt < start_dt:
+                end_dt += timedelta(days=1)
+            minutes += max(int((end_dt - start_dt).total_seconds() // 60), 0)
+        return minutes
 
 
 class VacationStatus:

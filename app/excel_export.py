@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from io import BytesIO
 from typing import Iterable
 
@@ -17,13 +16,14 @@ def export_time_entries(entries: Iterable[TimeEntry]) -> BytesIO:
 
     headers = [
         "Mitarbeiter",
+        "Firma",
         "Datum",
         "Start",
         "Ende",
         "Pause (Min)",
         "Arbeitszeit (Min)",
         "Überstunden (Min)",
-        "Notiz",
+        "Kommentar",
     ]
     ws.append(headers)
 
@@ -33,13 +33,15 @@ def export_time_entries(entries: Iterable[TimeEntry]) -> BytesIO:
         cell.alignment = Alignment(horizontal="center")
 
     for entry in entries:
+        end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
         ws.append(
             [
                 entry.user.full_name if entry.user else "",
+                entry.company.name if entry.company else "",
                 entry.work_date.strftime("%d.%m.%Y"),
                 entry.start_time.strftime("%H:%M"),
-                entry.end_time.strftime("%H:%M"),
-                entry.break_minutes,
+                end_value,
+                entry.total_break_minutes,
                 entry.worked_minutes,
                 entry.overtime_minutes,
                 entry.notes,

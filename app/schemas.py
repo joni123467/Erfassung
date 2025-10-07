@@ -6,6 +6,24 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 
+class CompanyBase(BaseModel):
+    name: str
+    description: str = ""
+
+
+class CompanyCreate(CompanyBase):
+    pass
+
+
+class CompanyUpdate(CompanyBase):
+    pass
+
+
+class Company(CompanyBase):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
 class GroupBase(BaseModel):
     name: str
     is_admin: bool = False
@@ -59,10 +77,13 @@ class User(UserBase):
 
 class TimeEntryBase(BaseModel):
     user_id: int
+    company_id: Optional[int] = None
     work_date: date
     start_time: time
     end_time: time
     break_minutes: int = 0
+    break_started_at: Optional[time] = None
+    is_open: bool = False
     notes: str = ""
 
 
@@ -72,8 +93,10 @@ class TimeEntryCreate(TimeEntryBase):
 
 class TimeEntry(TimeEntryBase):
     id: int
+    company: Optional[Company]
     worked_minutes: int
     overtime_minutes: int
+    total_break_minutes: int
     model_config = ConfigDict(from_attributes=True)
 
 

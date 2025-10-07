@@ -4,22 +4,33 @@
 
 ## Features
 
-- Anmeldung über persönlichen 4-stelligen PIN
-- Benutzer- und Gruppenverwaltung mit Administrationsoberfläche
-- Erfassung von Arbeitszeiten mit automatischer Überstundenberechnung
-- Verwaltung von Urlaubsanträgen
-- Feiertagssynchronisation für deutsche Bundesländer (via `python-holidays`)
-- Export von Arbeitszeiten als Excel-Datei (`.xlsx`)
-- Responsives Dashboard mit den wichtigsten Kennzahlen
+- Anmeldung über einen persönlichen 4-stelligen PIN.
+- Umfangreiche Administrationsoberfläche für Benutzer- und Gruppenverwaltung inklusive PIN-, Rollen- und Arbeitszeitkontingenten.
+- Firmenverwaltung, damit Arbeitszeiten eindeutig Projekten oder Unternehmen zugeordnet werden können.
+- Direktes Stempeln vom Dashboard mit Firmenauswahl und Kommentarfeld für jede Buchung.
+- Komfortable Echtzeit-Stempelung im TopZeit-Stil: Arbeitsbeginn/-ende, Auftragsstart auf eine Firma sowie Pausenstart/-ende auf einen Klick.
+- Administratoren können bestehende Zeitbuchungen filtern, anpassen oder löschen.
+- Verwaltung von Urlaubsanträgen und Feiertagssynchronisation für deutsche Bundesländer (via `python-holidays`).
+- Export von Arbeitszeiten als Excel-Datei (`.xlsx`).
 
 ## Installation
 
-### Voraussetzungen
+### Automatische Installation (wget & install.sh)
 
-- Python 3.10+
-- [Poetry](https://python-poetry.org/) oder `pip`
+Das Projekt enthält ein Installationsskript, das Systempakete prüft, Abhängigkeiten installiert und eine virtuelle Umgebung vorbereitet. Es kann per `wget` bezogen werden und funktioniert ohne lokal vorhandenes Git.
 
-### Installation mit pip
+```bash
+wget https://raw.githubusercontent.com/joni123467/Erfassung/main/install.sh -O install.sh
+bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/main.tar.gz
+```
+
+Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen im Zielverzeichnis (`/opt/erfassung` als Standard), entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
+
+Alle Python-Abhängigkeiten werden direkt als vorgefertigte Wheels über `pip` eingespielt – zusätzliche Rust- oder Compiler-Werkzeuge sind nicht länger erforderlich. Auf Wunsch kann über `--install-dir` ein alternatives Zielverzeichnis angegeben werden. Nach erfolgreicher Installation finden Sie die Anwendung unter dem gewählten Pfad; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`.
+
+### Manuelle Installation
+
+Wenn Sie das Installationsskript nicht verwenden möchten, kann die Installation weiterhin klassisch erfolgen:
 
 ```bash
 python -m venv .venv
@@ -27,7 +38,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Installation mit Poetry
+oder
 
 ```bash
 poetry install
