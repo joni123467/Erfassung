@@ -25,6 +25,8 @@ bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/ref
 
 Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen, entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
 
+> **Hinweis:** Damit auch auf Systemen mit Python 3.13 alle Abhängigkeiten gebaut werden können, installiert das Skript automatisch die nötigen Build-Werkzeuge (GCC, OpenSSL-Header, Rust/Cargo) und setzt `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`, bevor die Python-Pakete eingespielt werden.
+
 Das Skript kann zusätzlich über `--install-dir` ein Zielverzeichnis angeben. Nach erfolgreicher Installation finden Sie die Anwendung im gewählten Ordner; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`.
 
 ### Manuelle Installation

@@ -69,18 +69,27 @@ run_as_root() {
 
 echo "📦 Prüfe Systemvoraussetzungen..."
 
+BUILD_DEPS=()
+RUST_PKGS=()
+
 if command -v apt-get >/dev/null 2>&1; then
     PKG_MANAGER="apt-get"
     INSTALL_CMD=(apt-get install -y)
     UPDATE_CMD=(apt-get update)
+    BUILD_DEPS=(build-essential pkg-config libssl-dev)
+    RUST_PKGS=(rustc cargo)
 elif command -v dnf >/dev/null 2>&1; then
     PKG_MANAGER="dnf"
     INSTALL_CMD=(dnf install -y)
     UPDATE_CMD=(dnf makecache)
+    BUILD_DEPS=(gcc gcc-c++ make pkgconfig openssl-devel)
+    RUST_PKGS=(rust cargo)
 elif command -v yum >/dev/null 2>&1; then
     PKG_MANAGER="yum"
     INSTALL_CMD=(yum install -y)
     UPDATE_CMD=(yum makecache)
+    BUILD_DEPS=(gcc gcc-c++ make pkgconfig openssl-devel)
+    RUST_PKGS=(rust cargo)
 else
     echo "Warnung: Kein unterstützter Paketmanager gefunden. Bitte installieren Sie Python 3.11+, pip und venv manuell." >&2
     PKG_MANAGER=""
@@ -90,7 +99,15 @@ if [[ -n "$PKG_MANAGER" ]]; then
     echo "🔧 Aktualisiere Paketquellen über $PKG_MANAGER..."
     run_as_root "${UPDATE_CMD[@]}"
     echo "🔧 Installiere Systempakete..."
-    run_as_root "${INSTALL_CMD[@]}" python3 python3-venv python3-pip sqlite3 wget ca-certificates unzip
+    COMMON_PKGS=(python3 python3-venv python3-pip sqlite3 wget ca-certificates unzip)
+    ALL_PKGS=("${COMMON_PKGS[@]}")
+    if [[ ${#BUILD_DEPS[@]} -gt 0 ]]; then
+        ALL_PKGS+=("${BUILD_DEPS[@]}")
+    fi
+    if [[ ${#RUST_PKGS[@]} -gt 0 ]]; then
+        ALL_PKGS+=("${RUST_PKGS[@]}")
+    fi
+    run_as_root "${INSTALL_CMD[@]}" "${ALL_PKGS[@]}"
 fi
 
 require_command python3
@@ -159,7 +176,9 @@ fi
 source "$VENV_DIR/bin/activate"
 
 pip install --upgrade pip
-pip install -r "$PROJECT_DIR/requirements.txt"
+pip install --upgrade setuptools wheel
+export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+pip install --no-cache-dir -r "$PROJECT_DIR/requirements.txt"
 
 deactivate
 
