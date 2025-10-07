@@ -149,6 +149,74 @@
 
 <section class="card">
     <div class="card-header">
+        <h1>Feiertage verwalten</h1>
+        <form method="get" action="/admin" class="filter-bar">
+            <input type="hidden" name="user" value="{{ selected_user_id or '' }}">
+            <label>
+                Bundesland
+                <select name="state">
+                    {% for code, label in holiday_states %}
+                        <option value="{{ code }}" {% if selected_state == code %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                Jahr
+                <input type="number" name="holiday_year" value="{{ selected_year }}" min="2000" max="2100">
+            </label>
+            <button type="submit" class="button small">Anzeigen</button>
+        </form>
+    </div>
+    <div class="holiday-actions">
+        <form method="post" action="/admin/holidays/sync" class="inline-form">
+            <input type="hidden" name="state" value="{{ selected_state }}">
+            <label>
+                Jahr synchronisieren
+                <input type="number" name="year" value="{{ selected_year }}" min="2000" max="2100" required>
+            </label>
+            <button type="submit" class="button small">Feiertage laden</button>
+        </form>
+        <form method="post" action="/admin/holidays/create" class="user-form">
+            <input type="hidden" name="state" value="{{ selected_state }}">
+            <input type="date" name="holiday_date" required>
+            <input type="text" name="name" placeholder="Feiertagsbezeichnung" required>
+            <button type="submit" class="button small">Feiertag hinzufügen</button>
+        </form>
+    </div>
+    <div class="table-scroll">
+        <table class="admin-table">
+            <thead>
+            <tr>
+                <th>Datum</th>
+                <th>Name</th>
+                <th>Region</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for holiday in holidays %}
+                <tr>
+                    <td>{{ holiday.date.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ holiday.name }}</td>
+                    <td>{{ holiday.region }}</td>
+                    <td>
+                        <form method="post" action="/admin/holidays/{{ holiday.id }}/delete" class="inline-form" onsubmit="return confirm('Feiertag wirklich löschen?');">
+                            <input type="hidden" name="state" value="{{ selected_state }}">
+                            <input type="hidden" name="year" value="{{ selected_year }}">
+                            <button type="submit" class="button danger small">Löschen</button>
+                        </form>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4">Keine Feiertage für diese Auswahl vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header">
         <h1>Zeiterfassungen verwalten</h1>
         <form method="get" action="/admin" class="filter-bar">
             <label>

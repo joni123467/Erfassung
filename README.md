@@ -19,11 +19,11 @@
 Das Projekt enthält ein Installationsskript, das Systempakete prüft, Abhängigkeiten installiert und eine virtuelle Umgebung vorbereitet. Es kann per `wget` bezogen werden und funktioniert ohne lokal vorhandenes Git.
 
 ```bash
-wget https://<IHRE-DOMÄNE>/install.sh -O install.sh
-bash install.sh --source-url https://<IHRE-DOMÄNE>/erfassung.tar.gz
+wget https://raw.githubusercontent.com/joni123467/Erfassung/main/install.sh -O install.sh
+bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/main.tar.gz
 ```
 
-Ersetzen Sie die Platzhalter-URLs durch den Speicherort Ihres Installationsskripts bzw. Archivs (z. B. ein GitHub Release). Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen, entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
+Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen, entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
 
 Das Skript kann zusätzlich über `--install-dir` ein Zielverzeichnis angeben. Nach erfolgreicher Installation finden Sie die Anwendung im gewählten Ordner; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`.
 

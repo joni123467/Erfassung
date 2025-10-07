@@ -106,7 +106,7 @@
         </ul>
     </div>
     <div>
-        <h2>Feiertage</h2>
+        <h2>Feiertage ({{ holiday_region_label }})</h2>
         <ul>
             {% for holiday in holidays %}
                 <li>{{ holiday.date.strftime('%d.%m.%Y') }} – {{ holiday.name }}</li>

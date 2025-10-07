@@ -26,6 +26,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 
+HOLIDAY_STATE_CHOICES = sorted(holiday_calculator.GERMAN_STATES.items(), key=lambda item: item[1])
+HOLIDAY_STATE_CODES = set(holiday_calculator.GERMAN_STATES.keys())
+
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
     user_id = request.session.get("user_id")
@@ -138,7 +141,9 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     metrics = services.calculate_dashboard_metrics(db, user.id)
     time_entries = crud.get_time_entries_for_user(db, user.id)
     vacations = crud.get_vacations_for_user(db, user.id)
-    holidays = crud.get_holidays_for_year(db, date.today().year)
+    holiday_region = crud.get_default_holiday_region(db)
+    holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
+    holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     companies = crud.get_companies(db)
@@ -151,6 +156,8 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
             "entries": time_entries,
             "vacations": vacations,
             "holidays": holidays,
+            "holiday_region": holiday_region,
+            "holiday_region_label": holiday_region_label,
             "companies": companies,
             "message": message,
             "error": error,
@@ -285,10 +292,23 @@ def admin_portal(request: Request, db: Session = Depends(database.get_db)):
     error = request.query_params.get("error")
     selected_user = request.query_params.get("user")
     selected_user_id = int(selected_user) if selected_user and selected_user.isdigit() else None
+    selected_state_param = request.query_params.get("state")
+    if selected_state_param:
+        selected_state_param = selected_state_param.upper()
+    selected_year_param = request.query_params.get("holiday_year")
+    default_region = crud.get_default_holiday_region(db)
+    selected_state = selected_state_param if selected_state_param in HOLIDAY_STATE_CODES else None
+    if not selected_state:
+        selected_state = default_region if default_region in HOLIDAY_STATE_CODES else "DE"
+    try:
+        selected_year = int(selected_year_param) if selected_year_param else date.today().year
+    except ValueError:
+        selected_year = date.today().year
     groups = crud.get_groups(db)
     users = crud.get_users(db)
     companies = crud.get_companies(db)
     time_entries = crud.get_time_entries(db, selected_user_id)
+    holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
     return templates.TemplateResponse(
         "admin.html",
         {
@@ -299,6 +319,10 @@ def admin_portal(request: Request, db: Session = Depends(database.get_db)):
             "companies": companies,
             "time_entries": time_entries,
             "selected_user_id": selected_user_id,
+            "holidays": holidays,
+            "holiday_states": HOLIDAY_STATE_CHOICES,
+            "selected_state": selected_state,
+            "selected_year": selected_year,
             "message": message,
             "error": error,
         },
@@ -578,6 +602,92 @@ def delete_time_entry_html(
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.post("/admin/holidays/sync")
+def sync_holidays_admin(
+    request: Request,
+    state: str = Form(...),
+    year: int = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _ensure_admin(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    state = state.upper()
+    if state not in HOLIDAY_STATE_CODES:
+        redirect = _build_redirect("/admin", error="Ungültiges Bundesland", state=state, holiday_year=str(year))
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    if year < 1900 or year > 2100:
+        redirect = _build_redirect(
+            "/admin", error="Jahr muss zwischen 1900 und 2100 liegen", state=state, holiday_year=str(year)
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    holidays = holiday_calculator.ensure_holidays(db, year, state)
+    redirect = _build_redirect(
+        "/admin",
+        msg=f"{len(holidays)}+Feiertage+aktualisiert",
+        state=state,
+        holiday_year=str(year),
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/holidays/create")
+def create_holiday_admin(
+    request: Request,
+    name: str = Form(...),
+    holiday_date: date = Form(...),
+    state: str = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _ensure_admin(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    state = state.upper()
+    region = state if state in HOLIDAY_STATE_CODES else "DE"
+    try:
+        crud.upsert_holidays(db, [schemas.HolidayCreate(name=name.strip(), date=holiday_date, region=region)])
+    except IntegrityError:
+        db.rollback()
+        redirect = _build_redirect(
+            "/admin",
+            error="Feiertag konnte nicht gespeichert werden",
+            state=region,
+            holiday_year=str(holiday_date.year),
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    redirect = _build_redirect(
+        "/admin",
+        msg="Feiertag+gespeichert",
+        state=region,
+        holiday_year=str(holiday_date.year),
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/holidays/{holiday_id}/delete")
+def delete_holiday_admin(
+    request: Request,
+    holiday_id: int,
+    state: str = Form(...),
+    year: int = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _ensure_admin(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    state = state.upper()
+    if not crud.delete_holiday(db, holiday_id):
+        redirect = _build_redirect(
+            "/admin",
+            error="Feiertag konnte nicht gelöscht werden",
+            state=state,
+            holiday_year=str(year),
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    redirect = _build_redirect("/admin", msg="Feiertag gelöscht", state=state, holiday_year=str(year))
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.post("/api/groups", response_model=schemas.Group)
 def create_group(group: schemas.GroupCreate, db: Session = Depends(database.get_db)):
     return crud.create_group(db, group)
@@ -635,8 +745,10 @@ def update_vacation_status(vacation_id: int, status: str, db: Session = Depends(
 
 @app.post("/api/holidays/sync")
 def sync_holidays(year: int, state: str = "BY", db: Session = Depends(database.get_db)):
-    holidays = holiday_calculator.ensure_holidays(db, year, state)
-    return {"count": len(holidays)}
+    state = state.upper()
+    region = state if state in HOLIDAY_STATE_CODES else "DE"
+    holidays = holiday_calculator.ensure_holidays(db, year, region)
+    return {"count": len(holidays), "state": region}
 
 
 @app.get("/api/users/{user_id}/excel")

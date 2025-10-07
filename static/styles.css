@@ -279,6 +279,22 @@ li {
     overflow-x: auto;
 }
 
+.holiday-actions {
+    display: grid;
+    gap: 1rem;
+}
+
+.holiday-actions .inline-form {
+    align-items: flex-end;
+}
+
+.holiday-actions .inline-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 600;
+}
+
 .login-card {
     max-width: 420px;
     margin: 4rem auto;
