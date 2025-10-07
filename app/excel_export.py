@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from io import BytesIO
 from typing import Iterable
 
@@ -17,13 +16,14 @@ def export_time_entries(entries: Iterable[TimeEntry]) -> BytesIO:
 
     headers = [
         "Mitarbeiter",
+        "Firma",
         "Datum",
         "Start",
         "Ende",
         "Pause (Min)",
         "Arbeitszeit (Min)",
         "Überstunden (Min)",
-        "Notiz",
+        "Kommentar",
     ]
     ws.append(headers)
 
@@ -36,6 +36,7 @@ def export_time_entries(entries: Iterable[TimeEntry]) -> BytesIO:
         ws.append(
             [
                 entry.user.full_name if entry.user else "",
+                entry.company.name if entry.company else "",
                 entry.work_date.strftime("%d.%m.%Y"),
                 entry.start_time.strftime("%H:%M"),
                 entry.end_time.strftime("%H:%M"),

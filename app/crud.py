@@ -111,6 +111,26 @@ def get_time_entries_for_user(db: Session, user_id: int, start: Optional[date] =
     return query.order_by(models.TimeEntry.work_date).all()
 
 
+def get_time_entries(db: Session, user_id: Optional[int] = None) -> List[models.TimeEntry]:
+    query = db.query(models.TimeEntry).order_by(
+        models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()
+    )
+    if user_id:
+        query = query.filter(models.TimeEntry.user_id == user_id)
+    return query.all()
+
+
+def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate) -> Optional[models.TimeEntry]:
+    db_entry = get_time_entry(db, entry_id)
+    if not db_entry:
+        return None
+    for key, value in entry.model_dump().items():
+        setattr(db_entry, key, value)
+    db.commit()
+    db.refresh(db_entry)
+    return db_entry
+
+
 def delete_time_entry(db: Session, entry_id: int) -> bool:
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
@@ -169,7 +189,12 @@ def get_holidays_for_year(db: Session, year: int, region: str = "DE") -> List[mo
 def upsert_holidays(db: Session, holidays: Iterable[schemas.HolidayCreate]) -> List[models.Holiday]:
     stored: List[models.Holiday] = []
     for holiday in holidays:
-        existing = db.query(models.Holiday).filter(models.Holiday.date == holiday.date).first()
+        existing = (
+            db.query(models.Holiday)
+            .filter(models.Holiday.date == holiday.date)
+            .filter(models.Holiday.region == holiday.region)
+            .first()
+        )
         if existing:
             existing.name = holiday.name
             existing.region = holiday.region
@@ -178,3 +203,105 @@ def upsert_holidays(db: Session, holidays: Iterable[schemas.HolidayCreate]) -> L
             stored.append(create_holiday(db, holiday))
     db.commit()
     return stored
+
+
+def get_holiday(db: Session, holiday_id: int) -> Optional[models.Holiday]:
+    return db.query(models.Holiday).filter(models.Holiday.id == holiday_id).first()
+
+
+def delete_holiday(db: Session, holiday_id: int) -> bool:
+    holiday = get_holiday(db, holiday_id)
+    if not holiday:
+        return False
+    db.delete(holiday)
+    db.commit()
+    return True
+
+
+def get_holidays(db: Session, region: Optional[str] = None) -> List[models.Holiday]:
+    query = db.query(models.Holiday)
+    if region:
+        query = query.filter(models.Holiday.region == region)
+    return query.order_by(models.Holiday.date).all()
+
+
+def get_holiday_regions(db: Session) -> List[str]:
+    regions = db.query(models.Holiday.region).distinct().all()
+    return [region for (region,) in regions if region]
+
+
+def get_default_holiday_region(db: Session) -> str:
+    latest = (
+        db.query(models.Holiday.region)
+        .filter(models.Holiday.region.isnot(None))
+        .order_by(models.Holiday.created_at.desc())
+        .first()
+    )
+    if latest and latest[0]:
+        return latest[0]
+    return "DE"
+
+
+def get_upcoming_holidays(db: Session, region: Optional[str], limit: int = 5) -> List[models.Holiday]:
+    query = db.query(models.Holiday).filter(models.Holiday.date >= date.today())
+    if region:
+        query = query.filter(models.Holiday.region == region)
+    return query.order_by(models.Holiday.date).limit(limit).all()
+
+
+def replace_holidays_for_region(
+    db: Session, region: str, year: int, holidays: Iterable[schemas.HolidayCreate]
+) -> List[models.Holiday]:
+    start = date(year, 1, 1)
+    end = date(year, 12, 31)
+    db.query(models.Holiday).filter(models.Holiday.region == region).filter(models.Holiday.date >= start).filter(
+        models.Holiday.date <= end
+    ).delete(synchronize_session=False)
+    created: List[models.Holiday] = []
+    for holiday in holidays:
+        payload = holiday.model_dump()
+        payload.setdefault("region", region)
+        db_holiday = models.Holiday(**payload)
+        db.add(db_holiday)
+        created.append(db_holiday)
+    db.commit()
+    for holiday in created:
+        db.refresh(holiday)
+    return created
+
+def get_company(db: Session, company_id: int) -> Optional[models.Company]:
+    return db.query(models.Company).filter(models.Company.id == company_id).first()
+
+
+def get_companies(db: Session) -> List[models.Company]:
+    return db.query(models.Company).order_by(models.Company.name).all()
+
+
+def create_company(db: Session, company: schemas.CompanyCreate) -> models.Company:
+    db_company = models.Company(**company.model_dump())
+    db.add(db_company)
+    db.commit()
+    db.refresh(db_company)
+    return db_company
+
+
+def update_company(db: Session, company_id: int, company: schemas.CompanyUpdate) -> Optional[models.Company]:
+    db_company = get_company(db, company_id)
+    if not db_company:
+        return None
+    for key, value in company.model_dump().items():
+        setattr(db_company, key, value)
+    db.commit()
+    db.refresh(db_company)
+    return db_company
+
+
+def delete_company(db: Session, company_id: int) -> bool:
+    db_company = get_company(db, company_id)
+    if not db_company:
+        return False
+    if db_company.time_entries:
+        return False
+    db.delete(db_company)
+    db.commit()
+    return True
