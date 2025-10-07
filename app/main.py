@@ -47,6 +47,11 @@ def ensure_schema() -> None:
             columns = {column["name"] for column in inspector.get_columns("time_entries")}
             if "company_id" not in columns:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN company_id INTEGER"))
+            if "break_started_at" not in columns:
+                connection.execute(text("ALTER TABLE time_entries ADD COLUMN break_started_at TIME"))
+            if "is_open" not in columns:
+                connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_open INTEGER DEFAULT 0"))
+            connection.execute(text("UPDATE time_entries SET is_open = 0 WHERE is_open IS NULL"))
 
 
 def _sanitize_next(next_url: str, default: str = "/time") -> str:
@@ -141,6 +146,7 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     metrics = services.calculate_dashboard_metrics(db, user.id)
     time_entries = crud.get_time_entries_for_user(db, user.id)
     vacations = crud.get_vacations_for_user(db, user.id)
+    active_entry = crud.get_open_time_entry(db, user.id)
     holiday_region = crud.get_default_holiday_region(db)
     holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
     holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
@@ -161,6 +167,7 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
             "companies": companies,
             "message": message,
             "error": error,
+            "active_entry": active_entry,
         },
     )
 
@@ -171,6 +178,7 @@ def time_tracking_page(request: Request, db: Session = Depends(database.get_db))
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     entries = crud.get_time_entries_for_user(db, user.id)
+    active_entry = crud.get_open_time_entry(db, user.id)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     companies = crud.get_companies(db)
@@ -183,6 +191,7 @@ def time_tracking_page(request: Request, db: Session = Depends(database.get_db))
             "message": message,
             "error": error,
             "companies": companies,
+            "active_entry": active_entry,
         },
     )
 
@@ -216,6 +225,8 @@ def submit_time_entry(
             start_time=start_time,
             end_time=end_time,
             break_minutes=break_minutes,
+            break_started_at=None,
+            is_open=False,
             notes=notes,
         )
         crud.create_time_entry(db, entry)
@@ -223,6 +234,87 @@ def submit_time_entry(
         redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Zeiteingabe")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(_sanitize_next(next_url), msg="Zeitbuchung erfolgreich erfasst")
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/punch")
+def punch_action(
+    request: Request,
+    action: str = Form(...),
+    company_id: Optional[str] = Form(None),
+    notes: str = Form(""),
+    next_url: str = Form("/dashboard"),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    target = _sanitize_next(next_url)
+    active_entry = crud.get_open_time_entry(db, user.id)
+    now = datetime.now()
+    message = ""
+    error = ""
+
+    if action == "start_work":
+        if active_entry:
+            error = "Es läuft bereits eine Arbeitszeit."
+        else:
+            crud.start_running_entry(db, user_id=user.id, started_at=now, notes=notes.strip())
+            message = "Arbeitszeit gestartet."
+    elif action == "start_company":
+        if active_entry:
+            error = "Es läuft bereits eine Arbeitszeit."
+        elif not company_id:
+            error = "Bitte eine Firma auswählen."
+        else:
+            try:
+                company_value = int(company_id)
+            except ValueError:
+                error = "Ungültige Firma ausgewählt."
+            else:
+                company = crud.get_company(db, company_value)
+                if not company:
+                    error = "Firma wurde nicht gefunden."
+                else:
+                    crud.start_running_entry(
+                        db,
+                        user_id=user.id,
+                        started_at=now,
+                        company_id=company.id,
+                        notes=notes.strip(),
+                    )
+                    message = f"Auftrag bei {company.name} gestartet."
+    elif action == "end_work":
+        if not active_entry:
+            error = "Keine laufende Arbeitszeit vorhanden."
+        else:
+            crud.finish_running_entry(db, active_entry, now)
+            message = "Arbeitszeit beendet."
+    elif action == "start_break":
+        if not active_entry:
+            error = "Keine laufende Arbeitszeit vorhanden."
+        elif active_entry.break_started_at:
+            error = "Pause läuft bereits."
+        else:
+            crud.start_break(db, active_entry, now)
+            message = "Pause gestartet."
+    elif action == "end_break":
+        if not active_entry:
+            error = "Keine laufende Arbeitszeit vorhanden."
+        elif not active_entry.break_started_at:
+            error = "Es läuft keine Pause."
+        else:
+            crud.end_break(db, active_entry, now)
+            message = "Pause beendet."
+    else:
+        error = "Unbekannte Aktion."
+
+    params = {}
+    if message and not error:
+        params["msg"] = message
+    if error:
+        params["error"] = error
+    redirect = _build_redirect(target, **params)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -572,6 +664,8 @@ def update_time_entry_html(
                 start_time=start_time,
                 end_time=end_time,
                 break_minutes=max(break_minutes, 0),
+                break_started_at=None,
+                is_open=False,
                 notes=notes,
             ),
         )

@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="Erfassung"
 APP_SLUG=$(printf '%s' "$APP_NAME" | tr '[:upper:]' '[:lower:]')
-DEFAULT_INSTALL_DIR="erfassung-app"
+DEFAULT_INSTALL_DIR="/opt/erfassung"
 SOURCE_URL=""
 INSTALL_DIR=""
 MARKER_FILE=".${APP_SLUG}_installed"
@@ -70,26 +70,19 @@ run_as_root() {
 echo "📦 Prüfe Systemvoraussetzungen..."
 
 BUILD_DEPS=()
-RUST_PKGS=()
 
 if command -v apt-get >/dev/null 2>&1; then
     PKG_MANAGER="apt-get"
     INSTALL_CMD=(apt-get install -y)
     UPDATE_CMD=(apt-get update)
-    BUILD_DEPS=(build-essential pkg-config libssl-dev)
-    RUST_PKGS=(rustc cargo)
 elif command -v dnf >/dev/null 2>&1; then
     PKG_MANAGER="dnf"
     INSTALL_CMD=(dnf install -y)
     UPDATE_CMD=(dnf makecache)
-    BUILD_DEPS=(gcc gcc-c++ make pkgconfig openssl-devel)
-    RUST_PKGS=(rust cargo)
 elif command -v yum >/dev/null 2>&1; then
     PKG_MANAGER="yum"
     INSTALL_CMD=(yum install -y)
     UPDATE_CMD=(yum makecache)
-    BUILD_DEPS=(gcc gcc-c++ make pkgconfig openssl-devel)
-    RUST_PKGS=(rust cargo)
 else
     echo "Warnung: Kein unterstützter Paketmanager gefunden. Bitte installieren Sie Python 3.11+, pip und venv manuell." >&2
     PKG_MANAGER=""
@@ -104,80 +97,89 @@ if [[ -n "$PKG_MANAGER" ]]; then
     if [[ ${#BUILD_DEPS[@]} -gt 0 ]]; then
         ALL_PKGS+=("${BUILD_DEPS[@]}")
     fi
-    if [[ ${#RUST_PKGS[@]} -gt 0 ]]; then
-        ALL_PKGS+=("${RUST_PKGS[@]}")
-    fi
     run_as_root "${INSTALL_CMD[@]}" "${ALL_PKGS[@]}"
 fi
 
 require_command python3
 require_command wget
 
+abspath() {
+    python3 - <<'PY' "$1"
+import os
+import sys
+print(os.path.abspath(sys.argv[1]))
+PY
+}
+
 if [[ -n "$SOURCE_URL" ]]; then
-    INSTALL_DIR=${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}
-    if [[ -d "$INSTALL_DIR" ]]; then
-        echo "♻️  Entferne bestehende Installation in $INSTALL_DIR..."
-        rm -rf "$INSTALL_DIR"
-    fi
-    mkdir -p "$INSTALL_DIR"
-    WORK_DIR=$(cd "$INSTALL_DIR" && pwd)
+    TEMP_ROOT=$(mktemp -d)
     echo "⬇️  Lade Anwendung aus $SOURCE_URL herunter..."
-    TMP_ARCHIVE=$(mktemp)
+    TMP_ARCHIVE="$TEMP_ROOT/source"
     wget -O "$TMP_ARCHIVE" "$SOURCE_URL"
     echo "📁 Entpacke Archiv..."
     case "$SOURCE_URL" in
         *.zip)
             require_command unzip
-            unzip -q "$TMP_ARCHIVE" -d "$WORK_DIR"
+            unzip -q "$TMP_ARCHIVE" -d "$TEMP_ROOT"
             ;;
         *.tar.gz|*.tgz)
-            tar -xzf "$TMP_ARCHIVE" -C "$WORK_DIR"
+            tar -xzf "$TMP_ARCHIVE" -C "$TEMP_ROOT"
             ;;
         *)
             echo "Fehler: Unbekanntes Archivformat. Unterstützt werden .zip und .tar.gz." >&2
-            rm -f "$TMP_ARCHIVE"
+            rm -rf "$TEMP_ROOT"
             exit 1
             ;;
     esac
-    rm -f "$TMP_ARCHIVE"
-    # Falls Archiv einen Unterordner enthält, in diesen wechseln
-    SUBDIR=$(find "$WORK_DIR" -maxdepth 1 -type d ! -path "$WORK_DIR" | head -n 1)
-    if [[ -n "$SUBDIR" ]]; then
-        PROJECT_DIR="$SUBDIR"
-    else
-        PROJECT_DIR="$WORK_DIR"
+    SOURCE_PROJECT_DIR=$(find "$TEMP_ROOT" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+    if [[ -z "$SOURCE_PROJECT_DIR" ]]; then
+        SOURCE_PROJECT_DIR="$TEMP_ROOT"
     fi
 else
-    PROJECT_DIR=$(pwd)
+    SOURCE_PROJECT_DIR=$(pwd)
 fi
 
-echo "📂 Projektverzeichnis: $PROJECT_DIR"
+TARGET_DIR=${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}
+TARGET_DIR=$(abspath "$TARGET_DIR")
 
-if [[ -f "$PROJECT_DIR/$MARKER_FILE" || -d "$PROJECT_DIR/.venv" ]]; then
-    echo "♻️  Vorherige Installation erkannt. Entferne alte virtuelle Umgebung..."
-    rm -rf "$PROJECT_DIR/.venv"
-    rm -f "$PROJECT_DIR/$MARKER_FILE"
-fi
-
-if [[ ! -f "$PROJECT_DIR/requirements.txt" ]]; then
+if [[ ! -f "$SOURCE_PROJECT_DIR/requirements.txt" ]]; then
     echo "Fehler: requirements.txt wurde im Projektverzeichnis nicht gefunden." >&2
+    [[ -n "${TEMP_ROOT:-}" ]] && rm -rf "$TEMP_ROOT"
     exit 1
 fi
 
-PYTHON_BIN=$(command -v python3)
+echo "📂 Zielverzeichnis: $TARGET_DIR"
+
+if [[ -d "$TARGET_DIR" ]]; then
+    echo "♻️  Entferne bestehende Installation in $TARGET_DIR..."
+    run_as_root rm -rf "$TARGET_DIR"
+fi
+
+run_as_root mkdir -p "$TARGET_DIR"
+OWNER_USER=${SUDO_USER:-$(id -un)}
+OWNER_GROUP=$(id -gn "$OWNER_USER")
+
+echo "📦 Kopiere Anwendung nach $TARGET_DIR..."
+tar -C "$SOURCE_PROJECT_DIR" -cf - . | run_as_root tar -C "$TARGET_DIR" -xf -
+run_as_root chown -R "$OWNER_USER":"$OWNER_GROUP" "$TARGET_DIR"
+
+[[ -n "${TEMP_ROOT:-}" ]] && rm -rf "$TEMP_ROOT"
+
+PROJECT_DIR="$TARGET_DIR"
 VENV_DIR="$PROJECT_DIR/.venv"
 
-if [[ ! -d "$VENV_DIR" ]]; then
-    echo "🌱 Erstelle Python-Umgebung..."
-    "$PYTHON_BIN" -m venv "$VENV_DIR"
+if [[ -d "$VENV_DIR" ]]; then
+    echo "♻️  Entferne alte virtuelle Umgebung..."
+    rm -rf "$VENV_DIR"
 fi
+
+echo "🌱 Erstelle Python-Umgebung..."
+python3 -m venv "$VENV_DIR"
 
 # shellcheck disable=SC1090
 source "$VENV_DIR/bin/activate"
 
-pip install --upgrade pip
-pip install --upgrade setuptools wheel
-export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+pip install --upgrade pip setuptools wheel
 pip install --no-cache-dir -r "$PROJECT_DIR/requirements.txt"
 
 deactivate
@@ -192,5 +194,6 @@ Nächste Schritte:
   2. source .venv/bin/activate
   3. uvicorn app.main:app --reload
 
+Die Anwendung liegt unter $PROJECT_DIR (Standard: /opt/erfassung).
 Standardzugang: Benutzer "admin" mit PIN 0000.
 INFO

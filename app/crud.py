@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Iterable, List, Optional
 
 from sqlalchemy.orm import Session
@@ -91,7 +91,10 @@ def delete_group(db: Session, group_id: int) -> bool:
 
 
 def create_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> models.TimeEntry:
-    db_entry = models.TimeEntry(**entry.model_dump())
+    payload = entry.model_dump()
+    if payload.get("break_started_at") and not payload.get("is_open"):
+        payload["break_started_at"] = None
+    db_entry = models.TimeEntry(**payload)
     db.add(db_entry)
     db.commit()
     db.refresh(db_entry)
@@ -102,13 +105,113 @@ def get_time_entry(db: Session, entry_id: int) -> Optional[models.TimeEntry]:
     return db.query(models.TimeEntry).filter(models.TimeEntry.id == entry_id).first()
 
 
+def get_open_time_entry(db: Session, user_id: int) -> Optional[models.TimeEntry]:
+    return (
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.user_id == user_id)
+        .filter(models.TimeEntry.is_open.is_(True))
+        .order_by(models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc())
+        .first()
+    )
+
+
+def _normalize_time(moment: datetime) -> datetime:
+    return moment.replace(microsecond=0)
+
+
+def start_running_entry(
+    db: Session,
+    *,
+    user_id: int,
+    started_at: datetime,
+    company_id: Optional[int] = None,
+    notes: str = "",
+) -> models.TimeEntry:
+    normalized = _normalize_time(started_at)
+    entry = schemas.TimeEntryCreate(
+        user_id=user_id,
+        company_id=company_id,
+        work_date=normalized.date(),
+        start_time=normalized.time(),
+        end_time=normalized.time(),
+        break_minutes=0,
+        break_started_at=None,
+        is_open=True,
+        notes=notes,
+    )
+    return create_time_entry(db, entry)
+
+
+def finish_running_entry(db: Session, entry: models.TimeEntry, finished_at: datetime) -> models.TimeEntry:
+    normalized = _normalize_time(finished_at)
+    if entry.break_started_at:
+        end_break(db, entry, normalized)
+        db.refresh(entry)
+    entry.end_time = normalized.time()
+    entry.is_open = False
+    entry.break_started_at = None
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def start_break(db: Session, entry: models.TimeEntry, started_at: datetime) -> models.TimeEntry:
+    normalized = _normalize_time(started_at)
+    entry.break_started_at = normalized.time()
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def end_break(db: Session, entry: models.TimeEntry, finished_at: datetime) -> models.TimeEntry:
+    if not entry.break_started_at:
+        return entry
+    normalized = _normalize_time(finished_at)
+    break_start = datetime.combine(entry.work_date, entry.break_started_at)
+    break_end = datetime.combine(normalized.date(), normalized.time())
+    if break_end < break_start:
+        break_end += timedelta(days=1)
+    duration = max(int((break_end - break_start).total_seconds() // 60), 0)
+    entry.break_minutes += duration
+    entry.break_started_at = None
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
 def get_time_entries_for_user(db: Session, user_id: int, start: Optional[date] = None, end: Optional[date] = None) -> List[models.TimeEntry]:
     query = db.query(models.TimeEntry).filter(models.TimeEntry.user_id == user_id)
     if start:
         query = query.filter(models.TimeEntry.work_date >= start)
     if end:
         query = query.filter(models.TimeEntry.work_date <= end)
-    return query.order_by(models.TimeEntry.work_date).all()
+    return query.order_by(models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()).all()
+
+
+def get_time_entries(db: Session, user_id: Optional[int] = None) -> List[models.TimeEntry]:
+    query = db.query(models.TimeEntry).order_by(
+        models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()
+    )
+    if user_id:
+        query = query.filter(models.TimeEntry.user_id == user_id)
+    return query.all()
+
+
+def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate) -> Optional[models.TimeEntry]:
+    db_entry = get_time_entry(db, entry_id)
+    if not db_entry:
+        return None
+    for key, value in entry.model_dump().items():
+        if key == "break_started_at":
+            value = None
+        if key == "is_open":
+            value = False
+        setattr(db_entry, key, value)
+    db_entry.is_open = False
+    db_entry.break_started_at = None
+    db.commit()
+    db.refresh(db_entry)
+    return db_entry
 
 
 def get_time_entries(db: Session, user_id: Optional[int] = None) -> List[models.TimeEntry]:

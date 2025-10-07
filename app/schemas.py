@@ -82,6 +82,8 @@ class TimeEntryBase(BaseModel):
     start_time: time
     end_time: time
     break_minutes: int = 0
+    break_started_at: Optional[time] = None
+    is_open: bool = False
     notes: str = ""
 
 
@@ -94,6 +96,7 @@ class TimeEntry(TimeEntryBase):
     company: Optional[Company]
     worked_minutes: int
     overtime_minutes: int
+    total_break_minutes: int
     model_config = ConfigDict(from_attributes=True)
 
 

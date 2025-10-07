@@ -8,6 +8,7 @@
 - Umfangreiche Administrationsoberfläche für Benutzer- und Gruppenverwaltung inklusive PIN-, Rollen- und Arbeitszeitkontingenten.
 - Firmenverwaltung, damit Arbeitszeiten eindeutig Projekten oder Unternehmen zugeordnet werden können.
 - Direktes Stempeln vom Dashboard mit Firmenauswahl und Kommentarfeld für jede Buchung.
+- Komfortable Echtzeit-Stempelung im TopZeit-Stil: Arbeitsbeginn/-ende, Auftragsstart auf eine Firma sowie Pausenstart/-ende auf einen Klick.
 - Administratoren können bestehende Zeitbuchungen filtern, anpassen oder löschen.
 - Verwaltung von Urlaubsanträgen und Feiertagssynchronisation für deutsche Bundesländer (via `python-holidays`).
 - Export von Arbeitszeiten als Excel-Datei (`.xlsx`).
@@ -23,11 +24,9 @@ wget https://raw.githubusercontent.com/joni123467/Erfassung/main/install.sh -O i
 bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/main.tar.gz
 ```
 
-Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen, entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
+Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen im Zielverzeichnis (`/opt/erfassung` als Standard), entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
 
-> **Hinweis:** Damit auch auf Systemen mit Python 3.13 alle Abhängigkeiten gebaut werden können, installiert das Skript automatisch die nötigen Build-Werkzeuge (GCC, OpenSSL-Header, Rust/Cargo) und setzt `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`, bevor die Python-Pakete eingespielt werden.
-
-Das Skript kann zusätzlich über `--install-dir` ein Zielverzeichnis angeben. Nach erfolgreicher Installation finden Sie die Anwendung im gewählten Ordner; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`.
+Alle Python-Abhängigkeiten werden direkt als vorgefertigte Wheels über `pip` eingespielt – zusätzliche Rust- oder Compiler-Werkzeuge sind nicht länger erforderlich. Auf Wunsch kann über `--install-dir` ein alternatives Zielverzeichnis angegeben werden. Nach erfolgreicher Installation finden Sie die Anwendung unter dem gewählten Pfad; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`.
 
 ### Manuelle Installation
 
