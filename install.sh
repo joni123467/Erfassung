@@ -2,9 +2,11 @@
 set -euo pipefail
 
 APP_NAME="Erfassung"
+APP_SLUG=$(printf '%s' "$APP_NAME" | tr '[:upper:]' '[:lower:]')
 DEFAULT_INSTALL_DIR="erfassung-app"
 SOURCE_URL=""
 INSTALL_DIR=""
+MARKER_FILE=".${APP_SLUG}_installed"
 
 print_help() {
     cat <<USAGE
@@ -96,6 +98,10 @@ require_command wget
 
 if [[ -n "$SOURCE_URL" ]]; then
     INSTALL_DIR=${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}
+    if [[ -d "$INSTALL_DIR" ]]; then
+        echo "♻️  Entferne bestehende Installation in $INSTALL_DIR..."
+        rm -rf "$INSTALL_DIR"
+    fi
     mkdir -p "$INSTALL_DIR"
     WORK_DIR=$(cd "$INSTALL_DIR" && pwd)
     echo "⬇️  Lade Anwendung aus $SOURCE_URL herunter..."
@@ -130,6 +136,12 @@ fi
 
 echo "📂 Projektverzeichnis: $PROJECT_DIR"
 
+if [[ -f "$PROJECT_DIR/$MARKER_FILE" || -d "$PROJECT_DIR/.venv" ]]; then
+    echo "♻️  Vorherige Installation erkannt. Entferne alte virtuelle Umgebung..."
+    rm -rf "$PROJECT_DIR/.venv"
+    rm -f "$PROJECT_DIR/$MARKER_FILE"
+fi
+
 if [[ ! -f "$PROJECT_DIR/requirements.txt" ]]; then
     echo "Fehler: requirements.txt wurde im Projektverzeichnis nicht gefunden." >&2
     exit 1
@@ -150,6 +162,8 @@ pip install --upgrade pip
 pip install -r "$PROJECT_DIR/requirements.txt"
 
 deactivate
+
+touch "$PROJECT_DIR/$MARKER_FILE"
 
 echo "✅ Installation abgeschlossen."
 cat <<INFO
