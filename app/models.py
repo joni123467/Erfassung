@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text, Time
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, Time
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -26,6 +26,9 @@ class Group(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True, nullable=False)
     is_admin = Column(Boolean, default=False)
+    can_manage_users = Column(Boolean, default=False)
+    can_manage_vacations = Column(Boolean, default=False)
+    can_approve_manual_entries = Column(Boolean, default=False)
 
     users = relationship("User", back_populates="group")
 
@@ -38,6 +41,7 @@ class User(Base):
     full_name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     standard_daily_minutes = Column(Integer, default=480)
+    standard_weekly_hours = Column(Float, default=40.0)
     pin_code = Column(String(4), unique=True, nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"))
 
@@ -46,6 +50,23 @@ class User(Base):
     vacation_requests = relationship(
         "VacationRequest", back_populates="user", cascade="all, delete-orphan"
     )
+
+    @property
+    def weekly_target_minutes(self) -> int:
+        if self.standard_weekly_hours is not None:
+            weekly_hours = float(self.standard_weekly_hours)
+        elif self.standard_daily_minutes:
+            weekly_hours = (self.standard_daily_minutes or 0) * 5 / 60
+        else:
+            weekly_hours = 0.0
+        return int(round(max(weekly_hours, 0) * 60))
+
+    @property
+    def daily_target_minutes(self) -> float:
+        weekly_minutes = self.weekly_target_minutes
+        if weekly_minutes <= 0:
+            return 0.0
+        return weekly_minutes / 5
 
 
 class TimeEntryStatus:
@@ -109,8 +130,10 @@ class TimeEntry(Base):
 
     @property
     def overtime_minutes(self) -> int:
-        if self.user and self.user.standard_daily_minutes:
-            return self.worked_minutes - self.user.standard_daily_minutes
+        if self.user:
+            target = self.user.daily_target_minutes
+            if target:
+                return int(self.worked_minutes - target)
         return 0
 
     @property

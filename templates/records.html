@@ -14,7 +14,7 @@
 {% endif %}
 <section class="card">
     <div class="card-header">
-        <h1>Arbeitszeitübersicht</h1>
+        <h1>Arbeitszeitübersicht – {{ selected_month.strftime('%m/%Y') }}</h1>
         <a class="button" href="/api/users/{{ user.id }}/excel">Excel-Export</a>
     </div>
     <form method="get" action="/records" class="filter-bar">
@@ -40,19 +40,19 @@
     </form>
     <div class="metric-grid">
         <article>
-            <h2>Ist-Stunden</h2>
+            <h2>Ist-Stunden (Monat)</h2>
             <p>{{ (total_work_minutes / 60)|round(2) }} Stunden</p>
         </article>
         <article>
-            <h2>Soll-Stunden</h2>
+            <h2>Soll-Stunden (Monat)</h2>
             <p>{{ (target_minutes / 60)|round(2) }} Stunden</p>
         </article>
         <article>
-            <h2>Überstunden</h2>
+            <h2>Überstunden (Monat)</h2>
             <p>{{ (total_overtime_minutes / 60)|round(2) }} Stunden</p>
         </article>
     </div>
-    <p class="form-hint">Es werden nur freigegebene Buchungen in der Auswertung berücksichtigt.</p>
+    <p class="form-hint">Kennzahlen beziehen sich immer auf den gesamten Monat und berücksichtigen nur freigegebene Buchungen.</p>
 </section>
 
 <section class="card" id="entries-section">

@@ -3,6 +3,7 @@
 {% block content %}
 {% set admin_active = 'approvals' %}
 {% include "admin/_nav.html" %}
+{% if show_manual_section %}
 <section class="card">
     <h1>Manuelle Zeitbuchungen</h1>
     <p>Pendente Zeitbuchungen müssen bestätigt werden, bevor sie in Auswertungen erscheinen.</p>
@@ -42,6 +43,8 @@
         </table>
     </div>
 </section>
+{% endif %}
+{% if show_vacation_section %}
 <section class="card">
     <h1>Urlaubsanträge</h1>
     <div class="table-scroll">
@@ -74,4 +77,10 @@
         </table>
     </div>
 </section>
+{% endif %}
+{% if not show_manual_section and not show_vacation_section %}
+<section class="card">
+    <p>Sie verfügen über keine Freigaberechte.</p>
+</section>
+{% endif %}
 {% endblock %}

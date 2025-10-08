@@ -41,7 +41,11 @@ def get_user_by_pin(db: Session, pin_code: str) -> Optional[models.User]:
 
 
 def create_user(db: Session, user: schemas.UserCreate) -> models.User:
-    db_user = models.User(**user.model_dump())
+    payload = user.model_dump()
+    weekly_hours = float(payload.get("standard_weekly_hours", 0) or 0)
+    payload["standard_weekly_hours"] = weekly_hours
+    payload["standard_daily_minutes"] = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
+    db_user = models.User(**payload)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -52,7 +56,13 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
     db_user = get_user(db, user_id)
     if not db_user:
         return None
-    for key, value in user.model_dump().items():
+    payload = user.model_dump()
+    if "standard_weekly_hours" in payload:
+        weekly_hours = float(payload["standard_weekly_hours"] or 0)
+        db_user.standard_weekly_hours = weekly_hours
+        db_user.standard_daily_minutes = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
+        payload.pop("standard_weekly_hours", None)
+    for key, value in payload.items():
         setattr(db_user, key, value)
     db.commit()
     db.refresh(db_user)

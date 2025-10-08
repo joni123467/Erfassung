@@ -15,7 +15,7 @@
                 <th>Name</th>
                 <th>Email</th>
                 <th>Gruppe</th>
-                <th>Standardzeit</th>
+                <th>Wochenarbeitszeit</th>
                 <th>Aktionen</th>
             </tr>
             </thead>
@@ -25,7 +25,7 @@
                     <td>{{ item.full_name }} <small class="muted">({{ item.username }})</small></td>
                     <td>{{ item.email }}</td>
                     <td>{{ item.group.name if item.group else 'ohne Gruppe' }}</td>
-                    <td>{{ item.standard_daily_minutes }} Minuten</td>
+                    <td>{{ item.standard_weekly_hours|round(2) }} Std/Woche</td>
                     <td>
                         <a class="button small" href="/admin/users/{{ item.id }}">Bearbeiten</a>
                     </td>

@@ -57,6 +57,25 @@ def ensure_schema() -> None:
             if "is_manual" not in columns:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_manual INTEGER DEFAULT 0"))
             connection.execute(text("UPDATE time_entries SET is_open = 0 WHERE is_open IS NULL"))
+        if "users" in table_names:
+            columns = {column["name"] for column in inspector.get_columns("users")}
+            if "standard_weekly_hours" not in columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN standard_weekly_hours FLOAT DEFAULT 40"))
+                connection.execute(
+                    text(
+                        "UPDATE users SET standard_weekly_hours = COALESCE(standard_daily_minutes, 480) * 5.0 / 60.0"
+                    )
+                )
+        if "groups" in table_names:
+            columns = {column["name"] for column in inspector.get_columns("groups")}
+            if "can_manage_users" not in columns:
+                connection.execute(text("ALTER TABLE groups ADD COLUMN can_manage_users BOOLEAN DEFAULT 0"))
+            if "can_manage_vacations" not in columns:
+                connection.execute(text("ALTER TABLE groups ADD COLUMN can_manage_vacations BOOLEAN DEFAULT 0"))
+            if "can_approve_manual_entries" not in columns:
+                connection.execute(
+                    text("ALTER TABLE groups ADD COLUMN can_approve_manual_entries BOOLEAN DEFAULT 0")
+                )
 
 
 def _sanitize_next(next_url: str, default: str = "/time") -> str:
@@ -84,9 +103,23 @@ def ensure_seed_data():
     db = database.SessionLocal()
     try:
         if not crud.get_groups(db):
-            admin_group = crud.create_group(db, schemas.GroupCreate(name="Administration", is_admin=True))
+            admin_group = crud.create_group(
+                db,
+                schemas.GroupCreate(
+                    name="Administration",
+                    is_admin=True,
+                    can_manage_users=True,
+                    can_manage_vacations=True,
+                    can_approve_manual_entries=True,
+                ),
+            )
         else:
             admin_group = db.query(models.Group).filter(models.Group.is_admin == True).first()  # noqa: E712
+            if admin_group:
+                admin_group.can_manage_users = True
+                admin_group.can_manage_vacations = True
+                admin_group.can_approve_manual_entries = True
+                db.commit()
         if not crud.get_companies(db):
             crud.create_company(db, schemas.CompanyCreate(name="Allgemein"))
         if not crud.get_users(db):
@@ -97,7 +130,7 @@ def ensure_seed_data():
                     full_name="Administrator",
                     email="admin@example.com",
                     group_id=admin_group.id if admin_group else None,
-                    standard_daily_minutes=480,
+                    standard_weekly_hours=40.0,
                     pin_code="0000",
                 ),
             )
@@ -148,7 +181,8 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    metrics = services.calculate_dashboard_metrics(db, user.id)
+    reference_month = date.today()
+    metrics = services.calculate_dashboard_metrics(db, user.id, reference_month)
     active_entry = crud.get_open_time_entry(db, user.id)
     holiday_region = crud.get_default_holiday_region(db)
     holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
@@ -169,6 +203,7 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
             "message": message,
             "error": error,
             "active_entry": active_entry,
+            "metrics_month": reference_month.replace(day=1),
         },
     )
 
@@ -243,9 +278,7 @@ def punch_action(
             crud.start_running_entry(db, user_id=user.id, started_at=now, notes=notes.strip())
             message = "Arbeitszeit gestartet."
     elif action == "start_company":
-        if active_entry:
-            error = "Es läuft bereits eine Arbeitszeit."
-        elif not company_id:
+        if not company_id:
             error = "Bitte eine Firma auswählen."
         else:
             try:
@@ -256,7 +289,12 @@ def punch_action(
                 company = crud.get_company(db, company_value)
                 if not company:
                     error = "Firma wurde nicht gefunden."
+                elif active_entry and active_entry.company_id == company.id:
+                    error = "Dieser Auftrag läuft bereits."
                 else:
+                    previous_company = active_entry.company if active_entry else None
+                    if active_entry:
+                        crud.finish_running_entry(db, active_entry, now)
                     crud.start_running_entry(
                         db,
                         user_id=user.id,
@@ -264,13 +302,28 @@ def punch_action(
                         company_id=company.id,
                         notes=notes.strip(),
                     )
-                    message = f"Auftrag bei {company.name} gestartet."
+                    if previous_company and previous_company.id != company.id:
+                        message = f"Auftrag zu {company.name} gewechselt."
+                    else:
+                        message = f"Auftrag bei {company.name} gestartet."
     elif action == "end_work":
         if not active_entry:
             error = "Keine laufende Arbeitszeit vorhanden."
         else:
             crud.finish_running_entry(db, active_entry, now)
             message = "Arbeitszeit beendet."
+    elif action == "end_company":
+        if not active_entry or active_entry.company_id is None:
+            error = "Es läuft kein Auftrag."
+        else:
+            crud.finish_running_entry(db, active_entry, now)
+            crud.start_running_entry(
+                db,
+                user_id=user.id,
+                started_at=now,
+                notes=notes.strip(),
+            )
+            message = "Auftrag beendet. Arbeitszeit läuft weiter."
     elif action == "start_break":
         if not active_entry:
             error = "Keine laufende Arbeitszeit vorhanden."
@@ -379,21 +432,28 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
             company_filter_id = int(company_param)
         except ValueError:
             company_filter_id = None
-    entries = crud.get_time_entries(
+    month_entries = crud.get_time_entries(
         db,
         user.id,
         start=start_date,
         end=end_date,
     )
+    entries = list(month_entries)
     if company_filter_none:
         entries = [entry for entry in entries if entry.company_id is None]
     elif company_filter_id is not None:
         entries = [entry for entry in entries if entry.company_id == company_filter_id]
+    approved_month_entries = [
+        entry
+        for entry in month_entries
+        if entry.status == models.TimeEntryStatus.APPROVED
+    ]
     approved_entries = [entry for entry in entries if entry.status == models.TimeEntryStatus.APPROVED]
-    total_work_minutes = sum(entry.worked_minutes for entry in approved_entries)
-    total_overtime_minutes = sum(entry.overtime_minutes for entry in approved_entries)
-    worked_days = {entry.work_date for entry in approved_entries}
-    target_minutes = len(worked_days) * (user.standard_daily_minutes or 0)
+    total_work_minutes = sum(entry.worked_minutes for entry in approved_month_entries)
+    target_minutes = services.calculate_monthly_target_minutes(
+        user, selected_month.year, selected_month.month
+    )
+    total_overtime_minutes = total_work_minutes - target_minutes
 
     def aggregate_company_totals(source_entries: List[models.TimeEntry]):
         totals: dict[str, dict[str, object]] = {}
@@ -412,11 +472,6 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
             record["count"] = int(record["count"]) + 1
         return sorted(totals.values(), key=lambda item: str(item["name"]).lower())
 
-    approved_month_entries = [
-        entry
-        for entry in crud.get_time_entries(db, user.id, start=start_date, end=end_date)
-        if entry.status == models.TimeEntryStatus.APPROVED
-    ]
     company_totals_all = aggregate_company_totals(approved_month_entries)
     company_totals_filtered = aggregate_company_totals(approved_entries)
 
@@ -452,6 +507,39 @@ def _ensure_admin(user: models.User) -> bool:
     return bool(user.group and user.group.is_admin)
 
 
+def _has_group_permission(user: models.User, attribute: str) -> bool:
+    if _ensure_admin(user):
+        return True
+    if not user.group:
+        return False
+    return bool(getattr(user.group, attribute, False))
+
+
+def _can_manage_users(user: models.User) -> bool:
+    return _has_group_permission(user, "can_manage_users")
+
+
+def _can_manage_vacations(user: models.User) -> bool:
+    return _has_group_permission(user, "can_manage_vacations")
+
+
+def _can_approve_manual_entries(user: models.User) -> bool:
+    return _has_group_permission(user, "can_approve_manual_entries")
+
+
+def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
+    permissions = {
+        "users": _can_manage_users(user),
+        "groups": _ensure_admin(user),
+        "companies": _ensure_admin(user),
+        "holidays": _ensure_admin(user),
+        "approvals_manual": _can_approve_manual_entries(user),
+        "approvals_vacations": _can_manage_vacations(user),
+    }
+    permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
+    return permissions
+
+
 def _admin_template(
     template: str,
     request: Request,
@@ -461,7 +549,13 @@ def _admin_template(
     error: Optional[str] = None,
     **context,
 ):
-    payload = {"request": request, "user": user, "message": message, "error": error}
+    payload = {
+        "request": request,
+        "user": user,
+        "message": message,
+        "error": error,
+        "admin_permissions": _resolve_admin_permissions(user),
+    }
     payload.update(context)
     return templates.TemplateResponse(template, payload)
 
@@ -471,7 +565,7 @@ def admin_portal(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -481,7 +575,7 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
@@ -501,7 +595,7 @@ def admin_users_new(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     groups = crud.get_groups(db)
     message = request.query_params.get("msg")
@@ -628,6 +722,50 @@ def admin_companies_page(request: Request, db: Session = Depends(database.get_db
     )
 
 
+@app.get("/admin/companies/new", response_class=HTMLResponse)
+def admin_companies_new(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/company_form.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        company=None,
+    )
+
+
+@app.get("/admin/companies/{company_id}", response_class=HTMLResponse)
+def admin_companies_edit(request: Request, company_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    company = crud.get_company(db, company_id)
+    if not company:
+        return RedirectResponse(
+            url="/admin/companies?error=Firma+nicht+gefunden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/company_form.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        company=company,
+    )
+
+
 @app.get("/admin/holidays", response_class=HTMLResponse)
 def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
@@ -668,16 +806,26 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    can_manual = _can_approve_manual_entries(user)
+    can_vacation = _can_manage_vacations(user)
+    if not (can_manual or can_vacation):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    pending_entries = crud.get_time_entries(
-        db,
-        statuses=[models.TimeEntryStatus.PENDING],
-        is_manual=True,
+    pending_entries = (
+        crud.get_time_entries(
+            db,
+            statuses=[models.TimeEntryStatus.PENDING],
+            is_manual=True,
+        )
+        if can_manual
+        else []
     )
-    pending_vacations = crud.get_vacation_requests(db, status=models.VacationStatus.PENDING)
+    pending_vacations = (
+        crud.get_vacation_requests(db, status=models.VacationStatus.PENDING)
+        if can_vacation
+        else []
+    )
     return _admin_template(
         "admin/approvals.html",
         request,
@@ -686,6 +834,8 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         error=error,
         pending_entries=pending_entries,
         pending_vacations=pending_vacations,
+        show_manual_section=can_manual,
+        show_vacation_section=can_vacation,
     )
 
 
@@ -694,14 +844,33 @@ def create_group_html(
     request: Request,
     name: str = Form(...),
     is_admin: Optional[str] = Form(None),
+    can_manage_users: Optional[str] = Form(None),
+    can_manage_vacations: Optional[str] = Form(None),
+    can_approve_manual_entries: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     is_admin_value = is_admin == "on"
+    manage_users_value = can_manage_users == "on"
+    manage_vacations_value = can_manage_vacations == "on"
+    approve_manual_value = can_approve_manual_entries == "on"
+    if is_admin_value:
+        manage_users_value = True
+        manage_vacations_value = True
+        approve_manual_value = True
     try:
-        crud.create_group(db, schemas.GroupCreate(name=name, is_admin=is_admin_value))
+        crud.create_group(
+            db,
+            schemas.GroupCreate(
+                name=name,
+                is_admin=is_admin_value,
+                can_manage_users=manage_users_value,
+                can_manage_vacations=manage_vacations_value,
+                can_approve_manual_entries=approve_manual_value,
+            ),
+        )
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
@@ -717,14 +886,34 @@ def update_group_html(
     group_id: int,
     name: str = Form(...),
     is_admin: Optional[str] = Form(None),
+    can_manage_users: Optional[str] = Form(None),
+    can_manage_vacations: Optional[str] = Form(None),
+    can_approve_manual_entries: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     is_admin_value = is_admin == "on"
+    manage_users_value = can_manage_users == "on"
+    manage_vacations_value = can_manage_vacations == "on"
+    approve_manual_value = can_approve_manual_entries == "on"
+    if is_admin_value:
+        manage_users_value = True
+        manage_vacations_value = True
+        approve_manual_value = True
     try:
-        updated = crud.update_group(db, group_id, schemas.GroupCreate(name=name, is_admin=is_admin_value))
+        updated = crud.update_group(
+            db,
+            group_id,
+            schemas.GroupCreate(
+                name=name,
+                is_admin=is_admin_value,
+                can_manage_users=manage_users_value,
+                can_manage_vacations=manage_vacations_value,
+                can_approve_manual_entries=approve_manual_value,
+            ),
+        )
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
@@ -760,13 +949,15 @@ def create_user_html(
     full_name: str = Form(...),
     email: str = Form(...),
     pin_code: str = Form(...),
-    standard_daily_minutes: int = Form(480),
+    standard_weekly_hours: float = Form(40.0),
     group_id: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_users(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     group_value = int(group_id) if group_id else None
     try:
         crud.create_user(
@@ -776,7 +967,7 @@ def create_user_html(
                 full_name=full_name,
                 email=email,
                 pin_code=pin_code,
-                standard_daily_minutes=standard_daily_minutes,
+                standard_weekly_hours=standard_weekly_hours,
                 group_id=group_value,
             ),
         )
@@ -798,13 +989,15 @@ def update_user_html(
     full_name: str = Form(...),
     email: str = Form(...),
     pin_code: str = Form(...),
-    standard_daily_minutes: int = Form(480),
+    standard_weekly_hours: float = Form(40.0),
     group_id: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_users(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     group_value = int(group_id) if group_id else None
     try:
         updated = crud.update_user(
@@ -815,7 +1008,7 @@ def update_user_html(
                 full_name=full_name,
                 email=email,
                 pin_code=pin_code,
-                standard_daily_minutes=standard_daily_minutes,
+                standard_weekly_hours=standard_weekly_hours,
                 group_id=group_value,
             ),
         )
@@ -837,8 +1030,10 @@ def update_user_html(
 @app.post("/admin/users/{user_id}/delete")
 def delete_user_html(request: Request, user_id: int, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_users(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_user(db, user_id):
         return RedirectResponse(
             url="/admin/users?error=Benutzer+konnte+nicht+gelöscht+werden",
@@ -855,8 +1050,10 @@ def create_company_html(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     try:
         crud.create_company(
             db,
@@ -865,7 +1062,7 @@ def create_company_html(
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
-            url="/admin/companies?error=Firma+existiert+bereits",
+            url="/admin/companies/new?error=Firma+existiert+bereits",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     return RedirectResponse(url="/admin/companies?msg=Firma+angelegt", status_code=status.HTTP_303_SEE_OTHER)
@@ -880,8 +1077,10 @@ def update_company_html(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     try:
         updated = crud.update_company(
             db,
@@ -891,7 +1090,7 @@ def update_company_html(
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
-            url="/admin/companies?error=Firmenname+bereits+vergeben",
+            url=f"/admin/companies/{company_id}?error=Firmenname+bereits+vergeben",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     if not updated:
@@ -905,8 +1104,10 @@ def update_company_html(
 @app.post("/admin/companies/{company_id}/delete")
 def delete_company_html(request: Request, company_id: int, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_company(db, company_id):
         return RedirectResponse(
             url="/admin/companies?error=Firma+konnte+nicht+gelöscht+werden",
@@ -999,8 +1200,10 @@ def set_time_entry_status_admin(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_approve_manual_entries(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if action == "approve":
         new_status = models.TimeEntryStatus.APPROVED
     elif action == "reject":
@@ -1062,8 +1265,10 @@ def set_vacation_status_admin(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_vacations(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if action == "approve":
         new_status = models.VacationStatus.APPROVED
     elif action == "reject":

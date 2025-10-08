@@ -27,8 +27,8 @@
             <input type="text" name="pin_code" value="{{ form_user.pin_code if is_edit else '' }}" pattern="\d{4}" maxlength="4" required>
         </label>
         <label>
-            Tägliche Sollzeit (Minuten)
-            <input type="number" name="standard_daily_minutes" value="{{ form_user.standard_daily_minutes if is_edit else 480 }}" min="1" step="1" required>
+            Wochenarbeitszeit (Stunden)
+            <input type="number" name="standard_weekly_hours" value="{{ form_user.standard_weekly_hours if is_edit else 40 }}" min="0" step="0.25" required>
         </label>
         <label>
             Gruppe
