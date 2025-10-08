@@ -8,36 +8,59 @@
     <div class="alert alert-danger">{{ error }}</div>
 {% endif %}
 
-<section class="metrics">
-    <h1>Arbeitszeitübersicht – {{ metrics_month.strftime('%m/%Y') }}</h1>
-    <div class="metric-grid">
-        <article>
-            <h2>Ist-Stunden (Monat)</h2>
-            <p>{{ metrics.total_work_minutes|format_minutes }} Stunden</p>
-        </article>
-        <article>
-            <h2>Überstunden (Monat)</h2>
-            <p>{{ metrics.total_overtime_minutes|format_minutes }} Stunden</p>
-        </article>
-        <article>
-            <h2>Sollstunden (Monat)</h2>
-            <p>{{ metrics.target_minutes|format_minutes }} Stunden</p>
-        </article>
-        <article>
-            <h2>Überstundenabbau</h2>
-            <p>{{ metrics.overtime_taken_minutes|format_minutes }} Stunden</p>
-        </article>
-        {% if user.time_account_enabled %}
-            <article>
-                <h2>Minusstunden (Monat)</h2>
-                <p>{{ metrics.total_undertime_minutes|format_minutes }} Stunden</p>
-            </article>
-        {% endif %}
-        <article>
-            <h2>Offene Urlaubsanträge</h2>
-            <p>{{ metrics.pending_vacations }}</p>
-        </article>
+{% set ist_minutes = metrics.total_work_minutes %}
+{% set soll_minutes = metrics.target_minutes %}
+{% set overtime_taken_minutes = metrics.overtime_taken_minutes %}
+{% set diff_minutes = ist_minutes + overtime_taken_minutes - soll_minutes %}
+{% set diff_class = 'is-positive' if diff_minutes >= 0 else 'is-negative' %}
+<section class="dashboard-summary">
+    <div class="dashboard-summary__info">
+        <h1>Arbeitszeiten</h1>
+        <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
+        <div class="dashboard-summary__hint">
+            <strong>Hinweis (Arbeitsschutz):</strong>
+            Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich,
+            nach 9 Stunden mindestens 45 Minuten (ArbZG). Bitte stempel deine Pause entsprechend.
+        </div>
     </div>
+    <aside class="dashboard-summary__card">
+        <h2>Meine Soll-/Ist-Stunden</h2>
+        <dl class="dashboard-summary__stats">
+            <div>
+                <dt>Aktueller Monat</dt>
+                <dd>{{ metrics_month.strftime('%m/%Y') }}</dd>
+            </div>
+            <div>
+                <dt>Monatliches Soll</dt>
+                <dd>{{ soll_minutes|format_minutes }} Std</dd>
+            </div>
+            <div>
+                <dt>Bisher geleistet (Ist)</dt>
+                <dd>{{ ist_minutes|format_minutes }} Std</dd>
+            </div>
+            <div>
+                <dt>Überstundenabbau</dt>
+                <dd>{{ overtime_taken_minutes|format_minutes }} Std</dd>
+            </div>
+            <div class="dashboard-summary__diff {{ diff_class }}">
+                <dt>Diff (Ist - Soll)</dt>
+                <dd>{{ diff_minutes|format_minutes }} Std</dd>
+            </div>
+            {% if user.time_account_enabled %}
+                <div>
+                    <dt>Offene Minusstunden</dt>
+                    <dd>{{ metrics.total_undertime_minutes|format_minutes }} Std</dd>
+                </div>
+            {% endif %}
+        </dl>
+        <p class="dashboard-summary__meta">
+            {% if metrics.pending_vacations > 0 %}
+                {{ metrics.pending_vacations }} offene Urlaubsanträge warten auf Freigabe.
+            {% else %}
+                Keine offenen Urlaubsanträge vorhanden.
+            {% endif %}
+        </p>
+    </aside>
 </section>
 
 <section class="card">
@@ -81,18 +104,39 @@
                     <button type="submit" class="button">Auftrag beenden</button>
                 </form>
             {% endif %}
+            {% if companies %}
+                <button type="button" class="button" data-open="order-modal">Auftrag starten</button>
+            {% endif %}
             <form method="post" action="/punch">
                 <input type="hidden" name="next_url" value="/dashboard">
                 <input type="hidden" name="action" value="end_work">
                 <button type="submit" class="button danger">Arbeitszeit beenden</button>
             </form>
         </div>
-        {% if companies %}
-        <form method="post" action="/punch" class="punch-order">
-            <input type="hidden" name="next_url" value="/dashboard">
-            <div class="punch-order-fields">
+    {% else %}
+        <div class="punch-start-options">
+            <form method="post" action="/punch" class="punch-start-quick">
+                <input type="hidden" name="next_url" value="/dashboard">
+                <input type="hidden" name="action" value="start_work">
+                <button type="submit" class="button primary">Arbeitszeit starten</button>
+            </form>
+            {% if companies %}
+            <button type="button" class="button ghost" data-open="order-modal">Auftrag starten</button>
+            {% endif %}
+        </div>
+    {% endif %}
+    {% if companies %}
+    <div class="modal" id="order-modal" aria-hidden="true" role="dialog" aria-modal="true">
+        <div class="modal__backdrop" data-close></div>
+        <div class="modal__dialog">
+            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+            <h3>Auftrag starten</h3>
+            <p class="modal__hint">Wähle eine Firma aus und hinterlasse optional einen Kommentar.</p>
+            <form method="post" action="/punch" class="modal__form">
+                <input type="hidden" name="next_url" value="/dashboard">
+                <input type="hidden" name="action" value="start_company">
                 <label>
-                    Auftrag starten
+                    Firma auswählen
                     <select name="company_id" required>
                         <option value="" disabled selected>Firma wählen</option>
                         {% for company in companies %}
@@ -100,31 +144,16 @@
                         {% endfor %}
                     </select>
                 </label>
-            </div>
-            <button type="submit" name="action" value="start_company" class="button">Auftrag starten</button>
-        </form>
-        {% endif %}
-    {% else %}
-        <form method="post" action="/punch" class="punch-start">
-            <input type="hidden" name="next_url" value="/dashboard">
-            <label>
-                Firma auswählen
-                <select name="company_id">
-                    <option value="">Allgemeine Arbeitszeit</option>
-                    {% for company in companies %}
-                        <option value="{{ company.id }}">{{ company.name }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <label>
-                Kommentar (optional)
-                <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
-            </label>
-            <div class="punch-start-buttons">
-                <button type="submit" name="action" value="start_work" class="button primary">Kommen</button>
-                <button type="submit" name="action" value="start_company" class="button">Auftrag starten</button>
-            </div>
-        </form>
+                <label>
+                    Kommentar (optional)
+                    <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
+                </label>
+                <div class="modal__actions">
+                    <button type="submit" class="button">Auftrag starten</button>
+                </div>
+            </form>
+        </div>
+    </div>
     {% endif %}
 </section>
 
@@ -178,4 +207,44 @@
     </ul>
     <p><a class="button" href="/records">Zu meinen Buchungen wechseln</a></p>
 </section>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const modal = document.getElementById('order-modal');
+    if (!modal) {
+        return;
+    }
+    const openers = document.querySelectorAll('[data-open="order-modal"]');
+    const closeElements = modal.querySelectorAll('[data-close]');
+
+    const setVisibility = (visible) => {
+        if (visible) {
+            modal.classList.add('is-visible');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('modal-open');
+            const firstInput = modal.querySelector('select, input, button');
+            if (firstInput) {
+                firstInput.focus();
+            }
+        } else {
+            modal.classList.remove('is-visible');
+            modal.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('modal-open');
+        }
+    };
+
+    openers.forEach((button) => {
+        button.addEventListener('click', () => setVisibility(true));
+    });
+
+    closeElements.forEach((element) => {
+        element.addEventListener('click', () => setVisibility(false));
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && modal.classList.contains('is-visible')) {
+            setVisibility(false);
+        }
+    });
+});
+</script>
 {% endblock %}

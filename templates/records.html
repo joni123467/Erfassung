@@ -22,20 +22,15 @@
             Monat
             <input type="month" name="month" value="{{ month_value }}">
         </label>
-        <label>
-            Firma
-            <select name="company">
-                <option value="">Alle Firmen</option>
-                <option value="none" {% if company_filter_none %}selected{% endif %}>Allgemeine Arbeitszeit</option>
-                {% for company in companies %}
-                    <option value="{{ company.id }}" {% if company_filter_id == company.id %}selected{% endif %}>{{ company.name }}</option>
-                {% endfor %}
-            </select>
-        </label>
         {% if focus %}
             <input type="hidden" name="focus" value="{{ focus }}">
         {% endif %}
-        <button type="submit" class="button small">Filtern</button>
+        {% if company_filter_none %}
+            <input type="hidden" name="company" value="none">
+        {% elif company_filter_id is not none %}
+            <input type="hidden" name="company" value="{{ company_filter_id }}">
+        {% endif %}
+        <button type="submit" class="button small">Monat wechseln</button>
         <a class="button ghost small" href="/records">Zurücksetzen</a>
     </form>
     <div class="metric-grid">
@@ -66,7 +61,39 @@
 </section>
 
 <section class="card" id="entries-section">
-    <h2>Buchungen im ausgewählten Monat</h2>
+    <div class="entries-header">
+        <h2>Buchungen im ausgewählten Monat</h2>
+        <form method="get" action="/records" class="filter-inline">
+            <input type="hidden" name="month" value="{{ month_value }}">
+            {% if focus %}
+                <input type="hidden" name="focus" value="{{ focus }}">
+            {% endif %}
+            <label>
+                Firma
+                <select name="company">
+                    <option value="">Alle Firmen</option>
+                    <option value="none" {% if company_filter_none %}selected{% endif %}>Allgemeine Arbeitszeit</option>
+                    {% for company in companies %}
+                        <option value="{{ company.id }}" {% if company_filter_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button type="submit" class="button small">Filtern</button>
+            <a class="button ghost small" href="/records?month={{ month_value }}{% if focus %}&focus={{ focus }}{% endif %}">Alle Buchungen</a>
+        </form>
+    </div>
+    <div class="company-summary" aria-live="polite">
+        {% if company_totals_filtered %}
+            {% for row in company_totals_filtered %}
+                <div class="company-summary__item">
+                    <span class="company-summary__name">{{ row.name }}</span>
+                    <span class="company-summary__stats">{{ row.minutes|format_minutes }} Std · {{ row.count }} Buchungen</span>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="company-summary__item is-empty">Keine freigegebenen Buchungen im Filter.</div>
+        {% endif %}
+    </div>
     <div class="table-scroll">
         <table class="striped-table">
             <thead>
@@ -112,7 +139,7 @@
 
 <section class="card">
     <h2>Auswertung nach Firmen</h2>
-    <p>Übersicht über freigegebene Buchungen im ausgewählten Monat.</p>
+    <p>Gesamte Monatswerte über alle Firmen.</p>
     <div class="table-scroll">
         <table class="striped-table">
             <thead>
@@ -123,43 +150,18 @@
             </tr>
             </thead>
             <tbody>
-            {% for row in company_totals_filtered %}
+            {% for row in company_totals_all %}
                 <tr>
                     <td>{{ row.name }}</td>
                     <td>{{ row.count }}</td>
                     <td>{{ row.minutes|format_minutes }} Std</td>
                 </tr>
             {% else %}
-                <tr><td colspan="3">Keine freigegebenen Buchungen im Filter.</td></tr>
+                <tr><td colspan="3">Keine freigegebenen Buchungen vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
-    {% if company_totals_all|length > 1 %}
-    <details>
-        <summary>Gesamte Monatswerte anzeigen</summary>
-        <div class="table-scroll">
-            <table class="striped-table">
-                <thead>
-                <tr>
-                    <th>Firma</th>
-                    <th>Buchungen</th>
-                    <th>Arbeitszeit</th>
-                </tr>
-                </thead>
-                <tbody>
-                {% for row in company_totals_all %}
-                    <tr>
-                        <td>{{ row.name }}</td>
-                        <td>{{ row.count }}</td>
-                        <td>{{ row.minutes|format_minutes }} Std</td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </details>
-    {% endif %}
 </section>
 
 <section class="card" id="vacations-section">
