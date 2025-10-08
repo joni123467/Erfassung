@@ -9,18 +9,18 @@
 {% endif %}
 
 <section class="metrics">
-    <h1>Arbeitszeitübersicht</h1>
+    <h1>Arbeitszeitübersicht – {{ metrics_month.strftime('%m/%Y') }}</h1>
     <div class="metric-grid">
         <article>
-            <h2>Arbeitszeit</h2>
+            <h2>Ist-Stunden (Monat)</h2>
             <p>{{ (metrics.total_work_minutes / 60)|round(2) }} Stunden</p>
         </article>
         <article>
-            <h2>Überstunden</h2>
+            <h2>Überstunden (Monat)</h2>
             <p>{{ (metrics.total_overtime_minutes / 60)|round(2) }} Stunden</p>
         </article>
         <article>
-            <h2>Sollstunden</h2>
+            <h2>Sollstunden (Monat)</h2>
             <p>{{ (metrics.target_minutes / 60)|round(2) }} Stunden</p>
         </article>
         <article>
@@ -64,12 +64,36 @@
                 <input type="hidden" name="action" value="end_break">
                 <button type="submit" class="button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
             </form>
+            {% if active_entry.company_id is not none %}
+                <form method="post" action="/punch">
+                    <input type="hidden" name="next_url" value="/dashboard">
+                    <input type="hidden" name="action" value="end_company">
+                    <button type="submit" class="button">Auftrag beenden</button>
+                </form>
+            {% endif %}
             <form method="post" action="/punch">
                 <input type="hidden" name="next_url" value="/dashboard">
                 <input type="hidden" name="action" value="end_work">
                 <button type="submit" class="button danger">Arbeitszeit beenden</button>
             </form>
         </div>
+        {% if companies %}
+        <form method="post" action="/punch" class="punch-order">
+            <input type="hidden" name="next_url" value="/dashboard">
+            <div class="punch-order-fields">
+                <label>
+                    Auftrag starten
+                    <select name="company_id" required>
+                        <option value="" disabled selected>Firma wählen</option>
+                        {% for company in companies %}
+                            <option value="{{ company.id }}">{{ company.name }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <button type="submit" name="action" value="start_company" class="button">Auftrag starten</button>
+        </form>
+        {% endif %}
     {% else %}
         <form method="post" action="/punch" class="punch-start">
             <input type="hidden" name="next_url" value="/dashboard">

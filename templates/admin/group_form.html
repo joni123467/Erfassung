@@ -18,6 +18,19 @@
             <input type="checkbox" name="is_admin" {% if is_edit and group.is_admin %}checked{% endif %}>
             Administratorrechte
         </label>
+        <label class="checkbox">
+            <input type="checkbox" name="can_manage_users" {% if is_edit and group.can_manage_users %}checked{% endif %}>
+            Benutzerverwaltung
+        </label>
+        <label class="checkbox">
+            <input type="checkbox" name="can_manage_vacations" {% if is_edit and group.can_manage_vacations %}checked{% endif %}>
+            Urlaubsanträge verwalten
+        </label>
+        <label class="checkbox">
+            <input type="checkbox" name="can_approve_manual_entries" {% if is_edit and group.can_approve_manual_entries %}checked{% endif %}>
+            Manuelle Stempelungen freigeben
+        </label>
+        <p class="form-hint full-width">Administratorgruppen erhalten automatisch alle Berechtigungen.</p>
         <div class="form-actions full-width">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Gruppe anlegen{% endif %}</button>
         </div>

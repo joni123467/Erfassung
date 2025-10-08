@@ -29,6 +29,9 @@ class Company(CompanyBase):
 class GroupBase(BaseModel):
     name: str
     is_admin: bool = False
+    can_manage_users: bool = False
+    can_manage_vacations: bool = False
+    can_approve_manual_entries: bool = False
 
 
 class GroupCreate(GroupBase):
@@ -44,8 +47,15 @@ class UserBase(BaseModel):
     username: str
     full_name: str
     email: EmailStr
-    standard_daily_minutes: int = 480
+    standard_weekly_hours: float = 40.0
     group_id: Optional[int] = None
+
+    @field_validator("standard_weekly_hours")
+    @classmethod
+    def validate_weekly_hours(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("Wochenarbeitszeit darf nicht negativ sein")
+        return value
 
 
 class UserCreate(UserBase):
@@ -75,6 +85,7 @@ class User(UserBase):
     pin_code: str
     group: Optional[Group]
     model_config = ConfigDict(from_attributes=True)
+    standard_daily_minutes: int = 0
 
 
 class TimeEntryBase(BaseModel):

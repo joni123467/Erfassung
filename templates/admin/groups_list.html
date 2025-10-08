@@ -13,7 +13,7 @@
             <thead>
             <tr>
                 <th>Name</th>
-                <th>Rolle</th>
+                <th>Berechtigungen</th>
                 <th>Benutzer</th>
                 <th>Aktionen</th>
             </tr>
@@ -22,7 +22,17 @@
             {% for group in groups %}
                 <tr>
                     <td>{{ group.name }}</td>
-                    <td>{{ 'Administrator' if group.is_admin else 'Standard' }}</td>
+                    <td>
+                        {% if group.is_admin %}
+                            Administrator (alle Rechte)
+                        {% else %}
+                            {% set perms = namespace(items=[]) %}
+                            {% if group.can_manage_users %}{% set _ = perms.items.append('Benutzerverwaltung') %}{% endif %}
+                            {% if group.can_manage_vacations %}{% set _ = perms.items.append('Urlaubsverwaltung') %}{% endif %}
+                            {% if group.can_approve_manual_entries %}{% set _ = perms.items.append('Manuelle Buchungen') %}{% endif %}
+                            {{ perms.items|join(', ') if perms.items else 'Keine zusätzlichen Rechte' }}
+                        {% endif %}
+                    </td>
                     <td>{{ group.users|length }}</td>
                     <td>
                         <a class="button small" href="/admin/groups/{{ group.id }}">Bearbeiten</a>

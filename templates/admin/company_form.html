@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{% if company %}Firma bearbeiten{% else %}Firma anlegen{% endif %} – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'companies' %}
+{% include "admin/_nav.html" %}
+{% set is_edit = company is not none %}
+<section class="card">
+    <div class="card-header">
+        <h1>{% if is_edit %}Firma bearbeiten{% else %}Neue Firma anlegen{% endif %}</h1>
+        <a href="/admin/companies" class="button ghost">Zur Übersicht</a>
+    </div>
+    <form method="post" action="{% if is_edit %}/admin/companies/{{ company.id }}/update{% else %}/admin/companies/create{% endif %}" class="form-grid">
+        <label class="full-width">
+            Firmenname
+            <input type="text" name="name" value="{{ company.name if is_edit else '' }}" required>
+        </label>
+        <label class="full-width">
+            Beschreibung
+            <textarea name="description" rows="3" placeholder="Optionale Beschreibung">{{ (company.description if is_edit else '')|trim }}</textarea>
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Firma anlegen{% endif %}</button>
+        </div>
+    </form>
+    {% if is_edit %}
+        <form method="post" action="/admin/companies/{{ company.id }}/delete" class="danger-zone" onsubmit="return confirm('Firma wirklich löschen? Es dürfen keine Buchungen mehr zugeordnet sein.');">
+            <button type="submit" class="button danger small">Firma löschen</button>
+        </form>
+    {% endif %}
+</section>
+{% endblock %}

@@ -497,6 +497,28 @@ tr.status-rejected td {
     cursor: not-allowed;
 }
 
+.punch-order {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    align-items: flex-end;
+}
+
+.punch-order label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+
+.punch-order select {
+    padding: 0.6rem;
+    border-radius: 6px;
+    border: 1px solid #ccd4f3;
+    font: inherit;
+}
+
 .punch-start {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
