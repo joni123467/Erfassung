@@ -20,6 +20,10 @@
             <p>{{ (metrics.total_overtime_minutes / 60)|round(2) }} Stunden</p>
         </article>
         <article>
+            <h2>Sollstunden</h2>
+            <p>{{ (metrics.target_minutes / 60)|round(2) }} Stunden</p>
+        </article>
+        <article>
             <h2>Offene Urlaubsanträge</h2>
             <p>{{ metrics.pending_vacations }}</p>
         </article>
@@ -125,71 +129,19 @@
         </label>
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
+    <p class="form-hint">Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.</p>
+    <p class="form-hint">Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.</p>
 </section>
 
-<section>
-    <h2>Arbeitszeitbuchungen</h2>
-    <table>
-        <thead>
-        <tr>
-            <th>Datum</th>
-            <th>Firma</th>
-            <th>Start</th>
-            <th>Ende</th>
-            <th>Pause</th>
-            <th>Arbeitszeit</th>
-            <th>Überstunden</th>
-            <th>Kommentar</th>
-        </tr>
-        </thead>
-        <tbody>
-        {% for entry in entries %}
-            <tr class="{% if entry.is_open %}open-entry{% endif %}">
-                <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
-                <td>{{ entry.company.name if entry.company else '–' }}</td>
-                <td>{{ entry.start_time.strftime('%H:%M') }}</td>
-                <td>{% if entry.is_open %}läuft{% else %}{{ entry.end_time.strftime('%H:%M') }}{% endif %}</td>
-                <td>
-                    {{ entry.total_break_minutes }} Min
-                    {% if entry.break_started_at %}
-                        (Pause läuft)
-                    {% endif %}
-                </td>
-                <td>{{ (entry.worked_minutes / 60)|round(2) }} Std</td>
-                <td>{{ (entry.overtime_minutes / 60)|round(2) }} Std</td>
-                <td>{{ entry.notes }}</td>
-            </tr>
+<section class="card">
+    <h2>Feiertage ({{ holiday_region_label }})</h2>
+    <ul>
+        {% for holiday in holidays %}
+            <li>{{ holiday.date.strftime('%d.%m.%Y') }} – {{ holiday.name }}</li>
         {% else %}
-            <tr><td colspan="8">Noch keine Buchungen vorhanden.</td></tr>
+            <li>Keine Feiertage eingetragen. Bitte Synchronisation ausführen.</li>
         {% endfor %}
-        </tbody>
-    </table>
-    <p><a class="button" href="/api/users/{{ user.id }}/excel">Als Excel exportieren</a></p>
-</section>
-
-<section class="flex">
-    <div>
-        <h2>Urlaubsplanung</h2>
-        <ul>
-            {% for vacation in vacations %}
-                <li>
-                    {{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}
-                    ({{ vacation.status }})
-                </li>
-            {% else %}
-                <li>Keine Urlaubsanträge vorhanden.</li>
-            {% endfor %}
-        </ul>
-    </div>
-    <div>
-        <h2>Feiertage ({{ holiday_region_label }})</h2>
-        <ul>
-            {% for holiday in holidays %}
-                <li>{{ holiday.date.strftime('%d.%m.%Y') }} – {{ holiday.name }}</li>
-            {% else %}
-                <li>Keine Feiertage eingetragen. Bitte Synchronisation ausführen.</li>
-            {% endfor %}
-        </ul>
-    </div>
+    </ul>
+    <p><a class="button" href="/records">Zu meinen Buchungen wechseln</a></p>
 </section>
 {% endblock %}

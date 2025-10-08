@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{% if group %}Gruppe bearbeiten{% else %}Gruppe anlegen{% endif %} – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'groups' %}
+{% include "admin/_nav.html" %}
+{% set is_edit = group is not none %}
+<section class="card">
+    <div class="card-header">
+        <h1>{% if is_edit %}Gruppe bearbeiten{% else %}Neue Gruppe anlegen{% endif %}</h1>
+        <a href="/admin/groups" class="button ghost">Zur Übersicht</a>
+    </div>
+    <form method="post" action="{% if is_edit %}/admin/groups/{{ group.id }}/update{% else %}/admin/groups/create{% endif %}" class="form-grid">
+        <label class="full-width">
+            Gruppenname
+            <input type="text" name="name" value="{{ group.name if is_edit else '' }}" required>
+        </label>
+        <label class="checkbox">
+            <input type="checkbox" name="is_admin" {% if is_edit and group.is_admin %}checked{% endif %}>
+            Administratorrechte
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Gruppe anlegen{% endif %}</button>
+        </div>
+    </form>
+    {% if is_edit %}
+        <form method="post" action="/admin/groups/{{ group.id }}/delete" class="danger-zone" onsubmit="return confirm('Gruppe wirklich löschen? Zugeordnete Nutzer müssen vorher entfernt werden.');">
+            <button type="submit" class="button danger small">Gruppe löschen</button>
+        </form>
+    {% endif %}
+</section>
+{% endblock %}

@@ -138,6 +138,8 @@ def start_running_entry(
         break_started_at=None,
         is_open=True,
         notes=notes,
+        status=models.TimeEntryStatus.APPROVED,
+        is_manual=False,
     )
     return create_time_entry(db, entry)
 
@@ -179,21 +181,48 @@ def end_break(db: Session, entry: models.TimeEntry, finished_at: datetime) -> mo
     return entry
 
 
-def get_time_entries_for_user(db: Session, user_id: int, start: Optional[date] = None, end: Optional[date] = None) -> List[models.TimeEntry]:
+def get_time_entries_for_user(
+    db: Session,
+    user_id: int,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    statuses: Optional[Iterable[str]] = None,
+) -> List[models.TimeEntry]:
     query = db.query(models.TimeEntry).filter(models.TimeEntry.user_id == user_id)
     if start:
         query = query.filter(models.TimeEntry.work_date >= start)
     if end:
         query = query.filter(models.TimeEntry.work_date <= end)
+    if statuses:
+        query = query.filter(models.TimeEntry.status.in_(list(statuses)))
     return query.order_by(models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()).all()
 
 
-def get_time_entries(db: Session, user_id: Optional[int] = None) -> List[models.TimeEntry]:
+def get_time_entries(
+    db: Session,
+    user_id: Optional[int] = None,
+    *,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    company_id: Optional[int] = None,
+    statuses: Optional[Iterable[str]] = None,
+    is_manual: Optional[bool] = None,
+) -> List[models.TimeEntry]:
     query = db.query(models.TimeEntry).order_by(
         models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()
     )
     if user_id:
         query = query.filter(models.TimeEntry.user_id == user_id)
+    if start:
+        query = query.filter(models.TimeEntry.work_date >= start)
+    if end:
+        query = query.filter(models.TimeEntry.work_date <= end)
+    if company_id:
+        query = query.filter(models.TimeEntry.company_id == company_id)
+    if statuses:
+        query = query.filter(models.TimeEntry.status.in_(list(statuses)))
+    if is_manual is not None:
+        query = query.filter(models.TimeEntry.is_manual.is_(is_manual))
     return query.all()
 
 
@@ -201,34 +230,21 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return None
-    for key, value in entry.model_dump().items():
-        if key == "break_started_at":
-            value = None
-        if key == "is_open":
-            value = False
+    payload = entry.model_dump()
+    payload["break_started_at"] = None
+    payload["is_open"] = False
+    for key, value in payload.items():
         setattr(db_entry, key, value)
-    db_entry.is_open = False
-    db_entry.break_started_at = None
     db.commit()
     db.refresh(db_entry)
     return db_entry
 
 
-def get_time_entries(db: Session, user_id: Optional[int] = None) -> List[models.TimeEntry]:
-    query = db.query(models.TimeEntry).order_by(
-        models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()
-    )
-    if user_id:
-        query = query.filter(models.TimeEntry.user_id == user_id)
-    return query.all()
-
-
-def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate) -> Optional[models.TimeEntry]:
+def set_time_entry_status(db: Session, entry_id: int, status: str) -> Optional[models.TimeEntry]:
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return None
-    for key, value in entry.model_dump().items():
-        setattr(db_entry, key, value)
+    db_entry.status = status
     db.commit()
     db.refresh(db_entry)
     return db_entry
@@ -268,6 +284,15 @@ def get_vacations_for_user(db: Session, user_id: int) -> List[models.VacationReq
         .order_by(models.VacationRequest.start_date)
         .all()
     )
+
+
+def get_vacation_requests(
+    db: Session, status: Optional[str] = None
+) -> List[models.VacationRequest]:
+    query = db.query(models.VacationRequest).order_by(models.VacationRequest.start_date)
+    if status:
+        query = query.filter(models.VacationRequest.status == status)
+    return query.all()
 
 
 def create_holiday(db: Session, holiday: schemas.HolidayCreate) -> models.Holiday:

@@ -48,6 +48,12 @@ class User(Base):
     )
 
 
+class TimeEntryStatus:
+    APPROVED = "approved"
+    PENDING = "pending"
+    REJECTED = "rejected"
+
+
 class TimeEntry(Base):
     __tablename__ = "time_entries"
 
@@ -61,11 +67,30 @@ class TimeEntry(Base):
     break_started_at = Column(Time, nullable=True)
     is_open = Column(Boolean, default=False)
     notes = Column(String, default="")
+    status = Column(String, default=TimeEntryStatus.APPROVED)
+    is_manual = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="time_entries")
     company = relationship("Company", back_populates="time_entries")
+
+    @property
+    def required_break_minutes(self) -> int:
+        start_dt = datetime.combine(self.work_date, self.start_time)
+        if self.is_open:
+            now_dt = datetime.now()
+            end_dt = datetime.combine(now_dt.date(), now_dt.time())
+        else:
+            end_dt = datetime.combine(self.work_date, self.end_time)
+        if end_dt < start_dt:
+            end_dt += timedelta(days=1)
+        duration = int((end_dt - start_dt).total_seconds() // 60)
+        if duration < 6 * 60:
+            return 0
+        if duration < 9 * 60:
+            return 30
+        return 45
 
     @property
     def worked_minutes(self) -> int:
@@ -77,7 +102,9 @@ class TimeEntry(Base):
             end_dt = datetime.combine(self.work_date, self.end_time)
         if end_dt < start_dt:
             end_dt += timedelta(days=1)
-        minutes = int((end_dt - start_dt).total_seconds() // 60) - self.total_break_minutes
+        raw_minutes = int((end_dt - start_dt).total_seconds() // 60)
+        applied_break = max(self.total_break_minutes, self.required_break_minutes)
+        minutes = raw_minutes - applied_break
         return max(minutes, 0)
 
     @property

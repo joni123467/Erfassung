@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date, datetime, time
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse
@@ -51,6 +52,10 @@ def ensure_schema() -> None:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN break_started_at TIME"))
             if "is_open" not in columns:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_open INTEGER DEFAULT 0"))
+            if "status" not in columns:
+                connection.execute(text("ALTER TABLE time_entries ADD COLUMN status VARCHAR DEFAULT 'approved'"))
+            if "is_manual" not in columns:
+                connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_manual INTEGER DEFAULT 0"))
             connection.execute(text("UPDATE time_entries SET is_open = 0 WHERE is_open IS NULL"))
 
 
@@ -144,8 +149,6 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     metrics = services.calculate_dashboard_metrics(db, user.id)
-    time_entries = crud.get_time_entries_for_user(db, user.id)
-    vacations = crud.get_vacations_for_user(db, user.id)
     active_entry = crud.get_open_time_entry(db, user.id)
     holiday_region = crud.get_default_holiday_region(db)
     holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
@@ -159,38 +162,12 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
             "request": request,
             "user": user,
             "metrics": metrics,
-            "entries": time_entries,
-            "vacations": vacations,
             "holidays": holidays,
             "holiday_region": holiday_region,
             "holiday_region_label": holiday_region_label,
             "companies": companies,
             "message": message,
             "error": error,
-            "active_entry": active_entry,
-        },
-    )
-
-
-@app.get("/time", response_class=HTMLResponse)
-def time_tracking_page(request: Request, db: Session = Depends(database.get_db)):
-    user = get_logged_in_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    entries = crud.get_time_entries_for_user(db, user.id)
-    active_entry = crud.get_open_time_entry(db, user.id)
-    message = request.query_params.get("msg")
-    error = request.query_params.get("error")
-    companies = crud.get_companies(db)
-    return templates.TemplateResponse(
-        "time_tracking.html",
-        {
-            "request": request,
-            "user": user,
-            "entries": entries,
-            "message": message,
-            "error": error,
-            "companies": companies,
             "active_entry": active_entry,
         },
     )
@@ -228,12 +205,16 @@ def submit_time_entry(
             break_started_at=None,
             is_open=False,
             notes=notes,
+            status=models.TimeEntryStatus.PENDING,
+            is_manual=True,
         )
         crud.create_time_entry(db, entry)
     except ValueError:
         redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Zeiteingabe")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect(_sanitize_next(next_url), msg="Zeitbuchung erfolgreich erfasst")
+    redirect = _build_redirect(
+        _sanitize_next(next_url), msg="Zeitbuchung eingereicht und wartet auf Freigabe"
+    )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -323,19 +304,18 @@ def vacation_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    vacations = crud.get_vacations_for_user(db, user.id)
+    focus = request.query_params.get("focus", "vacations")
+    params = {}
+    if focus:
+        params["focus"] = focus
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    return templates.TemplateResponse(
-        "vacations.html",
-        {
-            "request": request,
-            "user": user,
-            "vacations": vacations,
-            "message": message,
-            "error": error,
-        },
-    )
+    if message:
+        params["msg"] = message
+    if error:
+        params["error"] = error
+    redirect = _build_redirect("/records", **params)
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/vacations")
@@ -351,7 +331,7 @@ def submit_vacation(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if end_date < start_date:
         return RedirectResponse(
-            url="/vacations?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen",
+            url="/records?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen&focus=vacations",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     crud.create_vacation_request(
@@ -364,8 +344,107 @@ def submit_vacation(
         ),
     )
     return RedirectResponse(
-        url="/vacations?msg=Urlaubsantrag+erstellt",
+        url="/records?msg=Urlaubsantrag+erstellt&focus=vacations",
         status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.get("/records", response_class=HTMLResponse)
+def records_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    focus = request.query_params.get("focus", "")
+    month_param = request.query_params.get("month")
+    try:
+        if month_param:
+            year, month = map(int, month_param.split("-"))
+            selected_month = date(year, month, 1)
+        else:
+            selected_month = date.today().replace(day=1)
+    except ValueError:
+        selected_month = date.today().replace(day=1)
+    last_day = monthrange(selected_month.year, selected_month.month)[1]
+    start_date = selected_month
+    end_date = date(selected_month.year, selected_month.month, last_day)
+    company_param = request.query_params.get("company")
+    company_filter_id: Optional[int] = None
+    company_filter_none = False
+    if company_param == "none":
+        company_filter_none = True
+    elif company_param:
+        try:
+            company_filter_id = int(company_param)
+        except ValueError:
+            company_filter_id = None
+    entries = crud.get_time_entries(
+        db,
+        user.id,
+        start=start_date,
+        end=end_date,
+    )
+    if company_filter_none:
+        entries = [entry for entry in entries if entry.company_id is None]
+    elif company_filter_id is not None:
+        entries = [entry for entry in entries if entry.company_id == company_filter_id]
+    approved_entries = [entry for entry in entries if entry.status == models.TimeEntryStatus.APPROVED]
+    total_work_minutes = sum(entry.worked_minutes for entry in approved_entries)
+    total_overtime_minutes = sum(entry.overtime_minutes for entry in approved_entries)
+    worked_days = {entry.work_date for entry in approved_entries}
+    target_minutes = len(worked_days) * (user.standard_daily_minutes or 0)
+
+    def aggregate_company_totals(source_entries: List[models.TimeEntry]):
+        totals: dict[str, dict[str, object]] = {}
+        for entry in source_entries:
+            key = "none" if entry.company_id is None else str(entry.company_id)
+            record = totals.setdefault(
+                key,
+                {
+                    "company_id": entry.company_id,
+                    "name": entry.company.name if entry.company else "Allgemein",
+                    "minutes": 0,
+                    "count": 0,
+                },
+            )
+            record["minutes"] = int(record["minutes"]) + entry.worked_minutes
+            record["count"] = int(record["count"]) + 1
+        return sorted(totals.values(), key=lambda item: str(item["name"]).lower())
+
+    approved_month_entries = [
+        entry
+        for entry in crud.get_time_entries(db, user.id, start=start_date, end=end_date)
+        if entry.status == models.TimeEntryStatus.APPROVED
+    ]
+    company_totals_all = aggregate_company_totals(approved_month_entries)
+    company_totals_filtered = aggregate_company_totals(approved_entries)
+
+    companies = crud.get_companies(db)
+    vacations = crud.get_vacations_for_user(db, user.id)
+    month_value = f"{selected_month.year:04d}-{selected_month.month:02d}"
+    return templates.TemplateResponse(
+        "records.html",
+        {
+            "request": request,
+            "user": user,
+            "message": message,
+            "error": error,
+            "entries": entries,
+            "approved_entries": approved_entries,
+            "total_work_minutes": total_work_minutes,
+            "total_overtime_minutes": total_overtime_minutes,
+            "target_minutes": target_minutes,
+            "company_totals_all": company_totals_all,
+            "company_totals_filtered": company_totals_filtered,
+            "companies": companies,
+            "vacations": vacations,
+            "selected_month": selected_month,
+            "month_value": month_value,
+            "company_filter_id": company_filter_id,
+            "company_filter_none": company_filter_none,
+            "focus": focus,
+        },
     )
 
 
@@ -373,8 +452,32 @@ def _ensure_admin(user: models.User) -> bool:
     return bool(user.group and user.group.is_admin)
 
 
-@app.get("/admin", response_class=HTMLResponse)
+def _admin_template(
+    template: str,
+    request: Request,
+    user: models.User,
+    *,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+    **context,
+):
+    payload = {"request": request, "user": user, "message": message, "error": error}
+    payload.update(context)
+    return templates.TemplateResponse(template, payload)
+
+
+@app.get("/admin", include_in_schema=False)
 def admin_portal(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/admin/users", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
@@ -382,8 +485,158 @@ def admin_portal(request: Request, db: Session = Depends(database.get_db)):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    selected_user = request.query_params.get("user")
-    selected_user_id = int(selected_user) if selected_user and selected_user.isdigit() else None
+    users = crud.get_users(db)
+    return _admin_template(
+        "admin/users_list.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        users=users,
+    )
+
+
+@app.get("/admin/users/new", response_class=HTMLResponse)
+def admin_users_new(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    groups = crud.get_groups(db)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/users_form.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        groups=groups,
+        form_user=None,
+    )
+
+
+@app.get("/admin/users/{user_id}", response_class=HTMLResponse)
+def admin_users_edit(request: Request, user_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    target = crud.get_user(db, user_id)
+    if not target:
+        return RedirectResponse(
+            url="/admin/users?error=Benutzer+nicht+gefunden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    groups = crud.get_groups(db)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/users_form.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        groups=groups,
+        form_user=target,
+    )
+
+
+@app.get("/admin/groups", response_class=HTMLResponse)
+def admin_groups_list(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    groups = crud.get_groups(db)
+    return _admin_template(
+        "admin/groups_list.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        groups=groups,
+    )
+
+
+@app.get("/admin/groups/new", response_class=HTMLResponse)
+def admin_groups_new(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/group_form.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        group=None,
+    )
+
+
+@app.get("/admin/groups/{group_id}", response_class=HTMLResponse)
+def admin_groups_edit(request: Request, group_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    group = crud.get_group(db, group_id)
+    if not group:
+        return RedirectResponse(
+            url="/admin/groups?error=Gruppe+nicht+gefunden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/group_form.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        group=group,
+    )
+
+
+@app.get("/admin/companies", response_class=HTMLResponse)
+def admin_companies_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    companies = crud.get_companies(db)
+    return _admin_template(
+        "admin/companies.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        companies=companies,
+    )
+
+
+@app.get("/admin/holidays", response_class=HTMLResponse)
+def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
     selected_state_param = request.query_params.get("state")
     if selected_state_param:
         selected_state_param = selected_state_param.upper()
@@ -396,28 +649,43 @@ def admin_portal(request: Request, db: Session = Depends(database.get_db)):
         selected_year = int(selected_year_param) if selected_year_param else date.today().year
     except ValueError:
         selected_year = date.today().year
-    groups = crud.get_groups(db)
-    users = crud.get_users(db)
-    companies = crud.get_companies(db)
-    time_entries = crud.get_time_entries(db, selected_user_id)
     holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
-    return templates.TemplateResponse(
-        "admin.html",
-        {
-            "request": request,
-            "user": user,
-            "groups": groups,
-            "users": users,
-            "companies": companies,
-            "time_entries": time_entries,
-            "selected_user_id": selected_user_id,
-            "holidays": holidays,
-            "holiday_states": HOLIDAY_STATE_CHOICES,
-            "selected_state": selected_state,
-            "selected_year": selected_year,
-            "message": message,
-            "error": error,
-        },
+    return _admin_template(
+        "admin/holidays.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        holidays=holidays,
+        holiday_states=HOLIDAY_STATE_CHOICES,
+        selected_state=selected_state,
+        selected_year=selected_year,
+    )
+
+
+@app.get("/admin/approvals", response_class=HTMLResponse)
+def admin_approvals_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    pending_entries = crud.get_time_entries(
+        db,
+        statuses=[models.TimeEntryStatus.PENDING],
+        is_manual=True,
+    )
+    pending_vacations = crud.get_vacation_requests(db, status=models.VacationStatus.PENDING)
+    return _admin_template(
+        "admin/approvals.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        pending_entries=pending_entries,
+        pending_vacations=pending_vacations,
     )
 
 
@@ -437,10 +705,10 @@ def create_group_html(
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
-            url="/admin?error=Gruppe+existiert+bereits",
+            url="/admin/groups/new?error=Gruppe+existiert+bereits",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    return RedirectResponse(url="/admin?msg=Gruppe+angelegt", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/admin/groups?msg=Gruppe+angelegt", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/groups/{group_id}/update")
@@ -460,12 +728,15 @@ def update_group_html(
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
-            url="/admin?error=Gruppenname+bereits+vergeben",
+            url=f"/admin/groups/{group_id}?error=Gruppenname+bereits+vergeben",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     if not updated:
-        return RedirectResponse(url="/admin?error=Gruppe+nicht+gefunden", status_code=status.HTTP_303_SEE_OTHER)
-    return RedirectResponse(url="/admin?msg=Gruppe+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/admin/groups?error=Gruppe+nicht+gefunden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url="/admin/groups?msg=Gruppe+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/groups/{group_id}/delete")
@@ -476,10 +747,10 @@ def delete_group_html(request: Request, group_id: int, db: Session = Depends(dat
     deleted = crud.delete_group(db, group_id)
     if not deleted:
         return RedirectResponse(
-            url="/admin?error=Gruppe+konnte+nicht+gelöscht+werden",
+            url="/admin/groups?error=Gruppe+konnte+nicht+gelöscht+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    return RedirectResponse(url="/admin?msg=Gruppe+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/admin/groups?msg=Gruppe+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/users/create")
@@ -511,12 +782,12 @@ def create_user_html(
         )
     except (ValueError, IntegrityError) as exc:
         db.rollback()
-        message = "Ungültige Eingabe" if isinstance(exc, ValueError) else "Benutzer konnte nicht angelegt werden"
+        message = "Ungültige+Eingabe" if isinstance(exc, ValueError) else "Benutzer+konnte+nicht+angelegt+werden"
         return RedirectResponse(
-            url=f"/admin?error={message}",
+            url=f"/admin/users/new?error={message}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    return RedirectResponse(url="/admin?msg=Benutzer+angelegt", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/admin/users?msg=Benutzer+angelegt", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/users/{user_id}/update")
@@ -550,14 +821,17 @@ def update_user_html(
         )
     except (ValueError, IntegrityError) as exc:
         db.rollback()
-        message = "Ungültige Eingabe" if isinstance(exc, ValueError) else "Aktualisierung fehlgeschlagen"
+        message = "Ungültige+Eingabe" if isinstance(exc, ValueError) else "Aktualisierung+fehlgeschlagen"
         return RedirectResponse(
-            url=f"/admin?error={message}",
+            url=f"/admin/users/{user_id}?error={message}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     if not updated:
-        return RedirectResponse(url="/admin?error=Benutzer+nicht+gefunden", status_code=status.HTTP_303_SEE_OTHER)
-    return RedirectResponse(url="/admin?msg=Benutzer+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/admin/users?error=Benutzer+nicht+gefunden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url="/admin/users?msg=Benutzer+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/users/{user_id}/delete")
@@ -566,8 +840,11 @@ def delete_user_html(request: Request, user_id: int, db: Session = Depends(datab
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_user(db, user_id):
-        return RedirectResponse(url="/admin?error=Benutzer+konnte+nicht+gelöscht+werden", status_code=status.HTTP_303_SEE_OTHER)
-    return RedirectResponse(url="/admin?msg=Benutzer+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/admin/users?error=Benutzer+konnte+nicht+gelöscht+werden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url="/admin/users?msg=Benutzer+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/companies/create")
@@ -588,10 +865,10 @@ def create_company_html(
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
-            url="/admin?error=Firma+existiert+bereits",
+            url="/admin/companies?error=Firma+existiert+bereits",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    return RedirectResponse(url="/admin?msg=Firma+angelegt", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/admin/companies?msg=Firma+angelegt", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/companies/{company_id}/update")
@@ -613,10 +890,16 @@ def update_company_html(
         )
     except IntegrityError:
         db.rollback()
-        return RedirectResponse(url="/admin?error=Firmenname+bereits+vergeben", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/admin/companies?error=Firmenname+bereits+vergeben",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     if not updated:
-        return RedirectResponse(url="/admin?error=Firma+nicht+gefunden", status_code=status.HTTP_303_SEE_OTHER)
-    return RedirectResponse(url="/admin?msg=Firma+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/admin/companies?error=Firma+nicht+gefunden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url="/admin/companies?msg=Firma+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/companies/{company_id}/delete")
@@ -626,10 +909,10 @@ def delete_company_html(request: Request, company_id: int, db: Session = Depends
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_company(db, company_id):
         return RedirectResponse(
-            url="/admin?error=Firma+konnte+nicht+gelöscht+werden",
+            url="/admin/companies?error=Firma+konnte+nicht+gelöscht+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    return RedirectResponse(url="/admin?msg=Firma+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/admin/companies?msg=Firma+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/time-entries/{entry_id}/update")
@@ -650,7 +933,11 @@ def update_time_entry_html(
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if end_time <= start_time:
-        redirect = _build_redirect("/admin", error="Endzeit muss nach der Startzeit liegen", user=redirect_user)
+        redirect = _build_redirect(
+            "/admin/users",
+            error="Endzeit muss nach der Startzeit liegen",
+            user=redirect_user,
+        )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     company_value = int(company_id) if company_id else None
     try:
@@ -670,12 +957,16 @@ def update_time_entry_html(
             ),
         )
     except ValueError:
-        redirect = _build_redirect("/admin", error="Ungültige Angaben", user=redirect_user)
+        redirect = _build_redirect(
+            "/admin/users", error="Ungültige Angaben", user=redirect_user
+        )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if not updated:
-        redirect = _build_redirect("/admin", error="Buchung nicht gefunden", user=redirect_user)
+        redirect = _build_redirect(
+            "/admin/users", error="Buchung nicht gefunden", user=redirect_user
+        )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect("/admin", msg="Buchung aktualisiert", user=redirect_user)
+    redirect = _build_redirect("/admin/users", msg="Buchung aktualisiert", user=redirect_user)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -690,9 +981,39 @@ def delete_time_entry_html(
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_time_entry(db, entry_id):
-        redirect = _build_redirect("/admin", error="Buchung konnte nicht gelöscht werden", user=redirect_user)
+        redirect = _build_redirect(
+            "/admin/users", error="Buchung konnte nicht gelöscht werden", user=redirect_user
+        )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect("/admin", msg="Buchung gelöscht", user=redirect_user)
+    redirect = _build_redirect(
+        "/admin/users", msg="Buchung gelöscht", user=redirect_user
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/time-entries/{entry_id}/status")
+def set_time_entry_status_admin(
+    request: Request,
+    entry_id: int,
+    action: str = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _ensure_admin(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if action == "approve":
+        new_status = models.TimeEntryStatus.APPROVED
+    elif action == "reject":
+        new_status = models.TimeEntryStatus.REJECTED
+    else:
+        redirect = _build_redirect("/admin/approvals", error="Ungültige Aktion")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    updated = crud.set_time_entry_status(db, entry_id, new_status)
+    if not updated:
+        redirect = _build_redirect("/admin/approvals", error="Buchung nicht gefunden")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    message = "Buchung freigegeben" if new_status == models.TimeEntryStatus.APPROVED else "Buchung abgelehnt"
+    redirect = _build_redirect("/admin/approvals", msg=message)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -708,20 +1029,54 @@ def sync_holidays_admin(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     state = state.upper()
     if state not in HOLIDAY_STATE_CODES:
-        redirect = _build_redirect("/admin", error="Ungültiges Bundesland", state=state, holiday_year=str(year))
+        redirect = _build_redirect(
+            "/admin/holidays",
+            error="Ungültiges Bundesland",
+            state=state,
+            holiday_year=str(year),
+        )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if year < 1900 or year > 2100:
         redirect = _build_redirect(
-            "/admin", error="Jahr muss zwischen 1900 und 2100 liegen", state=state, holiday_year=str(year)
+            "/admin/holidays",
+            error="Jahr muss zwischen 1900 und 2100 liegen",
+            state=state,
+            holiday_year=str(year),
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     holidays = holiday_calculator.ensure_holidays(db, year, state)
     redirect = _build_redirect(
-        "/admin",
+        "/admin/holidays",
         msg=f"{len(holidays)}+Feiertage+aktualisiert",
         state=state,
         holiday_year=str(year),
     )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/vacations/{vacation_id}/status")
+def set_vacation_status_admin(
+    request: Request,
+    vacation_id: int,
+    action: str = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _ensure_admin(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if action == "approve":
+        new_status = models.VacationStatus.APPROVED
+    elif action == "reject":
+        new_status = models.VacationStatus.REJECTED
+    else:
+        redirect = _build_redirect("/admin/approvals", error="Ungültige Aktion")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    updated = crud.update_vacation_status(db, vacation_id, new_status)
+    if not updated:
+        redirect = _build_redirect("/admin/approvals", error="Urlaubsantrag nicht gefunden")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    message = "Urlaub genehmigt" if new_status == models.VacationStatus.APPROVED else "Urlaub abgelehnt"
+    redirect = _build_redirect("/admin/approvals", msg=message)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -743,14 +1098,14 @@ def create_holiday_admin(
     except IntegrityError:
         db.rollback()
         redirect = _build_redirect(
-            "/admin",
+            "/admin/holidays",
             error="Feiertag konnte nicht gespeichert werden",
             state=region,
             holiday_year=str(holiday_date.year),
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
-        "/admin",
+        "/admin/holidays",
         msg="Feiertag+gespeichert",
         state=region,
         holiday_year=str(holiday_date.year),
@@ -772,13 +1127,15 @@ def delete_holiday_admin(
     state = state.upper()
     if not crud.delete_holiday(db, holiday_id):
         redirect = _build_redirect(
-            "/admin",
+            "/admin/holidays",
             error="Feiertag konnte nicht gelöscht werden",
             state=state,
             holiday_year=str(year),
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect("/admin", msg="Feiertag gelöscht", state=state, holiday_year=str(year))
+    redirect = _build_redirect(
+        "/admin/holidays", msg="Feiertag gelöscht", state=state, holiday_year=str(year)
+    )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 

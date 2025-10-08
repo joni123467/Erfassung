@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Benutzerverwaltung – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'users' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>Benutzerverwaltung</h1>
+        <a href="/admin/users/new" class="button">Neuen Benutzer anlegen</a>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Gruppe</th>
+                <th>Standardzeit</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for item in users %}
+                <tr>
+                    <td>{{ item.full_name }} <small class="muted">({{ item.username }})</small></td>
+                    <td>{{ item.email }}</td>
+                    <td>{{ item.group.name if item.group else 'ohne Gruppe' }}</td>
+                    <td>{{ item.standard_daily_minutes }} Minuten</td>
+                    <td>
+                        <a class="button small" href="/admin/users/{{ item.id }}">Bearbeiten</a>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5">Es sind noch keine Benutzer vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

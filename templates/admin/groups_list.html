@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Gruppenverwaltung – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'groups' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>Gruppenverwaltung</h1>
+        <a href="/admin/groups/new" class="button">Neue Gruppe anlegen</a>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Name</th>
+                <th>Rolle</th>
+                <th>Benutzer</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for group in groups %}
+                <tr>
+                    <td>{{ group.name }}</td>
+                    <td>{{ 'Administrator' if group.is_admin else 'Standard' }}</td>
+                    <td>{{ group.users|length }}</td>
+                    <td>
+                        <a class="button small" href="/admin/groups/{{ group.id }}">Bearbeiten</a>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4">Noch keine Gruppen vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
