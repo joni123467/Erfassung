@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Freigaben – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'approvals' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <h1>Manuelle Zeitbuchungen</h1>
+    <p>Pendente Zeitbuchungen müssen bestätigt werden, bevor sie in Auswertungen erscheinen.</p>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Mitarbeiter</th>
+                <th>Datum</th>
+                <th>Zeiten</th>
+                <th>Firma</th>
+                <th>Pause</th>
+                <th>Kommentar</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for entry in pending_entries %}
+                <tr>
+                    <td>{{ entry.user.full_name }}</td>
+                    <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ entry.start_time.strftime('%H:%M') }} – {{ entry.end_time.strftime('%H:%M') }}</td>
+                    <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
+                    <td>{{ entry.total_break_minutes }} Min</td>
+                    <td>{{ entry.notes or '-' }}</td>
+                    <td class="actions">
+                        <form method="post" action="/admin/time-entries/{{ entry.id }}/status" class="inline-form">
+                            <button type="submit" name="action" value="approve" class="button small">Freigeben</button>
+                            <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>
+                        </form>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7">Keine offenen manuellen Buchungen vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+<section class="card">
+    <h1>Urlaubsanträge</h1>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Mitarbeiter</th>
+                <th>Zeitraum</th>
+                <th>Kommentar</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for vacation in pending_vacations %}
+                <tr>
+                    <td>{{ vacation.user.full_name }}</td>
+                    <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ vacation.comment or '-' }}</td>
+                    <td class="actions">
+                        <form method="post" action="/admin/vacations/{{ vacation.id }}/status" class="inline-form">
+                            <button type="submit" name="action" value="approve" class="button small">Genehmigen</button>
+                            <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>
+                        </form>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4">Keine offenen Urlaubsanträge vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

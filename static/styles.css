@@ -400,6 +400,88 @@ li {
     color: #ff8f00;
 }
 
+.striped-table tbody tr:nth-child(even) {
+    background: rgba(31, 60, 136, 0.04);
+}
+
+.form-hint {
+    font-size: 0.9rem;
+    color: #5c618a;
+    margin: -0.5rem 0 0;
+}
+
+.admin-nav {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.admin-nav__link {
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    text-decoration: none;
+    border: 1px solid rgba(31, 60, 136, 0.2);
+    color: var(--brand-dark);
+    font-weight: 600;
+}
+
+.admin-nav__link.active,
+.admin-nav__link:hover {
+    background: var(--brand);
+    color: #fff;
+    border-color: var(--brand);
+}
+
+.danger-zone {
+    margin-top: 1rem;
+}
+
+.danger-zone .button {
+    align-self: flex-start;
+}
+
+.muted {
+    color: #6b6f86;
+    font-size: 0.85rem;
+}
+
+.status-label {
+    font-weight: 600;
+}
+
+.status-label.status-pending {
+    color: #ff8f00;
+}
+
+.status-label.status-approved {
+    color: var(--success);
+}
+
+.status-label.status-rejected {
+    color: var(--danger);
+}
+
+tr.status-pending td {
+    background: rgba(255, 193, 7, 0.08);
+}
+
+tr.status-rejected td {
+    background: rgba(214, 40, 57, 0.08);
+}
+
+.highlight {
+    box-shadow: 0 0 0 3px rgba(31, 60, 136, 0.15);
+}
+
+.actions .button {
+    margin-right: 0.5rem;
+}
+
+.actions .button:last-child {
+    margin-right: 0;
+}
+
 .punch-actions {
     display: flex;
     flex-wrap: wrap;

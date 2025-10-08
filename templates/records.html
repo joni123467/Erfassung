@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Buchungen & Urlaub – Erfassung{% endblock %}
+{% block content %}
+{% if focus == 'vacations' %}
+<script>
+    window.addEventListener('DOMContentLoaded', function () {
+        const target = document.getElementById('vacations-section');
+        if (target) {
+            target.classList.add('highlight');
+            target.scrollIntoView({behavior: 'smooth', block: 'start'});
+        }
+    });
+</script>
+{% endif %}
+<section class="card">
+    <div class="card-header">
+        <h1>Arbeitszeitübersicht</h1>
+        <a class="button" href="/api/users/{{ user.id }}/excel">Excel-Export</a>
+    </div>
+    <form method="get" action="/records" class="filter-bar">
+        <label>
+            Monat
+            <input type="month" name="month" value="{{ month_value }}">
+        </label>
+        <label>
+            Firma
+            <select name="company">
+                <option value="">Alle Firmen</option>
+                <option value="none" {% if company_filter_none %}selected{% endif %}>Allgemeine Arbeitszeit</option>
+                {% for company in companies %}
+                    <option value="{{ company.id }}" {% if company_filter_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% if focus %}
+            <input type="hidden" name="focus" value="{{ focus }}">
+        {% endif %}
+        <button type="submit" class="button small">Filtern</button>
+        <a class="button ghost small" href="/records">Zurücksetzen</a>
+    </form>
+    <div class="metric-grid">
+        <article>
+            <h2>Ist-Stunden</h2>
+            <p>{{ (total_work_minutes / 60)|round(2) }} Stunden</p>
+        </article>
+        <article>
+            <h2>Soll-Stunden</h2>
+            <p>{{ (target_minutes / 60)|round(2) }} Stunden</p>
+        </article>
+        <article>
+            <h2>Überstunden</h2>
+            <p>{{ (total_overtime_minutes / 60)|round(2) }} Stunden</p>
+        </article>
+    </div>
+    <p class="form-hint">Es werden nur freigegebene Buchungen in der Auswertung berücksichtigt.</p>
+</section>
+
+<section class="card" id="entries-section">
+    <h2>Buchungen im ausgewählten Monat</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Datum</th>
+                <th>Firma</th>
+                <th>Start</th>
+                <th>Ende</th>
+                <th>Pausen</th>
+                <th>Arbeitszeit</th>
+                <th>Status</th>
+                <th>Quelle</th>
+                <th>Kommentar</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for entry in entries %}
+                <tr class="status-{{ entry.status }}">
+                    <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
+                    <td>{{ entry.start_time.strftime('%H:%M') }}</td>
+                    <td>{{ entry.end_time.strftime('%H:%M') }}</td>
+                    <td>
+                        {{ entry.total_break_minutes }} Min
+                        {% if entry.required_break_minutes > entry.total_break_minutes %}
+                            ({{ entry.required_break_minutes }} Min erforderlich)
+                        {% endif %}
+                    </td>
+                    <td>{{ (entry.worked_minutes / 60)|round(2) }} Std</td>
+                    <td class="status-label status-{{ entry.status }}">
+                        {% if entry.status == 'approved' %}Freigegeben{% elif entry.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
+                    </td>
+                    <td>{{ 'Manuell' if entry.is_manual else 'Automatisch' }}</td>
+                    <td>{{ entry.notes or '-' }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="9">Keine Buchungen im ausgewählten Zeitraum gefunden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Auswertung nach Firmen</h2>
+    <p>Übersicht über freigegebene Buchungen im ausgewählten Monat.</p>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Firma</th>
+                <th>Buchungen</th>
+                <th>Arbeitszeit</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in company_totals_filtered %}
+                <tr>
+                    <td>{{ row.name }}</td>
+                    <td>{{ row.count }}</td>
+                    <td>{{ (row.minutes / 60)|round(2) }} Std</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="3">Keine freigegebenen Buchungen im Filter.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if company_totals_all|length > 1 %}
+    <details>
+        <summary>Gesamte Monatswerte anzeigen</summary>
+        <div class="table-scroll">
+            <table class="striped-table">
+                <thead>
+                <tr>
+                    <th>Firma</th>
+                    <th>Buchungen</th>
+                    <th>Arbeitszeit</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for row in company_totals_all %}
+                    <tr>
+                        <td>{{ row.name }}</td>
+                        <td>{{ row.count }}</td>
+                        <td>{{ (row.minutes / 60)|round(2) }} Std</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </details>
+    {% endif %}
+</section>
+
+<section class="card" id="vacations-section">
+    <div class="card-header">
+        <h2>Urlaubsanträge</h2>
+    </div>
+    <form method="post" action="/vacations" class="form-grid">
+        <label>
+            Startdatum
+            <input type="date" name="start_date" required>
+        </label>
+        <label>
+            Enddatum
+            <input type="date" name="end_date" required>
+        </label>
+        <label class="full-width">
+            Kommentar
+            <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">Urlaubsantrag senden</button>
+        </div>
+    </form>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Zeitraum</th>
+                <th>Status</th>
+                <th>Kommentar</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for vacation in vacations %}
+                <tr class="status-{{ vacation.status }}">
+                    <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                    <td class="status-label status-{{ vacation.status }}">
+                        {% if vacation.status == 'approved' %}Genehmigt{% elif vacation.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
+                    </td>
+                    <td>{{ vacation.comment or '-' }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="3">Keine Urlaubsanträge vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

@@ -12,8 +12,7 @@
     {% if user %}
     <nav class="topbar__nav">
         <a href="/dashboard" class="nav-link {% if request.url.path == '/dashboard' %}active{% endif %}">Dashboard</a>
-        <a href="/time" class="nav-link {% if request.url.path == '/time' %}active{% endif %}">Stempeluhr</a>
-        <a href="/vacations" class="nav-link {% if request.url.path == '/vacations' %}active{% endif %}">Urlaubsanträge</a>
+        <a href="/records" class="nav-link {% if request.url.path == '/records' %}active{% endif %}">Buchungen &amp; Urlaub</a>
         {% if user.group and user.group.is_admin %}
         <a href="/admin" class="nav-link {% if request.url.path.startswith('/admin') %}active{% endif %}">Administration</a>
         {% endif %}

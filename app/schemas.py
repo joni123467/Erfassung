@@ -5,6 +5,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
+from . import models
+
 
 class CompanyBase(BaseModel):
     name: str
@@ -85,6 +87,8 @@ class TimeEntryBase(BaseModel):
     break_started_at: Optional[time] = None
     is_open: bool = False
     notes: str = ""
+    status: str = models.TimeEntryStatus.APPROVED
+    is_manual: bool = False
 
 
 class TimeEntryCreate(TimeEntryBase):
@@ -97,6 +101,7 @@ class TimeEntry(TimeEntryBase):
     worked_minutes: int
     overtime_minutes: int
     total_break_minutes: int
+    required_break_minutes: int
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -135,5 +140,6 @@ class Holiday(HolidayBase):
 class DashboardMetrics(BaseModel):
     total_work_minutes: int
     total_overtime_minutes: int
+    target_minutes: int
     pending_vacations: int
     upcoming_holidays: List[Holiday]

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Firmenverwaltung – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'companies' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>Firmen</h1>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Name</th>
+                <th>Beschreibung</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for company in companies %}
+                <tr>
+                    <td colspan="3">
+                        <form method="post" action="/admin/companies/{{ company.id }}/update" class="user-form">
+                            <input type="text" name="name" value="{{ company.name }}" required>
+                            <input type="text" name="description" value="{{ company.description }}" placeholder="Beschreibung">
+                            <div class="form-actions">
+                                <button type="submit" class="button small">Speichern</button>
+                                <button type="submit" form="delete-company-{{ company.id }}" class="button danger small">Löschen</button>
+                            </div>
+                        </form>
+                        <form id="delete-company-{{ company.id }}" method="post" action="/admin/companies/{{ company.id }}/delete" onsubmit="return confirm('Firma wirklich löschen? Es dürfen keine Buchungen mehr zugeordnet sein.');"></form>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="3">Noch keine Firmen angelegt.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+<section class="card">
+    <h2>Neue Firma anlegen</h2>
+    <form method="post" action="/admin/companies/create" class="user-form">
+        <input type="text" name="name" placeholder="Firmenname" required>
+        <input type="text" name="description" placeholder="Beschreibung (optional)">
+        <button type="submit" class="button primary">Firma anlegen</button>
+    </form>
+</section>
+{% endblock %}

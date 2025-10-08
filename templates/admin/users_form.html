@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{% if form_user %}Benutzer bearbeiten{% else %}Benutzer anlegen{% endif %} – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'users' %}
+{% include "admin/_nav.html" %}
+{% set is_edit = form_user is not none %}
+<section class="card">
+    <div class="card-header">
+        <h1>{% if is_edit %}Benutzer bearbeiten{% else %}Neuen Benutzer anlegen{% endif %}</h1>
+        <a href="/admin/users" class="button ghost">Zur Übersicht</a>
+    </div>
+    <form method="post" action="{% if is_edit %}/admin/users/{{ form_user.id }}/update{% else %}/admin/users/create{% endif %}" class="form-grid">
+        <label>
+            Benutzername
+            <input type="text" name="username" value="{{ form_user.username if is_edit else '' }}" required>
+        </label>
+        <label>
+            Anzeigename
+            <input type="text" name="full_name" value="{{ form_user.full_name if is_edit else '' }}" required>
+        </label>
+        <label>
+            Email
+            <input type="email" name="email" value="{{ form_user.email if is_edit else '' }}" required>
+        </label>
+        <label>
+            Login-PIN
+            <input type="text" name="pin_code" value="{{ form_user.pin_code if is_edit else '' }}" pattern="\d{4}" maxlength="4" required>
+        </label>
+        <label>
+            Tägliche Sollzeit (Minuten)
+            <input type="number" name="standard_daily_minutes" value="{{ form_user.standard_daily_minutes if is_edit else 480 }}" min="1" step="1" required>
+        </label>
+        <label>
+            Gruppe
+            <select name="group_id">
+                <option value="">ohne Gruppe</option>
+                {% for group in groups %}
+                    <option value="{{ group.id }}" {% if is_edit and form_user.group and form_user.group.id == group.id %}selected{% endif %}>{{ group.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Benutzer anlegen{% endif %}</button>
+        </div>
+    </form>
+    {% if is_edit %}
+        <form method="post" action="/admin/users/{{ form_user.id }}/delete" class="danger-zone" onsubmit="return confirm('Benutzer wirklich löschen?');">
+            <button type="submit" class="button danger small">Benutzer löschen</button>
+        </form>
+    {% endif %}
+</section>
+{% endblock %}
