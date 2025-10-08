@@ -44,6 +44,8 @@ class User(Base):
     standard_weekly_hours = Column(Float, default=40.0)
     pin_code = Column(String(4), unique=True, nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"))
+    time_account_enabled = Column(Boolean, default=False)
+    overtime_vacation_enabled = Column(Boolean, default=False)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
@@ -168,6 +170,8 @@ class VacationRequest(Base):
     status = Column(String, default=VacationStatus.PENDING)
     comment = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+    use_overtime = Column(Boolean, default=False)
+    overtime_minutes = Column(Integer, default=0)
 
     user = relationship("User", back_populates="vacation_requests")
 

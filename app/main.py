@@ -27,6 +27,22 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 
+
+def _format_minutes(value: object) -> str:
+    if value is None:
+        return "00:00"
+    try:
+        minutes = int(round(float(value)))
+    except (TypeError, ValueError):
+        return "00:00"
+    sign = "-" if minutes < 0 else ""
+    minutes = abs(minutes)
+    hours, remainder = divmod(minutes, 60)
+    return f"{sign}{hours:02d}:{remainder:02d}"
+
+
+templates.env.filters["format_minutes"] = _format_minutes
+
 HOLIDAY_STATE_CHOICES = sorted(holiday_calculator.GERMAN_STATES.items(), key=lambda item: item[1])
 HOLIDAY_STATE_CODES = set(holiday_calculator.GERMAN_STATES.keys())
 
@@ -66,6 +82,14 @@ def ensure_schema() -> None:
                         "UPDATE users SET standard_weekly_hours = COALESCE(standard_daily_minutes, 480) * 5.0 / 60.0"
                     )
                 )
+            if "time_account_enabled" not in columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN time_account_enabled BOOLEAN DEFAULT 0")
+                )
+            if "overtime_vacation_enabled" not in columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN overtime_vacation_enabled BOOLEAN DEFAULT 0")
+                )
         if "groups" in table_names:
             columns = {column["name"] for column in inspector.get_columns("groups")}
             if "can_manage_users" not in columns:
@@ -75,6 +99,16 @@ def ensure_schema() -> None:
             if "can_approve_manual_entries" not in columns:
                 connection.execute(
                     text("ALTER TABLE groups ADD COLUMN can_approve_manual_entries BOOLEAN DEFAULT 0")
+                )
+        if "vacation_requests" in table_names:
+            columns = {column["name"] for column in inspector.get_columns("vacation_requests")}
+            if "use_overtime" not in columns:
+                connection.execute(
+                    text("ALTER TABLE vacation_requests ADD COLUMN use_overtime BOOLEAN DEFAULT 0")
+                )
+            if "overtime_minutes" not in columns:
+                connection.execute(
+                    text("ALTER TABLE vacation_requests ADD COLUMN overtime_minutes INTEGER DEFAULT 0")
                 )
 
 
@@ -377,6 +411,7 @@ def submit_vacation(
     start_date: date = Form(...),
     end_date: date = Form(...),
     comment: str = Form(""),
+    use_overtime: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -387,6 +422,10 @@ def submit_vacation(
             url="/records?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen&focus=vacations",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    use_overtime_value = bool(use_overtime == "on" and user.overtime_vacation_enabled)
+    overtime_minutes = 0
+    if use_overtime_value:
+        overtime_minutes = services.calculate_required_vacation_minutes(user, start_date, end_date)
     crud.create_vacation_request(
         db,
         schemas.VacationRequestCreate(
@@ -394,6 +433,8 @@ def submit_vacation(
             start_date=start_date,
             end_date=end_date,
             comment=comment,
+            use_overtime=use_overtime_value,
+            overtime_minutes=overtime_minutes,
         ),
     )
     return RedirectResponse(
@@ -453,7 +494,14 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
     target_minutes = services.calculate_monthly_target_minutes(
         user, selected_month.year, selected_month.month
     )
-    total_overtime_minutes = total_work_minutes - target_minutes
+    vacations = crud.get_vacations_for_user(db, user.id)
+    overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
+        user, vacations, start_date, end_date
+    )
+    effective_minutes = total_work_minutes + overtime_taken_minutes
+    balance = effective_minutes - target_minutes
+    total_overtime_minutes = max(balance, 0)
+    total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
 
     def aggregate_company_totals(source_entries: List[models.TimeEntry]):
         totals: dict[str, dict[str, object]] = {}
@@ -476,7 +524,6 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
     company_totals_filtered = aggregate_company_totals(approved_entries)
 
     companies = crud.get_companies(db)
-    vacations = crud.get_vacations_for_user(db, user.id)
     month_value = f"{selected_month.year:04d}-{selected_month.month:02d}"
     return templates.TemplateResponse(
         "records.html",
@@ -489,7 +536,9 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
             "approved_entries": approved_entries,
             "total_work_minutes": total_work_minutes,
             "total_overtime_minutes": total_overtime_minutes,
+            "total_undertime_minutes": total_undertime_minutes,
             "target_minutes": target_minutes,
+            "overtime_taken_minutes": overtime_taken_minutes,
             "company_totals_all": company_totals_all,
             "company_totals_filtered": company_totals_filtered,
             "companies": companies,
@@ -951,6 +1000,8 @@ def create_user_html(
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
     group_id: Optional[str] = Form(None),
+    time_account_enabled: Optional[str] = Form(None),
+    overtime_vacation_enabled: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -959,6 +1010,10 @@ def create_user_html(
     if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     group_value = int(group_id) if group_id else None
+    time_account_value = time_account_enabled == "on"
+    overtime_vacation_value = overtime_vacation_enabled == "on"
+    if not time_account_value:
+        overtime_vacation_value = False
     try:
         crud.create_user(
             db,
@@ -969,6 +1024,8 @@ def create_user_html(
                 pin_code=pin_code,
                 standard_weekly_hours=standard_weekly_hours,
                 group_id=group_value,
+                time_account_enabled=time_account_value,
+                overtime_vacation_enabled=overtime_vacation_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -991,6 +1048,8 @@ def update_user_html(
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
     group_id: Optional[str] = Form(None),
+    time_account_enabled: Optional[str] = Form(None),
+    overtime_vacation_enabled: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -999,6 +1058,10 @@ def update_user_html(
     if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     group_value = int(group_id) if group_id else None
+    time_account_value = time_account_enabled == "on"
+    overtime_vacation_value = overtime_vacation_enabled == "on"
+    if not time_account_value:
+        overtime_vacation_value = False
     try:
         updated = crud.update_user(
             db,
@@ -1010,6 +1073,8 @@ def update_user_html(
                 pin_code=pin_code,
                 standard_weekly_hours=standard_weekly_hours,
                 group_id=group_value,
+                time_account_enabled=time_account_value,
+                overtime_vacation_enabled=overtime_vacation_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -1387,7 +1452,19 @@ def create_vacation(vacation: schemas.VacationRequestCreate, db: Session = Depen
     user = crud.get_user(db, vacation.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
-    db_vacation = crud.create_vacation_request(db, vacation)
+    use_overtime = bool(vacation.use_overtime and user.overtime_vacation_enabled)
+    overtime_minutes = (
+        services.calculate_required_vacation_minutes(user, vacation.start_date, vacation.end_date)
+        if use_overtime
+        else 0
+    )
+    payload = vacation.model_copy(
+        update={
+            "use_overtime": use_overtime,
+            "overtime_minutes": overtime_minutes,
+        }
+    )
+    db_vacation = crud.create_vacation_request(db, payload)
     return schemas.VacationRequest.model_validate(db_vacation)
 
 

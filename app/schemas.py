@@ -49,6 +49,8 @@ class UserBase(BaseModel):
     email: EmailStr
     standard_weekly_hours: float = 40.0
     group_id: Optional[int] = None
+    time_account_enabled: bool = False
+    overtime_vacation_enabled: bool = False
 
     @field_validator("standard_weekly_hours")
     @classmethod
@@ -121,15 +123,17 @@ class VacationRequestBase(BaseModel):
     start_date: date
     end_date: date
     comment: str = ""
+    use_overtime: bool = False
 
 
 class VacationRequestCreate(VacationRequestBase):
-    pass
+    overtime_minutes: int = 0
 
 
 class VacationRequest(VacationRequestBase):
     id: int
     status: str
+    overtime_minutes: int
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -151,6 +155,8 @@ class Holiday(HolidayBase):
 class DashboardMetrics(BaseModel):
     total_work_minutes: int
     total_overtime_minutes: int
+    total_undertime_minutes: int
     target_minutes: int
+    overtime_taken_minutes: int
     pending_vacations: int
     upcoming_holidays: List[Holiday]

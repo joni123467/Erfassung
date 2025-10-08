@@ -41,16 +41,26 @@
     <div class="metric-grid">
         <article>
             <h2>Ist-Stunden (Monat)</h2>
-            <p>{{ (total_work_minutes / 60)|round(2) }} Stunden</p>
+            <p>{{ total_work_minutes|format_minutes }} Stunden</p>
+        </article>
+        <article>
+            <h2>Überstundenabbau</h2>
+            <p>{{ overtime_taken_minutes|format_minutes }} Stunden</p>
         </article>
         <article>
             <h2>Soll-Stunden (Monat)</h2>
-            <p>{{ (target_minutes / 60)|round(2) }} Stunden</p>
+            <p>{{ target_minutes|format_minutes }} Stunden</p>
         </article>
         <article>
             <h2>Überstunden (Monat)</h2>
-            <p>{{ (total_overtime_minutes / 60)|round(2) }} Stunden</p>
+            <p>{{ total_overtime_minutes|format_minutes }} Stunden</p>
         </article>
+        {% if user.time_account_enabled %}
+            <article>
+                <h2>Minusstunden (Monat)</h2>
+                <p>{{ total_undertime_minutes|format_minutes }} Stunden</p>
+            </article>
+        {% endif %}
     </div>
     <p class="form-hint">Kennzahlen beziehen sich immer auf den gesamten Monat und berücksichtigen nur freigegebene Buchungen.</p>
 </section>
@@ -80,12 +90,12 @@
                     <td>{{ entry.start_time.strftime('%H:%M') }}</td>
                     <td>{{ entry.end_time.strftime('%H:%M') }}</td>
                     <td>
-                        {{ entry.total_break_minutes }} Min
+                        {{ entry.total_break_minutes|format_minutes }} Std
                         {% if entry.required_break_minutes > entry.total_break_minutes %}
-                            ({{ entry.required_break_minutes }} Min erforderlich)
+                            ({{ entry.required_break_minutes|format_minutes }} Std erforderlich)
                         {% endif %}
                     </td>
-                    <td>{{ (entry.worked_minutes / 60)|round(2) }} Std</td>
+                    <td>{{ entry.worked_minutes|format_minutes }} Std</td>
                     <td class="status-label status-{{ entry.status }}">
                         {% if entry.status == 'approved' %}Freigegeben{% elif entry.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
                     </td>
@@ -117,7 +127,7 @@
                 <tr>
                     <td>{{ row.name }}</td>
                     <td>{{ row.count }}</td>
-                    <td>{{ (row.minutes / 60)|round(2) }} Std</td>
+                    <td>{{ row.minutes|format_minutes }} Std</td>
                 </tr>
             {% else %}
                 <tr><td colspan="3">Keine freigegebenen Buchungen im Filter.</td></tr>
@@ -142,7 +152,7 @@
                     <tr>
                         <td>{{ row.name }}</td>
                         <td>{{ row.count }}</td>
-                        <td>{{ (row.minutes / 60)|round(2) }} Std</td>
+                        <td>{{ row.minutes|format_minutes }} Std</td>
                     </tr>
                 {% endfor %}
                 </tbody>
@@ -169,6 +179,12 @@
             Kommentar
             <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
         </label>
+        {% if user.overtime_vacation_enabled %}
+            <label class="checkbox full-width">
+                <input type="checkbox" name="use_overtime">
+                Überstunden für diesen Antrag einsetzen ({{ user.daily_target_minutes|format_minutes }} Std pro Arbeitstag)
+            </label>
+        {% endif %}
         <div class="form-actions full-width">
             <button type="submit" class="button primary">Urlaubsantrag senden</button>
         </div>
@@ -179,6 +195,7 @@
             <tr>
                 <th>Zeitraum</th>
                 <th>Status</th>
+                <th>Überstundenabbau</th>
                 <th>Kommentar</th>
             </tr>
             </thead>
@@ -189,10 +206,17 @@
                     <td class="status-label status-{{ vacation.status }}">
                         {% if vacation.status == 'approved' %}Genehmigt{% elif vacation.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
                     </td>
+                    <td>
+                        {% if vacation.use_overtime %}
+                            {{ vacation.overtime_minutes|format_minutes }} Std
+                        {% else %}
+                            –
+                        {% endif %}
+                    </td>
                     <td>{{ vacation.comment or '-' }}</td>
                 </tr>
             {% else %}
-                <tr><td colspan="3">Keine Urlaubsanträge vorhanden.</td></tr>
+                <tr><td colspan="4">Keine Urlaubsanträge vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>

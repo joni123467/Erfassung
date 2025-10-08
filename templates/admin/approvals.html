@@ -27,7 +27,7 @@
                     <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
                     <td>{{ entry.start_time.strftime('%H:%M') }} – {{ entry.end_time.strftime('%H:%M') }}</td>
                     <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
-                    <td>{{ entry.total_break_minutes }} Min</td>
+                    <td>{{ entry.total_break_minutes|format_minutes }} Std</td>
                     <td>{{ entry.notes or '-' }}</td>
                     <td class="actions">
                         <form method="post" action="/admin/time-entries/{{ entry.id }}/status" class="inline-form">
@@ -53,6 +53,7 @@
             <tr>
                 <th>Mitarbeiter</th>
                 <th>Zeitraum</th>
+                <th>Überstundenabbau</th>
                 <th>Kommentar</th>
                 <th>Aktionen</th>
             </tr>
@@ -62,6 +63,7 @@
                 <tr>
                     <td>{{ vacation.user.full_name }}</td>
                     <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                    <td>{% if vacation.use_overtime %}{{ vacation.overtime_minutes|format_minutes }} Std{% else %}–{% endif %}</td>
                     <td>{{ vacation.comment or '-' }}</td>
                     <td class="actions">
                         <form method="post" action="/admin/vacations/{{ vacation.id }}/status" class="inline-form">
@@ -71,7 +73,7 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="4">Keine offenen Urlaubsanträge vorhanden.</td></tr>
+                <tr><td colspan="5">Keine offenen Urlaubsanträge vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>

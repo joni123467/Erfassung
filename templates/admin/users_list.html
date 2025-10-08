@@ -16,6 +16,8 @@
                 <th>Email</th>
                 <th>Gruppe</th>
                 <th>Wochenarbeitszeit</th>
+                <th>Zeitkonto</th>
+                <th>Überstundenabbau</th>
                 <th>Aktionen</th>
             </tr>
             </thead>
@@ -26,12 +28,14 @@
                     <td>{{ item.email }}</td>
                     <td>{{ item.group.name if item.group else 'ohne Gruppe' }}</td>
                     <td>{{ item.standard_weekly_hours|round(2) }} Std/Woche</td>
+                    <td>{{ 'Aktiv' if item.time_account_enabled else 'Aus' }}</td>
+                    <td>{{ 'Erlaubt' if item.overtime_vacation_enabled else 'Aus' }}</td>
                     <td>
                         <a class="button small" href="/admin/users/{{ item.id }}">Bearbeiten</a>
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="5">Es sind noch keine Benutzer vorhanden.</td></tr>
+                <tr><td colspan="7">Es sind noch keine Benutzer vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>
