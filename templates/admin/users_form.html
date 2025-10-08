@@ -39,6 +39,14 @@
                 {% endfor %}
             </select>
         </label>
+        <label class="checkbox">
+            <input type="checkbox" name="time_account_enabled" {% if is_edit and form_user.time_account_enabled %}checked{% endif %}>
+            Zeitkonto aktivieren (Über- und Minusstunden anzeigen)
+        </label>
+        <label class="checkbox">
+            <input type="checkbox" name="overtime_vacation_enabled" {% if is_edit and form_user.overtime_vacation_enabled %}checked{% endif %}>
+            Überstundenabbau über Urlaubsanträge erlauben (Zeitkonto erforderlich)
+        </label>
         <div class="form-actions full-width">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Benutzer anlegen{% endif %}</button>
         </div>

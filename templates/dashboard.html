@@ -13,16 +13,26 @@
     <div class="metric-grid">
         <article>
             <h2>Ist-Stunden (Monat)</h2>
-            <p>{{ (metrics.total_work_minutes / 60)|round(2) }} Stunden</p>
+            <p>{{ metrics.total_work_minutes|format_minutes }} Stunden</p>
         </article>
         <article>
             <h2>Überstunden (Monat)</h2>
-            <p>{{ (metrics.total_overtime_minutes / 60)|round(2) }} Stunden</p>
+            <p>{{ metrics.total_overtime_minutes|format_minutes }} Stunden</p>
         </article>
         <article>
             <h2>Sollstunden (Monat)</h2>
-            <p>{{ (metrics.target_minutes / 60)|round(2) }} Stunden</p>
+            <p>{{ metrics.target_minutes|format_minutes }} Stunden</p>
         </article>
+        <article>
+            <h2>Überstundenabbau</h2>
+            <p>{{ metrics.overtime_taken_minutes|format_minutes }} Stunden</p>
+        </article>
+        {% if user.time_account_enabled %}
+            <article>
+                <h2>Minusstunden (Monat)</h2>
+                <p>{{ metrics.total_undertime_minutes|format_minutes }} Stunden</p>
+            </article>
+        {% endif %}
         <article>
             <h2>Offene Urlaubsanträge</h2>
             <p>{{ metrics.pending_vacations }}</p>
@@ -42,14 +52,14 @@
                 {% if active_entry.company %}
                     <p class="status-line">Firma: {{ active_entry.company.name }}</p>
                 {% endif %}
-                <p class="status-line">Aktuelle Arbeitszeit: {{ (active_entry.worked_minutes / 60)|round(2) }} Stunden</p>
+                <p class="status-line">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Stunden</p>
                 {% if active_entry.break_started_at %}
                     <p class="status-line">
                         <span class="status-badge break">Pause</span>
                         seit {{ active_entry.break_started_at.strftime('%H:%M') }} Uhr
                     </p>
                 {% else %}
-                    <p class="status-line">Erfasste Pausen: {{ active_entry.total_break_minutes }} Minuten</p>
+                    <p class="status-line">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
                 {% endif %}
             </div>
         </div>
