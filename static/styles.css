@@ -191,6 +191,249 @@ li {
     color: white;
 }
 
+.dashboard-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    align-items: flex-start;
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+.dashboard-summary__info {
+    flex: 1 1 320px;
+    min-width: 260px;
+}
+
+.dashboard-summary__info h1 {
+    margin-bottom: 0.25rem;
+    font-size: 1.75rem;
+}
+
+.dashboard-summary__month {
+    margin: 0 0 1rem;
+    color: #606a92;
+    font-weight: 600;
+}
+
+.dashboard-summary__hint {
+    background: #eef4ff;
+    border-left: 4px solid var(--brand);
+    padding: 1rem;
+    border-radius: 10px;
+    line-height: 1.5;
+}
+
+.dashboard-summary__card {
+    flex: 0 1 360px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(31, 60, 136, 0.08);
+    padding: 1.5rem;
+}
+
+.dashboard-summary__card h2 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.dashboard-summary__stats {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+}
+
+.dashboard-summary__stats div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.dashboard-summary__stats dt {
+    font-weight: 600;
+}
+
+.dashboard-summary__stats dd {
+    margin: 0;
+    font-weight: 600;
+}
+
+.dashboard-summary__diff.is-positive dd {
+    color: var(--success);
+}
+
+.dashboard-summary__diff.is-negative dd {
+    color: var(--danger);
+}
+
+.dashboard-summary__meta {
+    margin-top: 1.25rem;
+    margin-bottom: 0;
+    font-size: 0.9rem;
+    color: #606a92;
+}
+
+.punch-start-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+}
+
+.punch-start-quick {
+    margin: 0;
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    z-index: 1000;
+}
+
+.modal.is-visible {
+    display: flex;
+}
+
+.modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(18, 26, 54, 0.55);
+}
+
+.modal__dialog {
+    position: relative;
+    background: white;
+    border-radius: 12px;
+    padding: 1.75rem;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 18px 48px rgba(10, 24, 71, 0.25);
+}
+
+.modal__close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    border: none;
+    background: transparent;
+    font-size: 1.5rem;
+    color: var(--brand);
+    cursor: pointer;
+}
+
+.modal__hint {
+    margin: 0.25rem 0 0;
+    color: #616a8f;
+    font-size: 0.9rem;
+}
+
+.modal__form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1.25rem;
+}
+
+.modal__form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+
+.modal__form input,
+.modal__form select {
+    padding: 0.6rem;
+    border: 1px solid #ccd4f3;
+    border-radius: 6px;
+    font: inherit;
+}
+
+.modal__actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+body.modal-open {
+    overflow: hidden;
+}
+
+.entries-header {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+}
+
+@media (min-width: 640px) {
+    .entries-header {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+}
+
+.filter-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+}
+
+.filter-inline label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 600;
+}
+
+.filter-inline select {
+    padding: 0.6rem;
+    border: 1px solid #ccd4f3;
+    border-radius: 6px;
+    font: inherit;
+    min-width: 180px;
+}
+
+.company-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.company-summary__item {
+    background: var(--accent);
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 180px;
+}
+
+.company-summary__item.is-empty {
+    background: #f5f6fb;
+    color: #6b7397;
+    font-style: italic;
+}
+
+.company-summary__name {
+    font-weight: 600;
+}
+
+.company-summary__stats {
+    font-size: 0.9rem;
+    color: #47507a;
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
