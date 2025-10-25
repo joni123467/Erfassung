@@ -93,7 +93,8 @@ if [[ -n "$PKG_MANAGER" ]]; then
     run_as_root "${UPDATE_CMD[@]}"
     echo "🔧 Installiere Systempakete..."
     COMMON_PKGS=(python3 python3-venv python3-pip sqlite3 wget ca-certificates unzip)
-    ALL_PKGS=("${COMMON_PKGS[@]}")
+    SLIDESHOW_PKGS=(mpv x11-xserver-utils)
+    ALL_PKGS=("${COMMON_PKGS[@]}" "${SLIDESHOW_PKGS[@]}")
     if [[ ${#BUILD_DEPS[@]} -gt 0 ]]; then
         ALL_PKGS+=("${BUILD_DEPS[@]}")
     fi
@@ -102,6 +103,15 @@ fi
 
 require_command python3
 require_command wget
+
+if ! command -v mpv >/dev/null 2>&1; then
+    if [[ -n "${PKG_MANAGER:-}" ]]; then
+        echo "Fehler: 'mpv' wurde trotz Paketinstallation nicht gefunden." >&2
+        exit 1
+    else
+        echo "Warnung: 'mpv' wurde nicht gefunden. Bitte installieren Sie es manuell." >&2
+    fi
+fi
 
 abspath() {
     python3 - <<'PY' "$1"
