@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional, Protocol, Sequence
 
@@ -81,23 +82,56 @@ class SlideshowService:
         self._thread: Optional[threading.Thread] = None
         self._player: Optional[PlayerHandle] = None
         self._stop_event = threading.Event()
+        self._player_ready_event = threading.Event()
 
     # ------------------------------------------------------------------
-    def start(self) -> None:
-        """Start the background thread if it is not running yet."""
+    def start(
+        self,
+        *,
+        block_until_ready: bool = False,
+        timeout: Optional[float] = None,
+    ) -> bool:
+        """Start the background thread if it is not running yet.
+
+        Parameters
+        ----------
+        block_until_ready:
+            When ``True`` this call waits until the player reports that it
+            has started successfully.  The default behaviour is
+            non-blocking so that other services – such as the web
+            interface – can continue their own startup sequence even if no
+            monitor is attached yet.
+        timeout:
+            Optional timeout in seconds for the blocking variant.  A
+            timeout of ``None`` waits indefinitely.
+
+        Returns
+        -------
+        bool
+            ``True`` when the background thread was launched (and the
+            player started successfully if ``block_until_ready`` was
+            requested), otherwise ``False``.
+        """
 
         if self._thread and self._thread.is_alive():
             self._logger.debug("Slideshow player already running")
-            return
+            if block_until_ready:
+                return self._wait_until_ready(timeout)
+            return True
         self._stop_event.clear()
+        self._player_ready_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="slideshow-player")
         self._thread.start()
+        if block_until_ready:
+            return self._wait_until_ready(timeout)
+        return True
 
     # ------------------------------------------------------------------
     def stop(self) -> None:
         """Signal the background thread to stop and join it."""
 
         self._stop_event.set()
+        self._player_ready_event.clear()
         if self._player is not None:
             try:
                 self._player.stop()
@@ -107,10 +141,17 @@ class SlideshowService:
             self._thread.join(timeout=self._config.shutdown_timeout)
 
     # ------------------------------------------------------------------
+    def wait_until_running(self, timeout: Optional[float] = None) -> bool:
+        """Wait until the slideshow player reported a successful start."""
+
+        return self._wait_until_ready(timeout)
+
+    # ------------------------------------------------------------------
     def _run(self) -> None:
         """Background thread body that manages the player lifecycle."""
 
         self._logger.info("Player thread started")
+        self._player_ready_event.clear()
         while not self._stop_event.is_set():
             if not self._wait_for_monitor():
                 break
@@ -128,6 +169,7 @@ class SlideshowService:
             ``True`` when the player was started successfully.
         """
 
+        self._player_ready_event.clear()
         try:
             player = self._player_factory()
         except MonitorNotReadyError:
@@ -139,20 +181,45 @@ class SlideshowService:
             self._wait_interval()
             return False
 
+        self._player = player
+        self._player_ready_event.set()
         try:
             player.start()
         except MonitorNotReadyError:
             self._logger.info("Monitor not ready when starting player, waiting for retry")
+            self._player = None
+            self._player_ready_event.clear()
             self._wait_interval()
             return False
         except Exception:
             self._logger.exception("Slideshow player crashed during startup")
+            self._player = None
+            self._player_ready_event.clear()
             self._wait_interval()
             return False
 
-        self._player = player
         self._logger.info("Slideshow player started successfully")
         return True
+
+    # ------------------------------------------------------------------
+    def _wait_until_ready(self, timeout: Optional[float]) -> bool:
+        """Helper that waits for the player to become ready."""
+
+        if self._player_ready_event.is_set():
+            return True
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            if self._stop_event.is_set():
+                return False
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                wait_time = min(remaining, self._config.poll_interval)
+            else:
+                wait_time = self._config.poll_interval
+            if self._player_ready_event.wait(wait_time):
+                return True
 
     # ------------------------------------------------------------------
     def _wait_for_monitor(self) -> bool:
