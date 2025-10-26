@@ -1284,7 +1284,9 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
     vacations = crud.get_vacations_for_user(db, user.id)
     today = date.today()
     vacation_summary = services.calculate_vacation_summary(user, vacations, today.year)
-    pending_vacations = sum(1 for vacation in vacations if vacation.status == models.VacationRequestStatus.PENDING)
+    pending_vacations = sum(
+        1 for vacation in vacations if vacation.status == models.VacationStatus.PENDING
+    )
     return templates.TemplateResponse(
         "records/vacations.html",
         {
