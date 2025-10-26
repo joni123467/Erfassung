@@ -367,6 +367,13 @@ def ensure_schema() -> None:
                 connection.execute(
                     text("UPDATE groups SET can_view_time_reports = 1 WHERE is_admin = 1")
                 )
+            if "can_edit_time_entries" not in columns:
+                connection.execute(
+                    text("ALTER TABLE groups ADD COLUMN can_edit_time_entries BOOLEAN DEFAULT 0")
+                )
+                connection.execute(
+                    text("UPDATE groups SET can_edit_time_entries = 1 WHERE is_admin = 1")
+                )
         if "holidays" in table_names:
             index_rows = connection.execute(text("PRAGMA index_list('holidays')")).fetchall()
             legacy_unique_index = None
