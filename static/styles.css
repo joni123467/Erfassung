@@ -1149,6 +1149,10 @@ body.modal-open {
     width: 100%;
 }
 
+.filter-bar label input[type="number"] {
+    min-height: 2.75rem;
+}
+
 .table-scroll {
     overflow-x: auto;
 }
@@ -1156,6 +1160,134 @@ body.modal-open {
 .holiday-actions {
     display: grid;
     gap: 1.5rem;
+}
+
+.reports-hero {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.report-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.report-summary-card {
+    background: var(--accent);
+    border-radius: 10px;
+    padding: 1rem;
+    display: grid;
+    gap: 0.35rem;
+}
+
+.report-summary-card__title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.report-summary-card__value {
+    font-size: 1.35rem;
+    font-weight: 700;
+}
+
+.report-summary-card__hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.report-status-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.report-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-weight: 600;
+}
+
+.report-status-pill__label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.report-status-pill__value {
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.report-user-summary {
+    display: grid;
+    gap: 1rem;
+}
+
+.report-user-summary.is-empty {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.report-user-card {
+    display: grid;
+    gap: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+    background: var(--surface);
+}
+
+.report-user-card__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.report-user-card__name {
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.report-user-card__stat {
+    font-weight: 600;
+    color: var(--brand);
+}
+
+.report-user-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.report-user-card__companies {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.report-user-card__company {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.report-user-card__company-name {
+    font-weight: 600;
 }
 
 .holiday-actions .inline-form {

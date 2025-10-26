@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Team-Zeitübersicht – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'reports' %}
+{% include "admin/_nav.html" %}
+<section class="card reports-hero">
+    <div class="card-header">
+        <h1>Team-Zeitübersicht – {{ period_label }}</h1>
+        <div class="card-header__actions">
+            <a class="button ghost" href="/admin/reports/time/pdf{% if export_query %}?{{ export_query }}{% endif %}">PDF-Export</a>
+            <a class="button" href="/admin/reports/time/excel{% if export_query %}?{{ export_query }}{% endif %}">Excel-Export</a>
+        </div>
+    </div>
+    <form method="get" action="/admin/reports/time" class="filter-bar">
+        <label>
+            Ansicht
+            <select name="view">
+                <option value="month" {% if view == 'month' %}selected{% endif %}>Monat</option>
+                <option value="week" {% if view == 'week' %}selected{% endif %}>Kalenderwoche</option>
+                <option value="range" {% if view == 'range' %}selected{% endif %}>Zeitraum</option>
+            </select>
+        </label>
+        <label>
+            Monat (Monatsansicht)
+            <input type="month" name="month" value="{{ month_value }}">
+        </label>
+        <label>
+            Kalenderwoche (KW-Ansicht)
+            <input type="week" name="week" value="{{ week_value }}">
+        </label>
+        <label>
+            Startdatum (Zeitraum)
+            <input type="date" name="start" value="{{ range_start_value }}">
+        </label>
+        <label>
+            Enddatum (Zeitraum)
+            <input type="date" name="end" value="{{ range_end_value }}">
+        </label>
+        <label>
+            Firma
+            <select name="company">
+                <option value="" {% if not company_param %}selected{% endif %}>Alle Firmen</option>
+                <option value="none" {% if company_filter_none %}selected{% endif %}>Allgemeine Arbeitszeit</option>
+                {% for company in companies %}
+                    <option value="{{ company.id }}" {% if company_filter_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Status
+            <select name="status">
+                {% for option in status_options %}
+                    <option value="{{ option.value }}" {% if status_param == option.value %}selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Sortierung
+            <select name="sort">
+                {% for option in sort_options %}
+                    <option value="{{ option.value }}" {% if sort_param == option.value %}selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit" class="button small">Übernehmen</button>
+        <a class="button ghost small" href="/admin/reports/time">Zurücksetzen</a>
+    </form>
+    <div class="report-summary-grid">
+        <div class="report-summary-card">
+            <span class="report-summary-card__title">Zeitraum</span>
+            <span class="report-summary-card__value">{{ period_label }}</span>
+            <p class="report-summary-card__hint">{{ period_range }}</p>
+        </div>
+        <div class="report-summary-card">
+            <span class="report-summary-card__title">Arbeitszeit (bewertet)</span>
+            <span class="report-summary-card__value">{{ total_minutes|format_minutes }} Std</span>
+            <p class="report-summary-card__hint">{{ total_entries }} Buchungen</p>
+        </div>
+        <div class="report-summary-card">
+            <span class="report-summary-card__title">Mitarbeitende</span>
+            <span class="report-summary-card__value">{{ unique_users }}</span>
+            <p class="report-summary-card__hint">{{ company_filter_label }}</p>
+        </div>
+    </div>
+    {% if status_summary %}
+        <div class="report-status-list">
+            {% for item in status_summary %}
+                <span class="report-status-pill">
+                    <span class="report-status-pill__label">{{ item.label }}</span>
+                    <span class="report-status-pill__value">{{ item.count }}</span>
+                </span>
+            {% endfor %}
+        </div>
+    {% endif %}
+</section>
+<section class="card">
+    <div class="card-header">
+        <h2>Firmenübersicht</h2>
+        <p class="card-header__hint">Summen basieren auf den gefilterten Buchungen.</p>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Firma</th>
+                <th>Buchungen</th>
+                <th>Arbeitszeit</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% if company_totals %}
+                {% for row in company_totals %}
+                    <tr>
+                        <td>{{ row.name }}</td>
+                        <td>{{ row.count }}</td>
+                        <td>{{ row.minutes|format_minutes }} Std</td>
+                    </tr>
+                {% endfor %}
+            {% else %}
+                <tr><td colspan="3">Keine Buchungen für den gewählten Filter.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+</section>
+<section class="card">
+    <div class="card-header">
+        <h2>Mitarbeiterübersicht</h2>
+        <p class="card-header__hint">{{ user_totals|length }} Mitarbeitende im Zeitraum.</p>
+    </div>
+    {% if user_totals %}
+        <div class="report-user-summary">
+            {% for item in user_totals %}
+                <article class="report-user-card">
+                    <div class="report-user-card__header">
+                        <span class="report-user-card__name">{{ item.user.full_name }}</span>
+                        <span class="report-user-card__stat">{{ item.minutes|format_minutes }} Std · {{ item.count }} Buchungen</span>
+                    </div>
+                    <div class="report-user-card__meta">
+                        <span>Primäre Firma: {{ item.primary_company }}</span>
+                        {% for status in item.status_breakdown %}
+                            <span>{{ status.label }}: {{ status.count }}</span>
+                        {% endfor %}
+                    </div>
+                    {% if item.companies %}
+                        <div class="report-user-card__companies">
+                            {% for company in item.companies %}
+                                <div class="report-user-card__company">
+                                    <span class="report-user-card__company-name">{{ company.name }}</span>
+                                    <span>{{ company.minutes|format_minutes }} Std · {{ company.count }} Buchungen</span>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </article>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="report-user-summary is-empty">Keine Buchungen im Zeitraum.</p>
+    {% endif %}
+</section>
+<section class="card">
+    <div class="card-header">
+        <h2>Einzelbuchungen</h2>
+        <p class="card-header__hint">Anzeige gemäß aktuellem Filter ({{ company_filter_label }}).</p>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Datum</th>
+                <th>Mitarbeiter</th>
+                <th>Firma</th>
+                <th>Start</th>
+                <th>Ende</th>
+                <th>Arbeitszeit</th>
+                <th>Status</th>
+                <th>Quelle</th>
+                <th>Kommentar</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% if entries_sorted %}
+                {% for entry in entries_sorted %}
+                    <tr class="status-{{ entry.status }}">
+                        <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
+                        <td>{{ entry.user.full_name if entry.user else '–' }}</td>
+                        <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
+                        <td>{{ entry.start_time.strftime('%H:%M') }}</td>
+                        <td>{% if entry.is_open %}läuft{% else %}{{ entry.end_time.strftime('%H:%M') }}{% endif %}</td>
+                        <td>{{ entry.worked_minutes|format_minutes }} Std</td>
+                        <td>{{ status_labels.get(entry.status, entry.status.title()) }}</td>
+                        <td>{{ 'Manuell' if entry.is_manual else 'Automatisch' }}</td>
+                        <td>{{ entry.notes or '-' }}</td>
+                    </tr>
+                {% endfor %}
+            {% else %}
+                <tr><td colspan="9">Keine Buchungen vorhanden.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
