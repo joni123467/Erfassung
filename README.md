@@ -26,7 +26,7 @@ bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/ref
 
 Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen im Zielverzeichnis (`/opt/erfassung` als Standard), entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
 
-Alle Python-Abhängigkeiten werden direkt als vorgefertigte Wheels über `pip` eingespielt – zusätzliche Rust- oder Compiler-Werkzeuge sind nicht länger erforderlich. Auf Wunsch kann über `--install-dir` ein alternatives Zielverzeichnis angegeben werden. Nach erfolgreicher Installation finden Sie die Anwendung unter dem gewählten Pfad; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`.
+Alle Python-Abhängigkeiten werden direkt als vorgefertigte Wheels über `pip` eingespielt – zusätzliche Rust- oder Compiler-Werkzeuge sind nicht länger erforderlich. Auf Wunsch kann über `--install-dir` ein alternatives Zielverzeichnis angegeben werden. Nach erfolgreicher Installation finden Sie die Anwendung unter dem gewählten Pfad; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`. Systeme mit `systemd` erhalten automatisch den Dienst `erfassung.service`, der die Anwendung als Hintergrundprozess auf Port `8000` betreibt.
 
 ### Manuelle Installation
 
@@ -71,3 +71,20 @@ Die Architektur ist so aufgebaut, dass später eine RFID-Erweiterung realisiert 
 ## Tests
 
 Zurzeit sind keine automatisierten Tests hinterlegt. Es wird empfohlen, für produktive Szenarien API- und Integrationstests zu ergänzen.
+
+## Aktualisierung
+
+Für installierte Instanzen steht mit `update.sh` ein zweistufiger Updater zur Verfügung. Beim Start lädt das Skript automatisch die aktuellste Version des Repository-Archivs, führt daraus die jüngste Update-Routine aus und übernimmt anschließend den Quellcode in das Installationsverzeichnis. Dabei bleiben lokale Datenordner (`data`, `logs`), Konfigurationsdateien (`config`, `config.yml`, `config.yaml`, `.env`) sowie vorhandene virtuelle Umgebungen (`.venv`) erhalten. Die SQLite-Datenbank (`erfassung.db`) wird beibehalten; nach dem Kopiervorgang werden Tabellen erzeugt und Migrationen angewendet, sodass neue Felder ohne manuelle Eingriffe zur Verfügung stehen. Abschließend startet das Skript – sofern vorhanden – den Dienst `erfassung.service` neu.
+
+Der Updater kann – ähnlich wie die Installation – ohne lokale Git-Kopie genutzt werden:
+
+```bash
+wget https://raw.githubusercontent.com/joni123467/Erfassung/main/update.sh -O update.sh
+bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467/Erfassung --ref main
+```
+
+Über `--repo-url` lässt sich bei Bedarf ein eigener Fork bzw. eine alternative Quelle angeben, `--ref` steuert den Branch oder Tag. Vorhandene Abhängigkeiten werden nach dem Kopiervorgang automatisch aktualisiert.
+
+### Update über die Administrationsoberfläche
+
+Administratoren finden im Bereich **Administration → System & Updates** eine Oberfläche zum Auslösen von Aktualisierungen. Die Seite listet verfügbare Branches, erlaubt eigene Referenzen und zeigt das Protokoll aus `logs/update.log` an. Updates werden im Hintergrund ausgeführt, damit der laufende Betrieb nicht blockiert wird.
