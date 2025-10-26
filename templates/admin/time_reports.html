@@ -20,19 +20,19 @@
                 <option value="range" {% if view == 'range' %}selected{% endif %}>Zeitraum</option>
             </select>
         </label>
-        <label>
+        <label data-view-filter="month" {% if view != 'month' %}hidden{% endif %}>
             Monat (Monatsansicht)
             <input type="month" name="month" value="{{ month_value }}">
         </label>
-        <label>
+        <label data-view-filter="week" {% if view != 'week' %}hidden{% endif %}>
             Kalenderwoche (KW-Ansicht)
             <input type="week" name="week" value="{{ week_value }}">
         </label>
-        <label>
+        <label data-view-filter="range" {% if view != 'range' %}hidden{% endif %}>
             Startdatum (Zeitraum)
             <input type="date" name="start" value="{{ range_start_value }}">
         </label>
-        <label>
+        <label data-view-filter="range" {% if view != 'range' %}hidden{% endif %}>
             Enddatum (Zeitraum)
             <input type="date" name="end" value="{{ range_end_value }}">
         </label>
@@ -65,6 +65,23 @@
         <button type="submit" class="button small">Übernehmen</button>
         <a class="button ghost small" href="/admin/reports/time">Zurücksetzen</a>
     </form>
+    <script>
+        (function () {
+            const viewSelect = document.querySelector('.filter-bar select[name="view"]');
+            if (!viewSelect) {
+                return;
+            }
+            const conditionalFilters = document.querySelectorAll('.filter-bar [data-view-filter]');
+            const updateVisibility = () => {
+                const currentView = viewSelect.value;
+                conditionalFilters.forEach((element) => {
+                    element.hidden = element.dataset.viewFilter !== currentView;
+                });
+            };
+            updateVisibility();
+            viewSelect.addEventListener('change', updateVisibility);
+        })();
+    </script>
     <div class="report-summary-grid">
         <div class="report-summary-card">
             <span class="report-summary-card__title">Zeitraum</span>

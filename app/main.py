@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import logging
+import socket
 import subprocess
 from calendar import monthrange
 from collections import Counter
@@ -10,6 +12,8 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -83,7 +87,64 @@ def _read_update_log(limit: int = 400) -> str:
     return "".join(tail)
 
 
+def _update_ref_sort_key(value: str) -> tuple:
+    if value == "main":
+        return (0, 0, 0, 0, value)
+    if value.startswith("version-"):
+        number_part = value[len("version-") :]
+        segments: list[int] = []
+        for piece in number_part.split("."):
+            try:
+                segments.append(int(piece))
+            except ValueError:
+                segments.append(0)
+        while len(segments) < 3:
+            segments.append(0)
+        major, minor, patch = segments[:3]
+        return (1, -major, -minor, -patch, value)
+    return (2, value.lower())
+
+
+def _fetch_remote_refs_via_http(repo_url: str) -> set[str]:
+    parsed = urlparse(repo_url)
+    netloc = parsed.netloc.lower()
+    if "github.com" not in netloc:
+        return set()
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 2:
+        return set()
+    owner, repository = parts[0], parts[1]
+    if repository.endswith(".git"):
+        repository = repository[:-4]
+    api_base = f"https://api.github.com/repos/{owner}/{repository}"
+    endpoints = [
+        f"{api_base}/branches?per_page=100",
+        f"{api_base}/tags?per_page=100",
+    ]
+    headers = {"Accept": "application/vnd.github+json"}
+    refs: set[str] = set()
+    for endpoint in endpoints:
+        try:
+            request = Request(endpoint, headers=headers)
+            with urlopen(request, timeout=10) as response:
+                payload = response.read()
+        except (HTTPError, URLError, TimeoutError, socket.timeout, OSError):
+            continue
+        try:
+            data = json.loads(payload.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    name = item.get("name")
+                    if isinstance(name, str) and name:
+                        refs.add(name)
+    return refs
+
+
 def _list_remote_branches(repo_url: str) -> List[str]:
+    refs: set[str] = set()
     try:
         result = subprocess.run(
             ["git", "ls-remote", "--heads", "--tags", repo_url],
@@ -93,38 +154,24 @@ def _list_remote_branches(repo_url: str) -> List[str]:
             timeout=15,
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    else:
+        for line in result.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) != 2:
+                continue
+            ref = parts[1]
+            if ref.endswith("^{}"):
+                continue
+            if ref.startswith("refs/heads/"):
+                refs.add(ref[len("refs/heads/") :])
+            elif ref.startswith("refs/tags/"):
+                refs.add(ref[len("refs/tags/") :])
+    if not refs:
+        refs.update(_fetch_remote_refs_via_http(repo_url))
+    if not refs:
         return []
-    refs: set[str] = set()
-    for line in result.stdout.splitlines():
-        parts = line.strip().split()
-        if len(parts) != 2:
-            continue
-        ref = parts[1]
-        if ref.endswith("^{}"):
-            continue
-        if ref.startswith("refs/heads/"):
-            refs.add(ref[len("refs/heads/") :])
-        elif ref.startswith("refs/tags/"):
-            refs.add(ref[len("refs/tags/") :])
-
-    def sort_key(value: str) -> tuple:
-        if value == "main":
-            return (0, 0, 0, 0, value)
-        if value.startswith("version-"):
-            number_part = value[len("version-") :]
-            segments: list[int] = []
-            for piece in number_part.split("."):
-                try:
-                    segments.append(int(piece))
-                except ValueError:
-                    segments.append(0)
-            while len(segments) < 3:
-                segments.append(0)
-            major, minor, patch = segments[:3]
-            return (1, -major, -minor, -patch, value)
-        return (2, value.lower())
-
-    return sorted(refs, key=sort_key)
+    return sorted(refs, key=_update_ref_sort_key)
 
 
 def _execute_update(ref: str, repo_url: str) -> bool:
@@ -2370,8 +2417,9 @@ def admin_system_trigger_update(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if success:
         redirect = _build_redirect(
-            "/dashboard",
+            "/admin/system",
             msg="Update erfolgreich abgeschlossen.",
+            ref=chosen_ref,
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
