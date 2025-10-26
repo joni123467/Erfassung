@@ -13,183 +13,211 @@
 {% set overtime_taken_minutes = metrics.overtime_taken_minutes %}
 {% set diff_minutes = ist_minutes + overtime_taken_minutes - soll_minutes %}
 {% set diff_class = 'is-positive' if diff_minutes >= 0 else 'is-negative' %}
-<section class="dashboard-summary">
-    <div class="dashboard-summary__info">
-        <h1>Arbeitszeiten</h1>
-        <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
-        <div class="dashboard-summary__hint">
-            <strong>Hinweis (Arbeitsschutz):</strong>
-            Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich,
-            nach 9 Stunden mindestens 45 Minuten (ArbZG). Bitte stempel deine Pause entsprechend.
+{% set overtime_limit_minutes = metrics.overtime_limit_minutes %}
+{% set overtime_limit_exceeded = metrics.overtime_limit_exceeded %}
+{% set overtime_limit_remaining_minutes = metrics.overtime_limit_remaining_minutes %}
+{% set overtime_limit_excess_minutes = metrics.overtime_limit_excess_minutes %}
+<section class="dashboard-top">
+    <div class="dashboard-top__left">
+        <div class="dashboard-top__intro">
+            <h1 class="dashboard-heading">Arbeitszeiten</h1>
+            <p class="dashboard-summary__hint">
+                <strong>Hinweis (Arbeitsschutz):</strong>
+                Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich,
+                nach 9 Stunden mindestens 45 Minuten (ArbZG). Bitte stempel deine Pause entsprechend.
+            </p>
         </div>
-    </div>
-    <aside class="dashboard-summary__card">
-        <h2>Meine Soll-/Ist-Stunden</h2>
-        <dl class="dashboard-summary__stats">
-            <div>
-                <dt>Aktueller Monat</dt>
-                <dd>{{ metrics_month.strftime('%m/%Y') }}</dd>
-            </div>
-            <div>
-                <dt>Monatliches Soll</dt>
-                <dd>{{ soll_minutes|format_minutes }} Std</dd>
-            </div>
-            <div>
-                <dt>Bisher geleistet (Ist)</dt>
-                <dd>{{ ist_minutes|format_minutes }} Std</dd>
-            </div>
-            <div>
-                <dt>Überstundenabbau</dt>
-                <dd>{{ overtime_taken_minutes|format_minutes }} Std</dd>
-            </div>
-            <div class="dashboard-summary__diff {{ diff_class }}">
-                <dt>Diff (Ist - Soll)</dt>
-                <dd>{{ diff_minutes|format_minutes }} Std</dd>
-            </div>
-            {% if user.time_account_enabled %}
+        <section class="card dashboard-punch-card">
+            <h2>Schnell stempeln</h2>
+        {% if active_entry %}
+            <div class="punch-status">
                 <div>
-                    <dt>Offene Minusstunden</dt>
-                    <dd>{{ metrics.total_undertime_minutes|format_minutes }} Std</dd>
-                </div>
-            {% endif %}
-        </dl>
-        <p class="dashboard-summary__meta">
-            {% if metrics.pending_vacations > 0 %}
-                {{ metrics.pending_vacations }} offene Urlaubsanträge warten auf Freigabe.
-            {% else %}
-                Keine offenen Urlaubsanträge vorhanden.
-            {% endif %}
-        </p>
-    </aside>
-    <aside class="dashboard-summary__card">
-        <h2>Urlaubsübersicht</h2>
-        <dl class="dashboard-summary__stats">
-            <div>
-                <dt>Gesamturlaub</dt>
-                <dd>{{ metrics.vacation_summary.total_days|round(2) }} Tage</dd>
-            </div>
-            {% if metrics.vacation_summary.carryover_days > 0 %}
-                <div>
-                    <dt>Übertrag</dt>
-                    <dd>{{ metrics.vacation_summary.carryover_days|round(2) }} Tage</dd>
-                </div>
-            {% endif %}
-            <div>
-                <dt>Verbraucht</dt>
-                <dd>{{ metrics.vacation_summary.used_days|round(2) }} Tage</dd>
-            </div>
-            <div>
-                <dt>Geplant</dt>
-                <dd>{{ metrics.vacation_summary.planned_days|round(2) }} Tage</dd>
-            </div>
-            <div>
-                <dt>Resturlaub</dt>
-                <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
-            </div>
-        </dl>
-    </aside>
-</section>
-
-<section class="card">
-    <h2>Schnell stempeln</h2>
-    {% if active_entry %}
-        <div class="punch-status">
-            <div>
-                <p class="status-line">
-                    <span class="status-badge running">Arbeitszeit läuft</span>
-                    seit {{ active_entry.start_time.strftime('%H:%M') }} Uhr am {{ active_entry.work_date.strftime('%d.%m.%Y') }}
-                </p>
-                {% if active_entry.company %}
-                    <p class="status-line">Firma: {{ active_entry.company.name }}</p>
-                {% endif %}
-                <p class="status-line">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Stunden</p>
-                {% if active_entry.break_started_at %}
                     <p class="status-line">
-                        <span class="status-badge break">Pause</span>
-                        seit {{ active_entry.break_started_at.strftime('%H:%M') }} Uhr
+                        <span class="status-badge running">Arbeitszeit läuft</span>
+                        seit {{ active_entry.start_time.strftime('%H:%M') }} Uhr am {{ active_entry.work_date.strftime('%d.%m.%Y') }}
                     </p>
-                {% else %}
-                    <p class="status-line">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
-                {% endif %}
+                    {% if active_entry.company %}
+                        <p class="status-line">Firma: {{ active_entry.company.name }}</p>
+                    {% endif %}
+                    <p class="status-line">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Stunden</p>
+                    {% if active_entry.break_started_at %}
+                        <p class="status-line">
+                            <span class="status-badge break">Pause</span>
+                            seit {{ active_entry.break_started_at.strftime('%H:%M') }} Uhr
+                        </p>
+                    {% else %}
+                        <p class="status-line">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
+                    {% endif %}
+                </div>
             </div>
-        </div>
-        <div class="punch-actions">
-            <form method="post" action="/punch">
-                <input type="hidden" name="next_url" value="/dashboard">
-                <input type="hidden" name="action" value="start_break">
-                <button type="submit" class="button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
-            </form>
-            <form method="post" action="/punch">
-                <input type="hidden" name="next_url" value="/dashboard">
-                <input type="hidden" name="action" value="end_break">
-                <button type="submit" class="button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
-            </form>
-            {% if active_entry.company_id is not none %}
+            <div class="punch-actions">
                 <form method="post" action="/punch">
                     <input type="hidden" name="next_url" value="/dashboard">
-                    <input type="hidden" name="action" value="end_company">
-                    <button type="submit" class="button">Auftrag beenden</button>
+                    <input type="hidden" name="action" value="start_break">
+                    <button type="submit" class="button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
                 </form>
-            {% endif %}
-            {% if companies or can_create_companies %}
-                <button type="button" class="button" data-open="order-modal">Auftrag starten</button>
-            {% endif %}
-            <form method="post" action="/punch">
-                <input type="hidden" name="next_url" value="/dashboard">
-                <input type="hidden" name="action" value="end_work">
-                <button type="submit" class="button danger">Arbeitszeit beenden</button>
-            </form>
-        </div>
-    {% else %}
-        <div class="punch-start-options">
-            <form method="post" action="/punch" class="punch-start-quick">
-                <input type="hidden" name="next_url" value="/dashboard">
-                <input type="hidden" name="action" value="start_work">
-                <button type="submit" class="button primary">Arbeitszeit starten</button>
-            </form>
-            {% if companies or can_create_companies %}
-            <button type="button" class="button ghost" data-open="order-modal">Auftrag starten</button>
-            {% endif %}
-        </div>
-    {% endif %}
-    {% if companies or can_create_companies %}
-    <div class="modal" id="order-modal" aria-hidden="true" role="dialog" aria-modal="true">
-        <div class="modal__backdrop" data-close></div>
-        <div class="modal__dialog">
-            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
-            <h3>Auftrag starten</h3>
-            <p class="modal__hint">Wähle eine bestehende Firma oder lege einen neuen Auftrag an.</p>
-            <form method="post" action="/punch" class="modal__form">
-                <input type="hidden" name="next_url" value="/dashboard">
-                <input type="hidden" name="action" value="start_company">
-                {% if companies %}
-                    <label>
-                        Firma auswählen
-                        <select name="company_id">
-                            <option value="">Firma wählen</option>
-                            {% for company in companies %}
-                                <option value="{{ company.id }}">{{ company.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
+                <form method="post" action="/punch">
+                    <input type="hidden" name="next_url" value="/dashboard">
+                    <input type="hidden" name="action" value="end_break">
+                    <button type="submit" class="button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
+                </form>
+                {% if active_entry.company_id is not none %}
+                    <form method="post" action="/punch">
+                        <input type="hidden" name="next_url" value="/dashboard">
+                        <input type="hidden" name="action" value="end_company">
+                        <button type="submit" class="button">Auftrag beenden</button>
+                    </form>
                 {% endif %}
-                {% if can_create_companies %}
-                    <label>
-                        Neue Firma anlegen
-                        <input type="text" name="new_company_name" placeholder="Name der neuen Firma">
-                    </label>
+                {% if companies or can_create_companies %}
+                    <button type="button" class="button" data-open="order-modal">Auftrag starten</button>
                 {% endif %}
-                <label>
-                    Kommentar (optional)
-                    <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
-                </label>
-                <div class="modal__actions">
-                    <button type="submit" class="button">Auftrag starten</button>
+                <form method="post" action="/punch">
+                    <input type="hidden" name="next_url" value="/dashboard">
+                    <input type="hidden" name="action" value="end_work">
+                    <button type="submit" class="button danger">Arbeitszeit beenden</button>
+                </form>
+            </div>
+        {% else %}
+            <div class="punch-start-options">
+                <form method="post" action="/punch" class="punch-start-quick">
+                    <input type="hidden" name="next_url" value="/dashboard">
+                    <input type="hidden" name="action" value="start_work">
+                    <button type="submit" class="button primary">Arbeitszeit starten</button>
+                </form>
+                {% if companies or can_create_companies %}
+                <button type="button" class="button ghost" data-open="order-modal">Auftrag starten</button>
+                {% endif %}
+            </div>
+        {% endif %}
+        {% if companies or can_create_companies %}
+        <div class="modal" id="order-modal" aria-hidden="true" role="dialog" aria-modal="true">
+            <div class="modal__backdrop" data-close></div>
+            <div class="modal__dialog">
+                <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+                <h3>Auftrag starten</h3>
+                <p class="modal__hint">Wähle eine bestehende Firma oder lege einen neuen Auftrag an.</p>
+                <form method="post" action="/punch" class="modal__form">
+                    <input type="hidden" name="next_url" value="/dashboard">
+                    <input type="hidden" name="action" value="start_company">
+                    {% if companies %}
+                        <label>
+                            Firma auswählen
+                            <select name="company_id">
+                                <option value="">Firma wählen</option>
+                                {% for company in companies %}
+                                    <option value="{{ company.id }}">{{ company.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                    {% endif %}
+                    {% if can_create_companies %}
+                        <label>
+                            Neue Firma anlegen
+                            <input type="text" name="new_company_name" placeholder="Name der neuen Firma">
+                        </label>
+                    {% endif %}
+                    <label>
+                        Kommentar (optional)
+                        <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
+                    </label>
+                    <div class="modal__actions">
+                        <button type="submit" class="button">Auftrag starten</button>
+                    </div>
+                </form>
+            </div>
+            </div>
+        {% endif %}
+        </section>
+    </div>
+    <div class="dashboard-top__right">
+        <div class="dashboard-top__metrics">
+            <section class="card dashboard-summary-card">
+                <header class="dashboard-summary-card__header">
+                    <h2>Meine Soll-/Ist-Stunden</h2>
+                    <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
+                </header>
+                <div class="dashboard-summary-card__body">
+                    <dl class="dashboard-summary__stats">
+                        <div>
+                            <dt>Aktueller Monat</dt>
+                            <dd>{{ metrics_month.strftime('%m/%Y') }}</dd>
+                        </div>
+                        <div>
+                            <dt>Monatliches Soll</dt>
+                            <dd>{{ soll_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Bisher geleistet (Ist)</dt>
+                            <dd>{{ ist_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Überstundenabbau</dt>
+                            <dd>{{ overtime_taken_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div class="dashboard-summary__diff {{ diff_class }}">
+                            <dt>Diff (Ist - Soll)</dt>
+                            <dd>{{ diff_minutes|format_minutes }} Std</dd>
+                        </div>
+                        {% if user.time_account_enabled %}
+                            <div>
+                                <dt>Offene Minusstunden</dt>
+                                <dd>{{ metrics.total_undertime_minutes|format_minutes }} Std</dd>
+                            </div>
+                        {% endif %}
+                        {% if overtime_limit_minutes > 0 %}
+                            <div class="dashboard-overtime-limit {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
+                                <dt>Überstundenlimit (Monat)</dt>
+                                <dd>{{ overtime_limit_minutes|format_minutes }} Std</dd>
+                            </div>
+                        {% endif %}
+                    </dl>
+                    {% if overtime_limit_minutes > 0 %}
+                        <p class="dashboard-overtime-limit__message {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
+                            {% if overtime_limit_exceeded %}
+                                Limit überschritten um {{ overtime_limit_excess_minutes|format_minutes }} Std.
+                            {% else %}
+                                Noch {{ overtime_limit_remaining_minutes|format_minutes }} Std bis zum Limit.
+                            {% endif %}
+                        </p>
+                    {% endif %}
+                    <p class="dashboard-summary__meta">
+                        {% if metrics.pending_vacations > 0 %}
+                            {{ metrics.pending_vacations }} offene Urlaubsanträge warten auf Freigabe.
+                        {% else %}
+                            Keine offenen Urlaubsanträge vorhanden.
+                        {% endif %}
+                    </p>
                 </div>
-            </form>
+            </section>
+            <section class="card dashboard-vacation-card">
+                <h2>Urlaubsübersicht</h2>
+                <dl class="dashboard-summary__stats">
+                    <div>
+                        <dt>Gesamturlaub</dt>
+                        <dd>{{ metrics.vacation_summary.total_days|round(2) }} Tage</dd>
+                    </div>
+                    {% if metrics.vacation_summary.carryover_days > 0 %}
+                        <div>
+                            <dt>Übertrag</dt>
+                            <dd>{{ metrics.vacation_summary.carryover_days|round(2) }} Tage</dd>
+                        </div>
+                    {% endif %}
+                    <div>
+                        <dt>Verbraucht</dt>
+                        <dd>{{ metrics.vacation_summary.used_days|round(2) }} Tage</dd>
+                    </div>
+                    <div>
+                        <dt>Geplant</dt>
+                        <dd>{{ metrics.vacation_summary.planned_days|round(2) }} Tage</dd>
+                    </div>
+                    <div>
+                        <dt>Resturlaub</dt>
+                        <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
+                    </div>
+                </dl>
+            </section>
         </div>
     </div>
-    {% endif %}
 </section>
 
 <section class="card">
@@ -221,6 +249,12 @@
                 {% endfor %}
             </select>
         </label>
+        {% if can_create_companies %}
+            <label>
+                Neue Firma anlegen
+                <input type="text" name="new_company_name" placeholder="Name der neuen Firma">
+            </label>
+        {% endif %}
         <label class="full-width">
             Kommentar
             <textarea name="notes" rows="2" placeholder="z. B. Projekt oder Kunde"></textarea>

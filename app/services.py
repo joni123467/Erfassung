@@ -150,6 +150,12 @@ def calculate_dashboard_metrics(
     if not (user and user.time_account_enabled):
         total_undertime = 0
         total_overtime = max(balance, 0)
+    overtime_limit = int(getattr(user, "monthly_overtime_limit_minutes", 0) or 0) if user else 0
+    overtime_limit_exceeded = bool(overtime_limit and total_overtime > overtime_limit)
+    overtime_limit_remaining = (
+        max(overtime_limit - total_overtime, 0) if overtime_limit and not overtime_limit_exceeded else 0
+    )
+    overtime_limit_excess = max(total_overtime - overtime_limit, 0) if overtime_limit_exceeded else 0
     pending_vacations = (
         db.query(models.VacationRequest)
         .filter(models.VacationRequest.user_id == user_id)
@@ -168,4 +174,8 @@ def calculate_dashboard_metrics(
         pending_vacations=pending_vacations,
         upcoming_holidays=upcoming_holidays,
         vacation_summary=vacation_summary,
+        overtime_limit_minutes=overtime_limit,
+        overtime_limit_remaining_minutes=overtime_limit_remaining,
+        overtime_limit_exceeded=overtime_limit_exceeded,
+        overtime_limit_excess_minutes=overtime_limit_excess,
     )
