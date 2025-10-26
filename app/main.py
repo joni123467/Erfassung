@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import shutil
+import logging
 import subprocess
 from calendar import monthrange
+from collections import Counter
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -13,14 +16,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
 from . import crud, database, holiday_calculator, models, schemas, services
 from .excel_export import export_time_entries
-from .pdf_export import export_time_overview_pdf
+from .pdf_export import export_team_overview_pdf, export_time_overview_pdf
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -36,11 +39,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 templates.env.globals["app_version"] = APP_VERSION
-
-APP_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
-UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
-UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
@@ -66,6 +64,12 @@ templates.env.filters["format_minutes"] = _format_minutes
 HOLIDAY_STATE_CHOICES = sorted(holiday_calculator.GERMAN_STATES.items(), key=lambda item: item[1])
 HOLIDAY_STATE_CODES = set(holiday_calculator.GERMAN_STATES.keys())
 
+TIME_ENTRY_STATUS_LABELS = {
+    models.TimeEntryStatus.APPROVED: "Freigegeben",
+    models.TimeEntryStatus.PENDING: "Wartet auf Freigabe",
+    models.TimeEntryStatus.REJECTED: "Abgelehnt",
+}
+
 
 def _read_update_log(limit: int = 400) -> str:
     try:
@@ -82,7 +86,7 @@ def _read_update_log(limit: int = 400) -> str:
 def _list_remote_branches(repo_url: str) -> List[str]:
     try:
         result = subprocess.run(
-            ["git", "ls-remote", "--heads", repo_url],
+            ["git", "ls-remote", "--heads", "--tags", repo_url],
             capture_output=True,
             text=True,
             check=True,
@@ -90,22 +94,47 @@ def _list_remote_branches(repo_url: str) -> List[str]:
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return []
-    branches: set[str] = set()
+    refs: set[str] = set()
     for line in result.stdout.splitlines():
         parts = line.strip().split()
         if len(parts) != 2:
             continue
         ref = parts[1]
+        if ref.endswith("^{}"):
+            continue
         if ref.startswith("refs/heads/"):
-            branches.add(ref[len("refs/heads/") :])
-    return sorted(branches)
+            refs.add(ref[len("refs/heads/") :])
+        elif ref.startswith("refs/tags/"):
+            refs.add(ref[len("refs/tags/") :])
+
+    def sort_key(value: str) -> tuple:
+        if value == "main":
+            return (0, 0, 0, 0, value)
+        if value.startswith("version-"):
+            number_part = value[len("version-") :]
+            segments: list[int] = []
+            for piece in number_part.split("."):
+                try:
+                    segments.append(int(piece))
+                except ValueError:
+                    segments.append(0)
+            while len(segments) < 3:
+                segments.append(0)
+            major, minor, patch = segments[:3]
+            return (1, -major, -minor, -patch, value)
+        return (2, value.lower())
+
+    return sorted(refs, key=sort_key)
 
 
 def _execute_update(ref: str, repo_url: str) -> bool:
     UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    shell = shutil.which("bash") or shutil.which("sh")
+    if not shell:
+        raise FileNotFoundError("Keine Shell zum Ausführen des Update-Skripts gefunden")
     command = [
-        "bash",
+        shell,
         str(UPDATE_SCRIPT_PATH),
         "--app-dir",
         str(APP_ROOT),
@@ -172,8 +201,11 @@ def _row_get(row: object, key: str, fallback_index: int | None = None):
     return None
 
 
+logger = logging.getLogger(__name__)
+
+
 def ensure_schema() -> None:
-    with database.engine.connect() as connection:
+    with database.engine.begin() as connection:
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
         if "companies" not in table_names:
@@ -248,6 +280,13 @@ def ensure_schema() -> None:
             if "can_create_companies" not in columns:
                 connection.execute(
                     text("ALTER TABLE groups ADD COLUMN can_create_companies BOOLEAN DEFAULT 0")
+                )
+            if "can_view_time_reports" not in columns:
+                connection.execute(
+                    text("ALTER TABLE groups ADD COLUMN can_view_time_reports BOOLEAN DEFAULT 0")
+                )
+                connection.execute(
+                    text("UPDATE groups SET can_view_time_reports = 1 WHERE is_admin = 1")
                 )
         if "holidays" in table_names:
             index_rows = connection.execute(text("PRAGMA index_list('holidays')")).fetchall()
@@ -355,9 +394,294 @@ def _aggregate_company_totals(source_entries: List[models.TimeEntry]):
     return sorted(totals.values(), key=lambda item: str(item["name"]).lower())
 
 
-@app.on_event("startup")
-def ensure_seed_data():
-    ensure_schema()
+def _format_week_value(moment: date) -> str:
+    iso_year, iso_week, _ = moment.isocalendar()
+    return f"{iso_year:04d}-W{iso_week:02d}"
+
+
+def _resolve_week_period(week_param: Optional[str]) -> tuple[date, date]:
+    today = date.today()
+    if week_param:
+        try:
+            start = datetime.strptime(f"{week_param}-1", "%G-W%V-%u").date()
+        except ValueError:
+            start = today - timedelta(days=today.weekday())
+    else:
+        start = today - timedelta(days=today.weekday())
+    end = start + timedelta(days=6)
+    return start, end
+
+
+def _parse_date_param(value: Optional[str]) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _resolve_range_period(start_param: Optional[str], end_param: Optional[str]) -> tuple[date, date]:
+    today = date.today()
+    start = _parse_date_param(start_param) or today.replace(day=1)
+    end = _parse_date_param(end_param) or start
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def _build_user_totals(entries: List[models.TimeEntry]) -> List[dict[str, object]]:
+    summary: dict[int, dict[str, object]] = {}
+    for entry in entries:
+        if not entry.user:
+            continue
+        record = summary.setdefault(
+            entry.user_id,
+            {
+                "user": entry.user,
+                "minutes": 0,
+                "count": 0,
+                "status_counts": Counter(),
+                "companies": {},
+            },
+        )
+        record["minutes"] = int(record["minutes"]) + entry.worked_minutes
+        record["count"] = int(record["count"]) + 1
+        record["status_counts"][entry.status] += 1
+        company_name = entry.company.name if entry.company else "Allgemein"
+        company_record = record["companies"].setdefault(
+            company_name,
+            {"name": company_name, "minutes": 0, "count": 0},
+        )
+        company_record["minutes"] = int(company_record["minutes"]) + entry.worked_minutes
+        company_record["count"] = int(company_record["count"]) + 1
+
+    results: List[dict[str, object]] = []
+    for payload in summary.values():
+        companies = list(payload["companies"].values())
+        companies.sort(key=lambda item: (-int(item["minutes"]), str(item["name"]).lower()))
+        primary_company = companies[0]["name"] if companies else "Allgemein"
+        status_counts: Counter = payload["status_counts"]
+        status_breakdown = [
+            {
+                "status": status,
+                "label": TIME_ENTRY_STATUS_LABELS.get(status, status.title()),
+                "count": status_counts.get(status, 0),
+            }
+            for status in (
+                models.TimeEntryStatus.APPROVED,
+                models.TimeEntryStatus.PENDING,
+                models.TimeEntryStatus.REJECTED,
+            )
+            if status_counts.get(status, 0)
+        ]
+        results.append(
+            {
+                "user": payload["user"],
+                "minutes": int(payload["minutes"]),
+                "count": int(payload["count"]),
+                "status_counts": status_counts,
+                "status_breakdown": status_breakdown,
+                "companies": companies,
+                "primary_company": primary_company,
+            }
+        )
+    return results
+
+
+def _build_time_report_data(params, db: Session) -> dict[str, object]:
+    view = params.get("view", "month")
+    if view not in {"month", "week", "range"}:
+        view = "month"
+    status_param = params.get("status", "approved")
+    if status_param not in {"approved", "pending", "rejected", "all"}:
+        status_param = "approved"
+    sort_param = params.get("sort", "name")
+    if sort_param not in {"name", "minutes_desc", "entries_desc", "company"}:
+        sort_param = "name"
+    company_param = params.get("company", "")
+
+    if view == "week":
+        start_date, end_date = _resolve_week_period(params.get("week"))
+        reference_month = start_date.replace(day=1)
+        month_value = f"{reference_month.year:04d}-{reference_month.month:02d}"
+        week_value = _format_week_value(start_date)
+    elif view == "range":
+        start_date, end_date = _resolve_range_period(params.get("start"), params.get("end"))
+        month_value = f"{start_date.year:04d}-{start_date.month:02d}"
+        week_value = _format_week_value(start_date)
+    else:
+        selected_month, start_date, end_date = _resolve_month_period(params.get("month"))
+        month_value = f"{selected_month.year:04d}-{selected_month.month:02d}"
+        week_value = _format_week_value(start_date)
+
+    range_start_value = start_date.strftime("%Y-%m-%d")
+    range_end_value = end_date.strftime("%Y-%m-%d")
+
+    status_filters = {
+        "approved": [models.TimeEntryStatus.APPROVED],
+        "pending": [models.TimeEntryStatus.PENDING],
+        "rejected": [models.TimeEntryStatus.REJECTED],
+        "all": None,
+    }
+    statuses = status_filters[status_param]
+
+    entries = list(
+        crud.get_time_entries(
+            db,
+            start=start_date,
+            end=end_date,
+            statuses=statuses,
+        )
+    )
+
+    company_filter_id: Optional[int] = None
+    company_filter_none = False
+    company_param_value = company_param
+    if company_param == "none":
+        company_filter_none = True
+    elif company_param:
+        try:
+            company_filter_id = int(company_param)
+        except ValueError:
+            company_filter_id = None
+
+    if company_filter_none:
+        entries = [entry for entry in entries if entry.company_id is None]
+    elif company_filter_id is not None:
+        entries = [entry for entry in entries if entry.company_id == company_filter_id]
+
+    entries_sorted = sorted(
+        entries,
+        key=lambda item: (
+            item.work_date,
+            item.start_time,
+            item.user.full_name.lower() if item.user else "",
+        ),
+    )
+
+    total_minutes = sum(entry.worked_minutes for entry in entries)
+    total_entries = len(entries)
+    unique_users = len({entry.user_id for entry in entries})
+
+    status_counts = Counter(entry.status for entry in entries)
+    status_order = [
+        models.TimeEntryStatus.APPROVED,
+        models.TimeEntryStatus.PENDING,
+        models.TimeEntryStatus.REJECTED,
+    ]
+    status_summary = [
+        {
+            "key": status,
+            "label": TIME_ENTRY_STATUS_LABELS.get(status, status.title()),
+            "count": status_counts.get(status, 0),
+        }
+        for status in status_order
+        if status_counts.get(status, 0)
+    ]
+
+    company_totals = _aggregate_company_totals(entries)
+    company_totals.sort(key=lambda row: (-int(row["minutes"]), str(row["name"]).lower()))
+
+    user_totals = _build_user_totals(entries)
+    if sort_param == "minutes_desc":
+        user_totals.sort(key=lambda item: (-int(item["minutes"]), item["user"].full_name.lower()))
+    elif sort_param == "entries_desc":
+        user_totals.sort(key=lambda item: (-int(item["count"]), item["user"].full_name.lower()))
+    elif sort_param == "company":
+        user_totals.sort(key=lambda item: (item["primary_company"].lower(), item["user"].full_name.lower()))
+    else:
+        user_totals.sort(key=lambda item: item["user"].full_name.lower())
+
+    period_range = (
+        f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
+        if start_date != end_date
+        else start_date.strftime("%d.%m.%Y")
+    )
+
+    if view == "week":
+        iso_year, iso_week, _ = start_date.isocalendar()
+        period_label = f"KW {iso_week:02d}/{iso_year}"
+        period_filename = f"{iso_year}_KW{iso_week:02d}"
+    elif view == "range":
+        period_label = period_range
+        period_filename = f"{start_date.strftime('%Y-%m-%d')}_{end_date.strftime('%Y-%m-%d')}"
+    else:
+        period_label = start_date.strftime("%m/%Y")
+        period_filename = start_date.strftime("%Y_%m")
+
+    status_options = [
+        {"value": "approved", "label": TIME_ENTRY_STATUS_LABELS[models.TimeEntryStatus.APPROVED]},
+        {"value": "pending", "label": TIME_ENTRY_STATUS_LABELS[models.TimeEntryStatus.PENDING]},
+        {"value": "rejected", "label": TIME_ENTRY_STATUS_LABELS[models.TimeEntryStatus.REJECTED]},
+        {"value": "all", "label": "Alle Stände"},
+    ]
+    sort_options = [
+        {"value": "name", "label": "Name A–Z"},
+        {"value": "minutes_desc", "label": "Arbeitszeit (absteigend)"},
+        {"value": "entries_desc", "label": "Buchungen (absteigend)"},
+        {"value": "company", "label": "Firma A–Z"},
+    ]
+
+    query_params = {
+        "view": view,
+        "status": status_param,
+        "sort": sort_param,
+    }
+    if view == "month":
+        query_params["month"] = month_value
+    elif view == "week":
+        query_params["week"] = week_value
+    else:
+        query_params["start"] = range_start_value
+        query_params["end"] = range_end_value
+    if company_param_value:
+        query_params["company"] = company_param_value
+    export_query = urlencode({key: value for key, value in query_params.items() if value})
+
+    companies = crud.get_companies(db)
+    company_filter_label = "Alle Firmen"
+    if company_filter_none:
+        company_filter_label = "Allgemeine Arbeitszeit"
+    elif company_filter_id is not None:
+        for company in companies:
+            if company.id == company_filter_id:
+                company_filter_label = company.name
+                break
+
+    return {
+        "view": view,
+        "status_param": status_param,
+        "sort_param": sort_param,
+        "month_value": month_value,
+        "week_value": week_value,
+        "range_start_value": range_start_value,
+        "range_end_value": range_end_value,
+        "company_filter_id": company_filter_id,
+        "company_filter_none": company_filter_none,
+        "company_param": company_param_value,
+        "company_filter_label": company_filter_label,
+        "companies": companies,
+        "entries": entries,
+        "entries_sorted": entries_sorted,
+        "total_minutes": total_minutes,
+        "total_entries": total_entries,
+        "unique_users": unique_users,
+        "status_summary": status_summary,
+        "status_counts": status_counts,
+        "company_totals": company_totals,
+        "user_totals": user_totals,
+        "period_label": period_label,
+        "period_range": period_range,
+        "period_filename": period_filename,
+        "start_date": start_date,
+        "end_date": end_date,
+        "status_options": status_options,
+        "sort_options": sort_options,
+        "export_query": export_query,
+        "status_labels": TIME_ENTRY_STATUS_LABELS,
+    }
+def _seed_default_records() -> None:
     db = database.SessionLocal()
     try:
         if not crud.get_groups(db):
@@ -370,15 +694,21 @@ def ensure_seed_data():
                     can_manage_vacations=True,
                     can_approve_manual_entries=True,
                     can_create_companies=True,
+                    can_view_time_reports=True,
                 ),
             )
         else:
-            admin_group = db.query(models.Group).filter(models.Group.is_admin == True).first()  # noqa: E712
+            admin_group = (
+                db.query(models.Group)
+                .filter(models.Group.is_admin == True)  # noqa: E712
+                .first()
+            )
             if admin_group:
                 admin_group.can_manage_users = True
                 admin_group.can_manage_vacations = True
                 admin_group.can_approve_manual_entries = True
                 admin_group.can_create_companies = True
+                admin_group.can_view_time_reports = True
                 db.commit()
         if not crud.get_companies(db):
             crud.create_company(db, schemas.CompanyCreate(name="Allgemein"))
@@ -396,6 +726,27 @@ def ensure_seed_data():
             )
     finally:
         db.close()
+
+
+@app.on_event("startup")
+def ensure_seed_data():
+    ensure_schema()
+    try:
+        _seed_default_records()
+    except OperationalError as exc:
+        logger.warning(
+            "Database schema mismatch detected during startup. Attempting automatic repair.",
+            exc_info=exc,
+        )
+        ensure_schema()
+        try:
+            _seed_default_records()
+        except OperationalError:
+            logger.error(
+                "Automatic schema repair failed; manual intervention required.",
+                exc_info=True,
+            )
+            raise
 
 
 @app.middleware("http")
@@ -912,22 +1263,33 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         if overtime_limit_minutes and not overtime_limit_exceeded
         else 0
     )
-    buffer = export_time_overview_pdf(
-        user=user,
-        selected_month=selected_month,
-        entries=month_entries,
-        total_work_minutes=total_work_minutes,
-        target_minutes=target_minutes,
-        overtime_taken_minutes=overtime_taken_minutes,
-        total_overtime_minutes=total_overtime_minutes,
-        total_undertime_minutes=total_undertime_minutes,
-        vacation_summary=vacation_summary,
-        company_totals=company_totals_all,
-        overtime_limit_minutes=overtime_limit_minutes,
-        overtime_limit_exceeded=overtime_limit_exceeded,
-        overtime_limit_excess_minutes=overtime_limit_excess_minutes,
-        overtime_limit_remaining_minutes=overtime_limit_remaining_minutes,
-    )
+    try:
+        buffer = export_time_overview_pdf(
+            user=user,
+            selected_month=selected_month,
+            entries=month_entries,
+            total_work_minutes=total_work_minutes,
+            target_minutes=target_minutes,
+            overtime_taken_minutes=overtime_taken_minutes,
+            total_overtime_minutes=total_overtime_minutes,
+            total_undertime_minutes=total_undertime_minutes,
+            vacation_summary=vacation_summary,
+            company_totals=company_totals_all,
+            overtime_limit_minutes=overtime_limit_minutes,
+            overtime_limit_exceeded=overtime_limit_exceeded,
+            overtime_limit_excess_minutes=overtime_limit_excess_minutes,
+            overtime_limit_remaining_minutes=overtime_limit_remaining_minutes,
+        )
+    except RuntimeError as exc:
+        redirect_params = []
+        if month:
+            redirect_params.append(("month", month))
+        redirect_params.append(("error", str(exc)))
+        query = urlencode(redirect_params)
+        url = "/records"
+        if query:
+            url = f"{url}?{query}"
+        return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
     filename = f"arbeitszeit_{user.username}_{selected_month.strftime('%Y_%m')}.pdf"
     return StreamingResponse(
         buffer,
@@ -964,6 +1326,12 @@ def _can_create_companies(user: models.User) -> bool:
     return _has_group_permission(user, "can_create_companies")
 
 
+def _can_view_time_reports(user: models.User) -> bool:
+    if _ensure_admin(user):
+        return True
+    return _has_group_permission(user, "can_view_time_reports")
+
+
 def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
     permissions = {
         "users": _can_manage_users(user),
@@ -973,6 +1341,7 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "approvals_manual": _can_approve_manual_entries(user),
         "approvals_vacations": _can_manage_vacations(user),
         "updates": _ensure_admin(user),
+        "reports": _can_view_time_reports(user),
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
     permissions["create_companies"] = _can_create_companies(user)
@@ -1278,6 +1647,81 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
     )
 
 
+@app.get("/admin/reports/time", response_class=HTMLResponse)
+def admin_time_reports_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    report_data = _build_time_report_data(request.query_params, db)
+    return _admin_template(
+        "admin/time_reports.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        **report_data,
+    )
+
+
+@app.get("/admin/reports/time/pdf")
+def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    report_data = _build_time_report_data(request.query_params, db)
+    try:
+        buffer = export_team_overview_pdf(
+            period_label=report_data["period_label"],
+            period_range=report_data["period_range"],
+            start_date=report_data["start_date"],
+            end_date=report_data["end_date"],
+            total_minutes=report_data["total_minutes"],
+            total_entries=report_data["total_entries"],
+            unique_users=report_data["unique_users"],
+            status_summary=report_data["status_summary"],
+            company_totals=report_data["company_totals"],
+            user_totals=report_data["user_totals"],
+            entries=report_data["entries_sorted"],
+        )
+    except RuntimeError as exc:
+        params = list(request.query_params.multi_items())
+        params.append(("error", str(exc)))
+        query = urlencode(params)
+        url = "/admin/reports/time"
+        if query:
+            url = f"{url}?{query}"
+        return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
+    filename = f"team_zeit_{report_data['period_filename']}.pdf"
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.get("/admin/reports/time/excel")
+def admin_time_reports_excel(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    report_data = _build_time_report_data(request.query_params, db)
+    buffer = export_time_entries(report_data["entries_sorted"])
+    filename = f"team_zeit_{report_data['period_filename']}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @app.post("/admin/groups/create")
 def create_group_html(
     request: Request,
@@ -1287,6 +1731,7 @@ def create_group_html(
     can_manage_vacations: Optional[str] = Form(None),
     can_approve_manual_entries: Optional[str] = Form(None),
     can_create_companies: Optional[str] = Form(None),
+    can_view_time_reports: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -1297,11 +1742,13 @@ def create_group_html(
     manage_vacations_value = can_manage_vacations == "on"
     approve_manual_value = can_approve_manual_entries == "on"
     create_companies_value = can_create_companies == "on"
+    view_time_reports_value = can_view_time_reports == "on"
     if is_admin_value:
         manage_users_value = True
         manage_vacations_value = True
         approve_manual_value = True
         create_companies_value = True
+        view_time_reports_value = True
     try:
         crud.create_group(
             db,
@@ -1312,6 +1759,7 @@ def create_group_html(
                 can_manage_vacations=manage_vacations_value,
                 can_approve_manual_entries=approve_manual_value,
                 can_create_companies=create_companies_value,
+                can_view_time_reports=view_time_reports_value,
             ),
         )
     except IntegrityError:
@@ -1333,6 +1781,7 @@ def update_group_html(
     can_manage_vacations: Optional[str] = Form(None),
     can_approve_manual_entries: Optional[str] = Form(None),
     can_create_companies: Optional[str] = Form(None),
+    can_view_time_reports: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -1343,11 +1792,13 @@ def update_group_html(
     manage_vacations_value = can_manage_vacations == "on"
     approve_manual_value = can_approve_manual_entries == "on"
     create_companies_value = can_create_companies == "on"
+    view_time_reports_value = can_view_time_reports == "on"
     if is_admin_value:
         manage_users_value = True
         manage_vacations_value = True
         approve_manual_value = True
         create_companies_value = True
+        view_time_reports_value = True
     try:
         updated = crud.update_group(
             db,
@@ -1359,6 +1810,7 @@ def update_group_html(
                 can_manage_vacations=manage_vacations_value,
                 can_approve_manual_entries=approve_manual_value,
                 can_create_companies=create_companies_value,
+                can_view_time_reports=view_time_reports_value,
             ),
         )
     except IntegrityError:

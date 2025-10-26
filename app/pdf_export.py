@@ -2,16 +2,37 @@ from __future__ import annotations
 
 from datetime import date
 from io import BytesIO
-from typing import Iterable, List
-
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from typing import Iterable, List, Sequence
 
 from .models import TimeEntry, TimeEntryStatus, User
 from .schemas import VacationSummary
+
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+except ImportError as exc:  # pragma: no cover - handled at runtime when dependency missing
+    colors = None  # type: ignore[assignment]
+    A4 = None  # type: ignore[assignment]
+    getSampleStyleSheet = None  # type: ignore[assignment]
+    mm = None  # type: ignore[assignment]
+    Paragraph = None  # type: ignore[assignment]
+    SimpleDocTemplate = None  # type: ignore[assignment]
+    Spacer = None  # type: ignore[assignment]
+    Table = None  # type: ignore[assignment]
+    TableStyle = None  # type: ignore[assignment]
+    _REPORTLAB_IMPORT_ERROR: Exception | None = exc
+else:
+    _REPORTLAB_IMPORT_ERROR = None
+
+
+def _ensure_reportlab() -> None:
+    if _REPORTLAB_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "Für den PDF-Export wird die Python-Bibliothek 'reportlab' benötigt."
+        ) from _REPORTLAB_IMPORT_ERROR
 
 
 def _format_minutes(value: int) -> str:
@@ -46,6 +67,8 @@ def export_time_overview_pdf(
     overtime_limit_excess_minutes: int,
     overtime_limit_remaining_minutes: int,
 ) -> BytesIO:
+    _ensure_reportlab()
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -220,7 +243,7 @@ def export_time_overview_pdf(
     story.append(Paragraph("Zeitbuchungen (Monat)", styles["Heading2"]))
     story.append(entry_table)
 
-    def _add_footer(canvas, document):
+    def _add_footer(canvas, document):  # type: ignore[override]
         canvas.saveState()
         canvas.setFont("Helvetica", 9)
         y_position = 12 * mm
@@ -230,5 +253,215 @@ def export_time_overview_pdf(
         canvas.restoreState()
 
     doc.build(story, onFirstPage=_add_footer, onLaterPages=_add_footer)
+    buffer.seek(0)
+    return buffer
+
+
+def export_team_overview_pdf(
+    *,
+    period_label: str,
+    period_range: str,
+    start_date: date,
+    end_date: date,
+    total_minutes: int,
+    total_entries: int,
+    unique_users: int,
+    status_summary: Sequence[dict[str, object]],
+    company_totals: Sequence[dict[str, object]],
+    user_totals: Sequence[dict[str, object]],
+    entries: Iterable[TimeEntry],
+) -> BytesIO:
+    _ensure_reportlab()
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=20 * mm,
+        bottomMargin=20 * mm,
+    )
+    styles = getSampleStyleSheet()
+    story: List[object] = []
+
+    story.append(Paragraph(f"Team-Zeitübersicht – {period_label}", styles["Title"]))
+    story.append(Spacer(1, 3 * mm))
+    story.append(Paragraph(f"Zeitraum: {period_range}", styles["Normal"]))
+    story.append(Paragraph(f"Erstellt am: {date.today().strftime('%d.%m.%Y')}", styles["Normal"]))
+    story.append(Spacer(1, 6 * mm))
+
+    summary_data = [
+        ["Arbeitszeit (bewertet)", f"{_format_minutes(total_minutes)} Std"],
+        ["Buchungen gesamt", str(total_entries)],
+        ["Mitarbeitende", str(unique_users)],
+    ]
+    summary_table = Table(summary_data, hAlign="LEFT")
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ]
+        )
+    )
+    story.append(summary_table)
+    story.append(Spacer(1, 6 * mm))
+
+    if status_summary:
+        status_data = [["Status", "Anzahl"]]
+        for item in status_summary:
+            status_data.append([str(item.get("label", "")), str(item.get("count", 0))])
+        status_table = Table(status_data, hAlign="LEFT")
+        status_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ]
+            )
+        )
+        story.append(Paragraph("Statusverteilung", styles["Heading2"]))
+        story.append(status_table)
+        story.append(Spacer(1, 6 * mm))
+
+    if company_totals:
+        company_data = [["Firma", "Buchungen", "Arbeitszeit"]]
+        for record in company_totals:
+            company_data.append(
+                [
+                    str(record.get("name", "")),
+                    str(record.get("count", 0)),
+                    f"{_format_minutes(int(record.get('minutes', 0)))} Std",
+                ]
+            )
+        company_table = Table(company_data, hAlign="LEFT")
+        company_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ]
+            )
+        )
+        story.append(Paragraph("Firmenübersicht", styles["Heading2"]))
+        story.append(company_table)
+        story.append(Spacer(1, 6 * mm))
+
+    if user_totals:
+        user_data = [["Mitarbeiter", "Arbeitszeit", "Buchungen", "Firmen"]]
+        for record in user_totals:
+            user_obj = record.get("user")
+            companies = record.get("companies", [])
+            company_lines = []
+            for company in companies:
+                label = str(company.get("name", ""))
+                minutes = _format_minutes(int(company.get("minutes", 0)))
+                count = company.get("count", 0)
+                company_lines.append(f"{label}: {minutes} Std ({count})")
+            companies_text = "<br/>".join(company_lines) if company_lines else "-"
+            user_data.append(
+                [
+                    str(getattr(user_obj, "full_name", "")),
+                    f"{_format_minutes(int(record.get('minutes', 0)))} Std",
+                    str(record.get("count", 0)),
+                    Paragraph(companies_text, styles["Normal"]),
+                ]
+            )
+        user_table = Table(
+            user_data,
+            hAlign="LEFT",
+            colWidths=[doc.width * 0.25, doc.width * 0.2, doc.width * 0.15, doc.width * 0.4],
+        )
+        user_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("VALIGN", (0, 1), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        story.append(Paragraph("Mitarbeiterübersicht", styles["Heading2"]))
+        story.append(user_table)
+        story.append(Spacer(1, 6 * mm))
+
+    entry_data = [["Datum", "Mitarbeiter", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Quelle", "Kommentar"]]
+    sorted_entries = sorted(
+        entries,
+        key=lambda item: (item.work_date, item.start_time, getattr(item.user, "full_name", "")),
+    )
+    total_entry_minutes = 0
+    for entry in sorted_entries:
+        total_entry_minutes += entry.worked_minutes
+        end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
+        entry_data.append(
+            [
+                entry.work_date.strftime("%d.%m.%Y"),
+                entry.user.full_name if entry.user else "-",
+                entry.company.name if entry.company else "Allgemein",
+                entry.start_time.strftime("%H:%M"),
+                end_value,
+                f"{_format_minutes(entry.worked_minutes)} Std",
+                _status_label(entry.status),
+                "Manuell" if entry.is_manual else "Automatisch",
+                entry.notes or "-",
+            ]
+        )
+    entry_data.append(
+        [
+            "Summe",
+            "",
+            "",
+            "",
+            f"{_format_minutes(total_entry_minutes)} Std",
+            "",
+            "",
+            "",
+            "",
+        ]
+    )
+    entry_table = Table(
+        entry_data,
+        colWidths=[
+            doc.width * 0.11,
+            doc.width * 0.17,
+            doc.width * 0.17,
+            doc.width * 0.08,
+            doc.width * 0.08,
+            doc.width * 0.12,
+            doc.width * 0.12,
+            doc.width * 0.08,
+            doc.width * 0.17,
+        ],
+        repeatRows=1,
+    )
+    entry_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ]
+        )
+    )
+    story.append(Paragraph("Einzelbuchungen", styles["Heading2"]))
+    story.append(entry_table)
+
+    doc.build(story)
     buffer.seek(0)
     return buffer
