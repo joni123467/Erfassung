@@ -38,11 +38,11 @@
             <dt>Überstundenabbau</dt>
             <dd>{{ overtime_taken_minutes|format_minutes }} Stunden</dd>
         </div>
+        <div class="dashboard-summary-list__item">
+            <dt>Überstunden (Monat)</dt>
+            <dd>{{ total_overtime_minutes|format_minutes }} Stunden</dd>
+        </div>
         {% if user.time_account_enabled %}
-            <div class="dashboard-summary-list__item">
-                <dt>Überstunden (Monat)</dt>
-                <dd>{{ total_overtime_minutes|format_minutes }} Stunden</dd>
-            </div>
             <div class="dashboard-summary-list__item">
                 <dt>Minusstunden (Monat)</dt>
                 <dd>{{ total_undertime_minutes|format_minutes }} Stunden</dd>
