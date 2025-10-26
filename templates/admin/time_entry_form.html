@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Zeitbuchung bearbeiten – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = active_tab %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>Zeitbuchung bearbeiten</h1>
+        <a href="{{ next_url }}" class="button ghost">Zurück</a>
+    </div>
+    <form method="post" action="/admin/time-entries/{{ entry.id }}/update" class="form-grid">
+        <input type="hidden" name="user_id" value="{{ entry.user_id }}">
+        <input type="hidden" name="redirect_user" value="{{ redirect_user or '' }}">
+        <input type="hidden" name="next_url" value="{{ next_url }}">
+        <label>
+            Mitarbeiter
+            <input type="text" value="{{ entry.user.full_name if entry.user else 'Unbekannt' }}" disabled>
+        </label>
+        <label>
+            Datum
+            <input type="date" name="work_date" value="{{ entry.work_date.strftime('%Y-%m-%d') }}" required>
+        </label>
+        <label>
+            Startzeit
+            <input type="time" name="start_time" value="{{ entry.start_time.strftime('%H:%M') }}" required>
+        </label>
+        <label>
+            Endzeit
+            <input type="time" name="end_time" value="{{ entry.end_time.strftime('%H:%M') }}" required>
+        </label>
+        <label>
+            Pausen (Minuten)
+            <input type="number" name="break_minutes" value="{{ entry.break_minutes }}" min="0">
+        </label>
+        <label>
+            Firma
+            <select name="company_id">
+                <option value="">Allgemeine Arbeitszeit</option>
+                {% for company in companies %}
+                    <option value="{{ company.id }}" {% if entry.company_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label class="full-width">
+            Kommentar
+            <textarea name="notes" rows="3" placeholder="Optional">{{ entry.notes }}</textarea>
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">Speichern</button>
+        </div>
+    </form>
+    <form method="post" action="/admin/time-entries/{{ entry.id }}/delete" class="danger-zone" onsubmit="return confirm('Buchung wirklich löschen?');">
+        <input type="hidden" name="redirect_user" value="{{ redirect_user or '' }}">
+        <input type="hidden" name="next_url" value="{{ next_url }}">
+        <button type="submit" class="button danger small">Buchung löschen</button>
+    </form>
+</section>
+{% endblock %}
