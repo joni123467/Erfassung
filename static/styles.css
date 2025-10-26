@@ -23,6 +23,34 @@ body {
     color: var(--text);
 }
 
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]),
+select,
+textarea {
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #ccd4f3;
+    border-radius: 6px;
+    font: inherit;
+    background: #ffffff;
+    color: inherit;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+select {
+    min-height: 2.75rem;
+}
+
+textarea {
+    resize: vertical;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]):focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(29, 126, 208, 0.15);
+}
+
 .timetac-header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
@@ -851,14 +879,12 @@ body.modal-open {
     flex-direction: column;
     gap: 0.35rem;
     font-weight: 600;
+    width: min(220px, 100%);
 }
 
-.filter-inline select {
-    padding: 0.6rem;
-    border: 1px solid #ccd4f3;
-    border-radius: 6px;
-    font: inherit;
-    min-width: 180px;
+.filter-inline label select,
+.filter-inline label input {
+    width: 100%;
 }
 
 .company-summary {
@@ -908,25 +934,6 @@ body.modal-open {
 
 .form-grid input,
 .form-grid select,
-.form-grid textarea,
-.user-form input,
-.user-form select,
-.inline-form input,
-.inline-form select {
-    padding: 0.6rem;
-    border: 1px solid #ccd4f3;
-    border-radius: 6px;
-    font: inherit;
-}
-
-.form-grid select,
-.user-form select,
-.inline-form select {
-    min-height: 2.75rem;
-}
-
-.form-grid input,
-.form-grid select,
 .form-grid textarea {
     width: 100%;
 }
@@ -943,23 +950,17 @@ body.modal-open {
     justify-content: flex-end;
 }
 
-.form-grid textarea,
-.user-form textarea {
-    resize: vertical;
-}
-
 .user-form {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-    max-width: 880px;
-    margin: 0 auto;
     width: 100%;
 }
 
 .user-form__columns {
     display: grid;
     gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .user-form__column {
@@ -968,24 +969,20 @@ body.modal-open {
     gap: 1.5rem;
 }
 
+
 .user-form__section {
     border: 1px solid #dbe3ff;
     border-radius: 12px;
-    padding: 1.25rem 1.5rem;
+    padding: 1.5rem;
     display: grid;
     gap: 1rem;
     background: #f8f9ff;
 }
 
-.user-form__option-group {
-    display: grid;
-    gap: 0.75rem;
-}
-
 .user-form__section legend {
     font-weight: 700;
     color: #1f3c88;
-    padding: 0 0.4rem;
+    padding: 0 0.2rem;
 }
 
 .user-form label {
@@ -993,6 +990,19 @@ body.modal-open {
     flex-direction: column;
     gap: 0.4rem;
     font-weight: 600;
+}
+
+.user-form__section--stacked {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.user-form__option-group {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.user-form__hint {
+    margin: -0.5rem 0 0;
 }
 
 .user-form__actions {
@@ -1012,17 +1022,9 @@ body.modal-open {
     height: 18px;
 }
 
-.user-form__hint {
-    margin: -0.75rem 0 0;
-}
-
-.user-form__section--stacked {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
-@media (min-width: 860px) {
+@media (min-width: 1200px) {
     .user-form__columns {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(320px, 1fr));
     }
 }
 
@@ -1071,6 +1073,11 @@ body.modal-open {
     max-width: 960px;
     width: 100%;
     margin: 0 auto;
+}
+
+.card-body--wide {
+    max-width: none;
+    width: 100%;
 }
 
 .card-body--separated {
@@ -1128,6 +1135,12 @@ body.modal-open {
     flex-direction: column;
     gap: 0.35rem;
     font-weight: 600;
+    width: min(260px, 100%);
+}
+
+.filter-bar label input,
+.filter-bar label select {
+    width: 100%;
 }
 
 .table-scroll {
@@ -1196,6 +1209,11 @@ body.modal-open {
     font-weight: 600;
 }
 
+.update-form label input,
+.update-form label select {
+    width: 100%;
+}
+
 .update-form__actions {
     display: flex;
     justify-content: flex-end;
@@ -1248,8 +1266,7 @@ body.modal-open {
     border-collapse: collapse;
 }
 
-.inline-form,
-.user-form {
+.inline-form {
     display: flex;
     flex-wrap: wrap;
     gap: 0.75rem;
@@ -1261,16 +1278,6 @@ body.modal-open {
     align-items: center;
     gap: 0.35rem;
     font-weight: 500;
-}
-
-.user-form input,
-.user-form select {
-    flex: 1 1 180px;
-}
-
-.user-form .form-actions {
-    display: flex;
-    gap: 0.5rem;
 }
 
 .time-entry-form {
