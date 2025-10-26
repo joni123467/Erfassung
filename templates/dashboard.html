@@ -254,37 +254,34 @@
                     <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
                 </header>
                 <div class="dashboard-summary-card__body">
-                    <div class="dashboard-hours-grid">
-                        <div class="dashboard-hours-grid__item">
-                            <span class="dashboard-hours-grid__label">Aktueller Monat</span>
-                            <span class="dashboard-hours-grid__value">{{ metrics_month.strftime('%m/%Y') }}</span>
+                    <dl class="dashboard-summary-list">
+                        <div class="dashboard-summary-list__item">
+                            <dt>Monatliches Soll</dt>
+                            <dd>{{ soll_minutes|format_minutes }} Std</dd>
                         </div>
-                        <div class="dashboard-hours-grid__item">
-                            <span class="dashboard-hours-grid__label">Monatliches Soll</span>
-                            <span class="dashboard-hours-grid__value">{{ soll_minutes|format_minutes }} Std</span>
+                        <div class="dashboard-summary-list__item">
+                            <dt>Bisher geleistet</dt>
+                            <dd>{{ ist_minutes|format_minutes }} Std</dd>
                         </div>
-                        <div class="dashboard-hours-grid__item">
-                            <span class="dashboard-hours-grid__label">Bisher geleistet</span>
-                            <span class="dashboard-hours-grid__value">{{ ist_minutes|format_minutes }} Std</span>
+                        <div class="dashboard-summary-list__item dashboard-summary-list__item--diff {{ diff_class }}">
+                            <dt>Differenz</dt>
+                            <dd>{{ diff_minutes|format_minutes }} Std</dd>
                         </div>
-                        <div class="dashboard-hours-grid__item">
-                            <span class="dashboard-hours-grid__label">Überstundenabbau</span>
-                            <span class="dashboard-hours-grid__value">{{ overtime_taken_minutes|format_minutes }} Std</span>
-                        </div>
-                        <div class="dashboard-hours-grid__item dashboard-hours-grid__item--diff {{ diff_class }}">
-                            <span class="dashboard-hours-grid__label">Differenz</span>
-                            <span class="dashboard-hours-grid__value">{{ diff_minutes|format_minutes }} Std</span>
+                        <div class="dashboard-summary-list__item">
+                            <dt>Überstundenabbau</dt>
+                            <dd>{{ overtime_taken_minutes|format_minutes }} Std</dd>
                         </div>
                         {% if user.time_account_enabled %}
-                            <div class="dashboard-hours-grid__item">
-                                <span class="dashboard-hours-grid__label">Offene Minusstunden</span>
-                                <span class="dashboard-hours-grid__value">{{ metrics.total_undertime_minutes|format_minutes }} Std</span>
+                            <div class="dashboard-summary-list__item">
+                                <dt>Offene Minusstunden</dt>
+                                <dd>{{ metrics.total_undertime_minutes|format_minutes }} Std</dd>
                             </div>
                         {% endif %}
+        
                         {% if overtime_limit_minutes > 0 %}
-                            <div class="dashboard-hours-grid__item dashboard-hours-grid__item--limit {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
-                                <span class="dashboard-hours-grid__label">Überstundenlimit</span>
-                                <span class="dashboard-hours-grid__value">{{ overtime_limit_minutes|format_minutes }} Std</span>
+                            <div class="dashboard-summary-list__item dashboard-summary-list__item--limit {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
+                                <dt>Überstundenlimit</dt>
+                                <dd>{{ overtime_limit_minutes|format_minutes }} Std</dd>
                             </div>
                         {% endif %}
                     </div>
@@ -297,6 +294,35 @@
                             {% endif %}
                         </p>
                     {% endif %}
+                </div>
+            </div>
+            <div class="dashboard-metrics-card__section dashboard-metrics-card__section--vacation">
+                <h2>Urlaubsübersicht</h2>
+                <div class="dashboard-summary-card__body">
+                    <dl class="dashboard-summary-list">
+                        <div class="dashboard-summary-list__item">
+                            <dt>Gesamturlaub</dt>
+                            <dd>{{ metrics.vacation_summary.total_days|round(2) }} Tage</dd>
+                        </div>
+                        {% if metrics.vacation_summary.carryover_days > 0 %}
+                            <div class="dashboard-summary-list__item">
+                                <dt>Übertrag</dt>
+                                <dd>{{ metrics.vacation_summary.carryover_days|round(2) }} Tage</dd>
+                            </div>
+                        {% endif %}
+                        <div class="dashboard-summary-list__item">
+                            <dt>Verbraucht</dt>
+                            <dd>{{ metrics.vacation_summary.used_days|round(2) }} Tage</dd>
+                        </div>
+                        <div class="dashboard-summary-list__item">
+                            <dt>Geplant</dt>
+                            <dd>{{ metrics.vacation_summary.planned_days|round(2) }} Tage</dd>
+                        </div>
+                        <div class="dashboard-summary-list__item">
+                            <dt>Resturlaub</dt>
+                            <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
+                        </div>
+                    </dl>
                     <p class="dashboard-summary__meta">
                         {% if metrics.pending_vacations > 0 %}
                             {{ metrics.pending_vacations }} offene Urlaubsanträge warten auf Freigabe.
@@ -305,33 +331,6 @@
                         {% endif %}
                     </p>
                 </div>
-            </div>
-            <div class="dashboard-metrics-card__section dashboard-metrics-card__section--vacation">
-                <h2>Urlaubsübersicht</h2>
-                <dl class="dashboard-summary__stats">
-                    <div>
-                        <dt>Gesamturlaub</dt>
-                        <dd>{{ metrics.vacation_summary.total_days|round(2) }} Tage</dd>
-                    </div>
-                    {% if metrics.vacation_summary.carryover_days > 0 %}
-                        <div>
-                            <dt>Übertrag</dt>
-                            <dd>{{ metrics.vacation_summary.carryover_days|round(2) }} Tage</dd>
-                        </div>
-                    {% endif %}
-                    <div>
-                        <dt>Verbraucht</dt>
-                        <dd>{{ metrics.vacation_summary.used_days|round(2) }} Tage</dd>
-                    </div>
-                    <div>
-                        <dt>Geplant</dt>
-                        <dd>{{ metrics.vacation_summary.planned_days|round(2) }} Tage</dd>
-                    </div>
-                    <div>
-                        <dt>Resturlaub</dt>
-                        <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
-                    </div>
-                </dl>
             </div>
         </section>
     </aside>
