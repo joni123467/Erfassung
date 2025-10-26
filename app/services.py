@@ -91,6 +91,33 @@ def calculate_approved_vacation_minutes(
     return total
 
 
+def calculate_vacation_minutes_by_day(
+    user: models.User | None,
+    vacations: list[models.VacationRequest],
+    start: date,
+    end: date,
+) -> dict[date, int]:
+    if not user or not vacations:
+        return {}
+    daily_minutes = int(round(user.daily_target_minutes or 0))
+    if daily_minutes <= 0:
+        return {}
+    totals: dict[date, int] = {}
+    for vacation in vacations:
+        if vacation.status != models.VacationStatus.APPROVED:
+            continue
+        overlap_start = max(start, vacation.start_date)
+        overlap_end = min(end, vacation.end_date)
+        if overlap_start > overlap_end:
+            continue
+        current = overlap_start
+        while current <= overlap_end:
+            if current.weekday() < 5:
+                totals[current] = totals.get(current, 0) + daily_minutes
+            current += timedelta(days=1)
+    return totals
+
+
 def calculate_vacation_summary(
     user: models.User | None,
     vacations: List[models.VacationRequest],

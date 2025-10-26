@@ -26,10 +26,13 @@
                     <td>{{ entry.user.full_name }}</td>
                     <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
                     <td>{{ entry.start_time.strftime('%H:%M') }} – {{ entry.end_time.strftime('%H:%M') }}</td>
-                    <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
+                    <td>{{ entry.company.name if entry.company else 'Allgemeine Arbeitszeit' }}</td>
                     <td>{{ entry.total_break_minutes|format_minutes }} Std</td>
                     <td>{{ entry.notes or '-' }}</td>
                     <td class="actions">
+                        {% if admin_permissions.edit_time_entries %}
+                            <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/edit?next=/admin/approvals&user={{ entry.user_id }}">Bearbeiten</a>
+                        {% endif %}
                         <form method="post" action="/admin/time-entries/{{ entry.id }}/status" class="inline-form">
                             <button type="submit" name="action" value="approve" class="button small">Freigeben</button>
                             <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>

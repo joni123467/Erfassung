@@ -31,6 +31,8 @@
                             {% if group.can_manage_vacations %}{% set _ = perms.items.append('Urlaubsverwaltung') %}{% endif %}
                             {% if group.can_approve_manual_entries %}{% set _ = perms.items.append('Manuelle Buchungen') %}{% endif %}
                             {% if group.can_create_companies %}{% set _ = perms.items.append('Firmen anlegen') %}{% endif %}
+                            {% if group.can_view_time_reports %}{% set _ = perms.items.append('Zeitübersichten einsehen') %}{% endif %}
+                            {% if group.can_edit_time_entries %}{% set _ = perms.items.append('Zeitbuchungen bearbeiten') %}{% endif %}
                             {{ perms.items|join(', ') if perms.items else 'Keine zusätzlichen Rechte' }}
                         {% endif %}
                     </td>

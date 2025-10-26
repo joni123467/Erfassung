@@ -196,6 +196,9 @@
                 <div class="dashboard-week-card__total">
                     <span>Ist</span>
                     <strong>{{ weekly_summary.total_minutes|format_minutes }} Std</strong>
+                    {% if weekly_summary.vacation_minutes %}
+                        <span class="dashboard-week-card__total-note">davon Urlaub {{ weekly_summary.vacation_minutes|format_minutes }} Std</span>
+                    {% endif %}
                 </div>
             </header>
             <div class="dashboard-week-card__progress" role="presentation">
@@ -221,7 +224,12 @@
                 {% for day in weekly_summary.days %}
                     <li class="dashboard-week-card__day {% if day.is_today %}is-today{% endif %}">
                         <span class="dashboard-week-card__day-label">{{ day.date.strftime('%a, %d.%m.') }}</span>
-                        <span class="dashboard-week-card__day-actual">{{ day.minutes|format_minutes }} Std</span>
+                        <span class="dashboard-week-card__day-actual">
+                            {{ day.minutes|format_minutes }} Std
+                            {% if day.vacation_minutes %}
+                                <span class="dashboard-week-card__day-actual-note">inkl. Urlaub {{ day.vacation_minutes|format_minutes }} Std</span>
+                            {% endif %}
+                        </span>
                         <span class="dashboard-week-card__day-target">
                             {% if day.target_minutes > 0 %}
                                 Soll {{ day.target_minutes|format_minutes }}

@@ -39,6 +39,10 @@
             <dd>{{ overtime_taken_minutes|format_minutes }} Stunden</dd>
         </div>
         <div class="dashboard-summary-list__item">
+            <dt>Urlaubsstunden (Monat)</dt>
+            <dd>{{ vacation_minutes|format_minutes }} Stunden</dd>
+        </div>
+        <div class="dashboard-summary-list__item">
             <dt>Überstunden (Monat)</dt>
             <dd>{{ total_overtime_minutes|format_minutes }} Stunden</dd>
         </div>
@@ -102,7 +106,7 @@
             {% for entry in entries %}
                 <tr class="status-{{ entry.status }}">
                     <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
-                    <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
+                    <td>{{ entry.company.name if entry.company else 'Allgemeine Arbeitszeit' }}</td>
                     <td>{{ entry.start_time.strftime('%H:%M') }}</td>
                     <td>{{ entry.end_time.strftime('%H:%M') }}</td>
                     <td>

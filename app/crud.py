@@ -395,6 +395,27 @@ def get_vacations_for_user(db: Session, user_id: int) -> List[models.VacationReq
     )
 
 
+def get_vacations_in_range(
+    db: Session,
+    start: date,
+    end: date,
+    *,
+    user_id: Optional[int] = None,
+    statuses: Optional[Iterable[str]] = None,
+) -> List[models.VacationRequest]:
+    query = (
+        db.query(models.VacationRequest)
+        .filter(models.VacationRequest.start_date <= end)
+        .filter(models.VacationRequest.end_date >= start)
+        .order_by(models.VacationRequest.start_date)
+    )
+    if user_id is not None:
+        query = query.filter(models.VacationRequest.user_id == user_id)
+    if statuses:
+        query = query.filter(models.VacationRequest.status.in_(list(statuses)))
+    return query.all()
+
+
 def request_vacation_withdrawal(db: Session, vacation_id: int) -> Optional[models.VacationRequest]:
     db_vacation = db.query(models.VacationRequest).filter(models.VacationRequest.id == vacation_id).first()
     if not db_vacation:

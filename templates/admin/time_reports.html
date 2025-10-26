@@ -91,12 +91,17 @@
         <div class="report-summary-card">
             <span class="report-summary-card__title">Arbeitszeit (bewertet)</span>
             <span class="report-summary-card__value">{{ total_minutes|format_minutes }} Std</span>
-            <p class="report-summary-card__hint">{{ total_entries }} Buchungen</p>
+            <p class="report-summary-card__hint">{{ total_entries }} Buchungen · Effektiv {{ effective_minutes|format_minutes }} Std inkl. Urlaub</p>
         </div>
         <div class="report-summary-card">
             <span class="report-summary-card__title">Mitarbeitende</span>
             <span class="report-summary-card__value">{{ unique_users }}</span>
             <p class="report-summary-card__hint">{{ company_filter_label }}</p>
+        </div>
+        <div class="report-summary-card">
+            <span class="report-summary-card__title">Urlaubsstunden</span>
+            <span class="report-summary-card__value">{{ vacation_minutes_total|format_minutes }} Std</span>
+            <p class="report-summary-card__hint">Genehmigte Anträge im Zeitraum</p>
         </div>
     </div>
     {% if status_summary %}
@@ -155,6 +160,9 @@
                     </div>
                     <div class="report-user-card__meta">
                         <span>Primäre Firma: {{ item.primary_company }}</span>
+                        {% if item.vacation_minutes %}
+                            <span>Urlaub: {{ item.vacation_minutes|format_minutes }} Std</span>
+                        {% endif %}
                         {% for status in item.status_breakdown %}
                             <span>{{ status.label }}: {{ status.count }}</span>
                         {% endfor %}
@@ -175,6 +183,42 @@
     {% else %}
         <p class="report-user-summary is-empty">Keine Buchungen im Zeitraum.</p>
     {% endif %}
+</section>
+<section class="card">
+    <div class="card-header">
+        <h2>Urlaub im Zeitraum</h2>
+        <p class="card-header__hint">Genehmigte Anträge mit angerechneten Stunden.</p>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Mitarbeiter</th>
+                <th>Start</th>
+                <th>Ende</th>
+                <th>Anzurechnung</th>
+                <th>Typ</th>
+                <th>Kommentar</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% if vacation_records %}
+                {% for record in vacation_records %}
+                    <tr>
+                        <td>{{ record.vacation.user.full_name }}</td>
+                        <td>{{ record.start.strftime('%d.%m.%Y') }}</td>
+                        <td>{{ record.end.strftime('%d.%m.%Y') }}</td>
+                        <td>{{ record.minutes|format_minutes }} Std</td>
+                        <td>{% if record.vacation.use_overtime %}Überstundenabbau{% else %}Urlaub{% endif %}</td>
+                        <td>{{ record.vacation.comment or '-' }}</td>
+                    </tr>
+                {% endfor %}
+            {% else %}
+                <tr><td colspan="6">Keine Urlaubsanträge im Zeitraum.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
 </section>
 <section class="card">
     <div class="card-header">
@@ -202,7 +246,7 @@
                     <tr class="status-{{ entry.status }}">
                         <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
                         <td>{{ entry.user.full_name if entry.user else '–' }}</td>
-                        <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
+                        <td>{{ entry.company.name if entry.company else 'Allgemeine Arbeitszeit' }}</td>
                         <td>{{ entry.start_time.strftime('%H:%M') }}</td>
                         <td>{% if entry.is_open %}läuft{% else %}{{ entry.end_time.strftime('%H:%M') }}{% endif %}</td>
                         <td>{{ entry.worked_minutes|format_minutes }} Std</td>

@@ -43,6 +43,7 @@ class Group(Base):
     can_approve_manual_entries = Column(Boolean, default=False)
     can_create_companies = Column(Boolean, default=False)
     can_view_time_reports = Column(Boolean, default=False)
+    can_edit_time_entries = Column(Boolean, default=False)
 
     users = relationship("User", back_populates="group")
 
