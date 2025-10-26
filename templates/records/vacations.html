@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Urlaub – Erfassung{% endblock %}
+{% block content %}
+{% set records_active = 'vacations' %}
+{% include "records/_nav.html" %}
+<section class="card records-hero">
+    <div class="card-header">
+        <h1>Urlaubsübersicht</h1>
+    </div>
+    <dl class="dashboard-summary-list records-summary">
+        <div class="dashboard-summary-list__item">
+            <dt>Gesamturlaub</dt>
+            <dd>{{ vacation_summary.total_days|round(2) }} Tage</dd>
+        </div>
+        {% if vacation_summary.carryover_days > 0 %}
+            <div class="dashboard-summary-list__item">
+                <dt>Übertrag</dt>
+                <dd>{{ vacation_summary.carryover_days|round(2) }} Tage</dd>
+            </div>
+        {% endif %}
+        <div class="dashboard-summary-list__item">
+            <dt>Verbraucht</dt>
+            <dd>{{ vacation_summary.used_days|round(2) }} Tage</dd>
+        </div>
+        <div class="dashboard-summary-list__item">
+            <dt>Geplant</dt>
+            <dd>{{ vacation_summary.planned_days|round(2) }} Tage</dd>
+        </div>
+        <div class="dashboard-summary-list__item">
+            <dt>Resturlaub</dt>
+            <dd>{{ vacation_summary.remaining_days|round(2) }} Tage</dd>
+        </div>
+    </dl>
+    <p class="form-hint">
+        {% if pending_vacations > 0 %}
+            {{ pending_vacations }} offene Urlaubsanträge warten aktuell auf Freigabe.
+        {% else %}
+            Keine offenen Urlaubsanträge vorhanden.
+        {% endif %}
+    </p>
+</section>
+
+<section class="card records-table">
+    <div class="card-header">
+        <h2>Urlaubsantrag stellen</h2>
+    </div>
+    <form method="post" action="/vacations" class="form-grid">
+        <label>
+            Startdatum
+            <input type="date" name="start_date" required>
+        </label>
+        <label>
+            Enddatum
+            <input type="date" name="end_date" required>
+        </label>
+        <label class="full-width">
+            Kommentar
+            <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
+        </label>
+        {% if user.overtime_vacation_enabled %}
+            <label class="checkbox full-width">
+                <input type="checkbox" name="use_overtime">
+                Überstunden für diesen Antrag einsetzen ({{ user.daily_target_minutes|format_minutes }} Std pro Arbeitstag)
+            </label>
+        {% endif %}
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">Urlaubsantrag senden</button>
+        </div>
+    </form>
+</section>
+
+<section class="card records-table">
+    <div class="card-header">
+        <h2>Meine Urlaubsanträge</h2>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Zeitraum</th>
+                <th>Status</th>
+                <th>Überstundenabbau</th>
+                <th>Kommentar</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for vacation in vacations %}
+                <tr class="status-{{ vacation.status }}">
+                    <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                    <td class="status-label status-{{ vacation.status }}">
+                        {% if vacation.status == 'approved' %}Genehmigt{% elif vacation.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
+                    </td>
+                    <td>
+                        {% if vacation.use_overtime %}
+                            {{ vacation.overtime_minutes|format_minutes }} Std
+                        {% else %}
+                            –
+                        {% endif %}
+                    </td>
+                    <td>{{ vacation.comment or '-' }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4">Keine Urlaubsanträge vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

@@ -616,17 +616,8 @@ def vacation_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    focus = request.query_params.get("focus", "vacations")
-    params = {}
-    if focus:
-        params["focus"] = focus
-    message = request.query_params.get("msg")
-    error = request.query_params.get("error")
-    if message:
-        params["msg"] = message
-    if error:
-        params["error"] = error
-    redirect = _build_redirect("/records", **params)
+    params = dict(request.query_params)
+    redirect = _build_redirect("/records/vacations", **params)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -644,7 +635,7 @@ def submit_vacation(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if end_date < start_date:
         return RedirectResponse(
-            url="/records?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen&focus=vacations",
+            url="/records/vacations?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     use_overtime_value = bool(use_overtime == "on" and user.overtime_vacation_enabled)
@@ -663,19 +654,18 @@ def submit_vacation(
         ),
     )
     return RedirectResponse(
-        url="/records?msg=Urlaubsantrag+erstellt&focus=vacations",
+        url="/records/vacations?msg=Urlaubsantrag+erstellt",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
 @app.get("/records", response_class=HTMLResponse)
-def records_page(request: Request, db: Session = Depends(database.get_db)):
+def records_bookings_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    focus = request.query_params.get("focus", "")
     month_param = request.query_params.get("month")
     selected_month, start_date, end_date = _resolve_month_period(month_param)
     company_param = request.query_params.get("company")
@@ -725,7 +715,7 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
     companies = crud.get_companies(db)
     month_value = f"{selected_month.year:04d}-{selected_month.month:02d}"
     return templates.TemplateResponse(
-        "records.html",
+        "records/bookings.html",
         {
             "request": request,
             "user": user,
@@ -747,7 +737,31 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
             "month_value": month_value,
             "company_filter_id": company_filter_id,
             "company_filter_none": company_filter_none,
-            "focus": focus,
+        },
+    )
+
+
+@app.get("/records/vacations", response_class=HTMLResponse)
+def records_vacations_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    vacations = crud.get_vacations_for_user(db, user.id)
+    today = date.today()
+    vacation_summary = services.calculate_vacation_summary(user, vacations, today.year)
+    pending_vacations = sum(1 for vacation in vacations if vacation.status == models.VacationRequestStatus.PENDING)
+    return templates.TemplateResponse(
+        "records/vacations.html",
+        {
+            "request": request,
+            "user": user,
+            "message": message,
+            "error": error,
+            "vacations": vacations,
+            "vacation_summary": vacation_summary,
+            "pending_vacations": pending_vacations,
         },
     )
 

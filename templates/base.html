@@ -18,7 +18,7 @@
             <span class="timetac-nav-link__icon" aria-hidden="true">🏠</span>
             <span>Dashboard</span>
         </a>
-        <a href="/records" class="timetac-nav-link {% if request.url.path == '/records' %}is-active{% endif %}">
+        <a href="/records" class="timetac-nav-link {% if request.url.path.startswith('/records') %}is-active{% endif %}">
             <span class="timetac-nav-link__icon" aria-hidden="true">🗂️</span>
             <span>Buchungen &amp; Urlaub</span>
         </a>
