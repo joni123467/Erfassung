@@ -177,6 +177,8 @@ class VacationStatus:
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    WITHDRAW_REQUESTED = "withdraw_requested"
+    CANCELLED = "cancelled"
 
 
 class VacationRequest(Base):
@@ -191,6 +193,7 @@ class VacationRequest(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     use_overtime = Column(Boolean, default=False)
     overtime_minutes = Column(Integer, default=0)
+    previous_status = Column(String, nullable=True)
 
     user = relationship("User", back_populates="vacation_requests")
 

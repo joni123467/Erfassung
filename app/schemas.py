@@ -157,6 +157,7 @@ class VacationRequest(VacationRequestBase):
     id: int
     status: str
     overtime_minutes: int
+    previous_status: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -185,6 +186,7 @@ class VacationSummary(BaseModel):
 
 class DashboardMetrics(BaseModel):
     total_work_minutes: int
+    vacation_minutes: int
     total_overtime_minutes: int
     total_undertime_minutes: int
     target_minutes: int

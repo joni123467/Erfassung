@@ -47,37 +47,85 @@
 {% if show_vacation_section %}
 <section class="card">
     <h1>Urlaubsanträge</h1>
-    <div class="table-scroll">
-        <table class="striped-table">
-            <thead>
-            <tr>
-                <th>Mitarbeiter</th>
-                <th>Zeitraum</th>
-                <th>Überstundenabbau</th>
-                <th>Kommentar</th>
-                <th>Aktionen</th>
-            </tr>
-            </thead>
-            <tbody>
-            {% for vacation in pending_vacations %}
+    {% set has_pending = pending_vacations|length > 0 %}
+    {% set has_withdrawals = withdrawal_requests|length > 0 %}
+    {% if has_pending %}
+        <h2>Neue Anträge</h2>
+        <div class="table-scroll">
+            <table class="striped-table">
+                <thead>
                 <tr>
-                    <td>{{ vacation.user.full_name }}</td>
-                    <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
-                    <td>{% if vacation.use_overtime %}{{ vacation.overtime_minutes|format_minutes }} Std{% else %}–{% endif %}</td>
-                    <td>{{ vacation.comment or '-' }}</td>
-                    <td class="actions">
-                        <form method="post" action="/admin/vacations/{{ vacation.id }}/status" class="inline-form">
-                            <button type="submit" name="action" value="approve" class="button small">Genehmigen</button>
-                            <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>
-                        </form>
-                    </td>
+                    <th>Mitarbeiter</th>
+                    <th>Zeitraum</th>
+                    <th>Überstundenabbau</th>
+                    <th>Kommentar</th>
+                    <th>Aktionen</th>
                 </tr>
-            {% else %}
-                <tr><td colspan="5">Keine offenen Urlaubsanträge vorhanden.</td></tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
+                </thead>
+                <tbody>
+                {% for vacation in pending_vacations %}
+                    <tr>
+                        <td>{{ vacation.user.full_name }}</td>
+                        <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                        <td>{% if vacation.use_overtime %}{{ vacation.overtime_minutes|format_minutes }} Std{% else %}–{% endif %}</td>
+                        <td>{{ vacation.comment or '-' }}</td>
+                        <td class="actions">
+                            <form method="post" action="/admin/vacations/{{ vacation.id }}/status" class="inline-form">
+                                <button type="submit" name="action" value="approve" class="button small">Genehmigen</button>
+                                <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+    {% if has_withdrawals %}
+        <h2>Rücknahmeanfragen</h2>
+        <div class="table-scroll">
+            <table class="striped-table">
+                <thead>
+                <tr>
+                    <th>Mitarbeiter</th>
+                    <th>Zeitraum</th>
+                    <th>Bisheriger Status</th>
+                    <th>Überstundenabbau</th>
+                    <th>Kommentar</th>
+                    <th>Aktionen</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for vacation in withdrawal_requests %}
+                    <tr>
+                        <td>{{ vacation.user.full_name }}</td>
+                        <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                        <td>
+                            {% if vacation.previous_status == 'approved' %}
+                                Genehmigt
+                            {% elif vacation.previous_status == 'pending' %}
+                                Wartet auf Freigabe
+                            {% else %}
+                                {{ vacation.previous_status or 'Unbekannt' }}
+                            {% endif %}
+                        </td>
+                        <td>{% if vacation.use_overtime %}{{ vacation.overtime_minutes|format_minutes }} Std{% else %}–{% endif %}</td>
+                        <td>{{ vacation.comment or '-' }}</td>
+                        <td class="actions">
+                            <form method="post" action="/admin/vacations/{{ vacation.id }}/status" class="inline-form">
+                                <button type="submit" name="action" value="approve_withdraw" class="button small">Rücknahme bestätigen</button>
+                                <button type="submit" name="action" value="deny_withdraw" class="button danger small">Ablehnen</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+    {% if not has_pending and not has_withdrawals %}
+        <p>Keine offenen Urlaubsanträge vorhanden.</p>
+    {% endif %}
 </section>
 {% endif %}
 {% if not show_manual_section and not show_vacation_section %}

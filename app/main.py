@@ -419,6 +419,10 @@ SELECT id, name, date, region, created_at FROM holidays
                 connection.execute(
                     text("ALTER TABLE vacation_requests ADD COLUMN overtime_minutes INTEGER DEFAULT 0")
                 )
+            if "previous_status" not in columns:
+                connection.execute(
+                    text("ALTER TABLE vacation_requests ADD COLUMN previous_status VARCHAR")
+                )
 
 
 def _sanitize_next(next_url: str, default: str = "/time") -> str:
@@ -1011,8 +1015,11 @@ def submit_time_entry(
             is_manual=True,
         )
         crud.create_time_entry(db, entry)
-    except ValueError:
-        redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Zeiteingabe")
+    except ValueError as exc:
+        error_message = "Ungültige Zeiteingabe"
+        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+            error_message = "Zeit überschneidet sich mit einer bestehenden Buchung"
+        redirect = _build_redirect(_sanitize_next(next_url), error=error_message)
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
         _sanitize_next(next_url), msg="Zeitbuchung eingereicht und wartet auf Freigabe"
@@ -1175,21 +1182,63 @@ def submit_vacation(
     overtime_minutes = 0
     if use_overtime_value:
         overtime_minutes = services.calculate_required_vacation_minutes(user, start_date, end_date)
-    crud.create_vacation_request(
-        db,
-        schemas.VacationRequestCreate(
-            user_id=user.id,
-            start_date=start_date,
-            end_date=end_date,
-            comment=comment,
-            use_overtime=use_overtime_value,
-            overtime_minutes=overtime_minutes,
-        ),
-    )
+    try:
+        crud.create_vacation_request(
+            db,
+            schemas.VacationRequestCreate(
+                user_id=user.id,
+                start_date=start_date,
+                end_date=end_date,
+                comment=comment,
+                use_overtime=use_overtime_value,
+                overtime_minutes=overtime_minutes,
+            ),
+        )
+    except ValueError as exc:
+        error_message = "Urlaubsantrag konnte nicht gespeichert werden"
+        if str(exc) == "VACATION_OVERLAP":
+            error_message = "Es besteht bereits ein Urlaubsantrag für diesen Zeitraum"
+        redirect = _build_redirect("/records/vacations", error=error_message)
+        return RedirectResponse(
+            url=redirect,
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     return RedirectResponse(
         url="/records/vacations?msg=Urlaubsantrag+erstellt",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+@app.post("/vacations/{vacation_id}/withdraw")
+def withdraw_vacation_request(
+    request: Request,
+    vacation_id: int,
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    vacation = (
+        db.query(models.VacationRequest)
+        .filter(models.VacationRequest.id == vacation_id)
+        .filter(models.VacationRequest.user_id == user.id)
+        .first()
+    )
+    if not vacation:
+        redirect = _build_redirect("/records/vacations", error="Urlaubsantrag nicht gefunden")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    updated = crud.request_vacation_withdrawal(db, vacation_id)
+    if not updated:
+        redirect = _build_redirect(
+            "/records/vacations",
+            error="Urlaubsantrag kann nicht zurückgezogen werden",
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    redirect = _build_redirect(
+        "/records/vacations",
+        msg="Rücknahme angefragt",
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/records", response_class=HTMLResponse)
@@ -1285,7 +1334,10 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
     today = date.today()
     vacation_summary = services.calculate_vacation_summary(user, vacations, today.year)
     pending_vacations = sum(
-        1 for vacation in vacations if vacation.status == models.VacationStatus.PENDING
+        1
+        for vacation in vacations
+        if vacation.status
+        in (models.VacationStatus.PENDING, models.VacationStatus.WITHDRAW_REQUESTED)
     )
     return templates.TemplateResponse(
         "records/vacations.html",
@@ -1710,11 +1762,15 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         if can_manual
         else []
     )
-    pending_vacations = (
-        crud.get_vacation_requests(db, status=models.VacationStatus.PENDING)
-        if can_vacation
-        else []
-    )
+    pending_vacations: list[models.VacationRequest] = []
+    withdrawal_requests: list[models.VacationRequest] = []
+    if can_vacation:
+        pending_vacations = crud.get_vacation_requests(
+            db, statuses=[models.VacationStatus.PENDING]
+        )
+        withdrawal_requests = crud.get_vacation_requests(
+            db, statuses=[models.VacationStatus.WITHDRAW_REQUESTED]
+        )
     return _admin_template(
         "admin/approvals.html",
         request,
@@ -1723,6 +1779,7 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         error=error,
         pending_entries=pending_entries,
         pending_vacations=pending_vacations,
+        withdrawal_requests=withdrawal_requests,
         show_manual_section=can_manual,
         show_vacation_section=can_vacation,
     )
@@ -2189,9 +2246,12 @@ def update_time_entry_html(
                 notes=notes,
             ),
         )
-    except ValueError:
+    except ValueError as exc:
+        error_message = "Ungültige Angaben"
+        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+            error_message = "Zeiten überschneiden sich mit einer bestehenden Buchung"
         redirect = _build_redirect(
-            "/admin/users", error="Ungültige Angaben", user=redirect_user
+            "/admin/users", error=error_message, user=redirect_user
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if not updated:
@@ -2302,17 +2362,23 @@ def set_vacation_status_admin(
     if not _can_manage_vacations(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if action == "approve":
-        new_status = models.VacationStatus.APPROVED
+        updated = crud.update_vacation_status(db, vacation_id, models.VacationStatus.APPROVED)
+        message = "Urlaub genehmigt"
     elif action == "reject":
-        new_status = models.VacationStatus.REJECTED
+        updated = crud.update_vacation_status(db, vacation_id, models.VacationStatus.REJECTED)
+        message = "Urlaub abgelehnt"
+    elif action == "approve_withdraw":
+        updated = crud.approve_vacation_withdrawal(db, vacation_id)
+        message = "Urlaub wurde zurückgezogen"
+    elif action == "deny_withdraw":
+        updated = crud.deny_vacation_withdrawal(db, vacation_id)
+        message = "Rücknahme abgelehnt"
     else:
         redirect = _build_redirect("/admin/approvals", error="Ungültige Aktion")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    updated = crud.update_vacation_status(db, vacation_id, new_status)
     if not updated:
         redirect = _build_redirect("/admin/approvals", error="Urlaubsantrag nicht gefunden")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    message = "Urlaub genehmigt" if new_status == models.VacationStatus.APPROVED else "Urlaub abgelehnt"
     redirect = _build_redirect("/admin/approvals", msg=message)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -2499,7 +2565,13 @@ def create_time_entry(entry: schemas.TimeEntryCreate, db: Session = Depends(data
     user = crud.get_user(db, entry.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
-    db_entry = crud.create_time_entry(db, entry)
+    try:
+        db_entry = crud.create_time_entry(db, entry)
+    except ValueError as exc:
+        detail = "Ungültige Zeiterfassung"
+        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+            detail = "Zeitüberschneidung mit bestehender Buchung"
+        raise HTTPException(status_code=400, detail=detail)
     return schemas.TimeEntry.model_validate(db_entry)
 
 
@@ -2527,7 +2599,13 @@ def create_vacation(vacation: schemas.VacationRequestCreate, db: Session = Depen
             "overtime_minutes": overtime_minutes,
         }
     )
-    db_vacation = crud.create_vacation_request(db, payload)
+    try:
+        db_vacation = crud.create_vacation_request(db, payload)
+    except ValueError as exc:
+        detail = "Urlaubsantrag konnte nicht gespeichert werden"
+        if str(exc) == "VACATION_OVERLAP":
+            detail = "Urlaubsantrag überschneidet sich mit vorhandenem Antrag"
+        raise HTTPException(status_code=400, detail=detail)
     return schemas.VacationRequest.model_validate(db_vacation)
 
 

@@ -71,6 +71,26 @@ def calculate_vacation_overtime_in_range(
     return total
 
 
+def calculate_approved_vacation_minutes(
+    user: models.User | None,
+    vacations: list[models.VacationRequest],
+    start: date,
+    end: date,
+) -> int:
+    if not user or not vacations:
+        return 0
+    total = 0
+    for vacation in vacations:
+        if vacation.status != models.VacationStatus.APPROVED:
+            continue
+        overlap_start = max(start, vacation.start_date)
+        overlap_end = min(end, vacation.end_date)
+        if overlap_start > overlap_end:
+            continue
+        total += calculate_required_vacation_minutes(user, overlap_start, overlap_end)
+    return total
+
+
 def calculate_vacation_summary(
     user: models.User | None,
     vacations: List[models.VacationRequest],
@@ -102,6 +122,11 @@ def calculate_vacation_summary(
     planned_minutes = 0
     for vacation in vacations:
         if vacation.use_overtime:
+            continue
+        if vacation.status in (
+            models.VacationStatus.CANCELLED,
+            models.VacationStatus.WITHDRAW_REQUESTED,
+        ):
             continue
         overlap_start = max(period_start, vacation.start_date)
         overlap_end = min(period_end, vacation.end_date)
@@ -142,8 +167,9 @@ def calculate_dashboard_metrics(
     total_work = sum(entry.worked_minutes for entry in entries)
     vacations = crud.get_vacations_for_user(db, user_id)
     overtime_taken = calculate_vacation_overtime_in_range(user, vacations, month_start, month_end)
+    vacation_minutes = calculate_approved_vacation_minutes(user, vacations, month_start, month_end)
     target_minutes = calculate_monthly_target_minutes(user, reference.year, reference.month)
-    effective_minutes = total_work + overtime_taken
+    effective_minutes = total_work + vacation_minutes
     balance = effective_minutes - target_minutes
     total_overtime = max(balance, 0)
     total_undertime = max(-balance, 0) if user and user.time_account_enabled else 0
@@ -159,7 +185,14 @@ def calculate_dashboard_metrics(
     pending_vacations = (
         db.query(models.VacationRequest)
         .filter(models.VacationRequest.user_id == user_id)
-        .filter(models.VacationRequest.status == models.VacationStatus.PENDING)
+        .filter(
+            models.VacationRequest.status.in_(
+                [
+                    models.VacationStatus.PENDING,
+                    models.VacationStatus.WITHDRAW_REQUESTED,
+                ]
+            )
+        )
         .count()
     )
     region = crud.get_default_holiday_region(db)
@@ -167,6 +200,7 @@ def calculate_dashboard_metrics(
     vacation_summary = calculate_vacation_summary(user, vacations, reference.year)
     return schemas.DashboardMetrics(
         total_work_minutes=total_work,
+        vacation_minutes=vacation_minutes,
         total_overtime_minutes=total_overtime,
         total_undertime_minutes=total_undertime,
         target_minutes=target_minutes,
