@@ -219,12 +219,6 @@ li {
     gap: 1.5rem;
 }
 
-.dashboard-top__metrics {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-}
-
 .dashboard-top__intro {
     display: flex;
     flex-direction: column;
@@ -234,13 +228,6 @@ li {
 .dashboard-heading {
     margin: 0;
     font-size: 2rem;
-}
-
-.dashboard-summary-card {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-    font-size: 0.95rem;
 }
 
 .dashboard-summary-card__header {
@@ -255,9 +242,30 @@ li {
     gap: 1rem;
 }
 
-.dashboard-summary-card h2,
-.dashboard-vacation-card h2 {
+.dashboard-summary-card__header h2,
+.dashboard-metrics-card__section h2 {
     margin: 0;
+}
+
+.dashboard-metrics-card {
+    display: grid;
+    gap: 1.5rem;
+    font-size: 0.95rem;
+}
+
+.dashboard-metrics-card__section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.dashboard-metrics-card__section--hours {
+    border-bottom: 1px solid #e4e7f3;
+    padding-bottom: 1.25rem;
+}
+
+.dashboard-metrics-card__section--vacation {
+    padding-top: 0.5rem;
 }
 
 @media (min-width: 640px) {
@@ -278,11 +286,21 @@ li {
         align-items: stretch;
     }
 
-    .dashboard-top__metrics {
-        display: grid;
-        grid-template-columns: minmax(220px, 1fr) minmax(320px, 2fr);
-        gap: 1.5rem;
-        align-items: stretch;
+    .dashboard-metrics-card {
+        grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.8fr);
+        align-items: start;
+    }
+
+    .dashboard-metrics-card__section--hours {
+        border-bottom: none;
+        border-right: 1px solid #e4e7f3;
+        padding-bottom: 0;
+        padding-right: 1.25rem;
+    }
+
+    .dashboard-metrics-card__section--vacation {
+        padding-left: 1.25rem;
+        padding-top: 0;
     }
 }
 
@@ -307,38 +325,6 @@ li {
     margin: 0;
     font-weight: 600;
     font-size: 0.95em;
-}
-
-.dashboard-overtime-limit {
-    padding: 0.75rem 1rem;
-    border-radius: 10px;
-    background: #eef4ff;
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-}
-
-.dashboard-overtime-limit dt {
-    font-weight: 700;
-}
-
-.dashboard-overtime-limit.is-exceeded {
-    background: #fdecea;
-}
-
-.dashboard-overtime-limit.is-exceeded dd {
-    color: var(--danger);
-}
-
-.dashboard-overtime-limit__message {
-    margin: -0.5rem 0 0;
-    font-size: 0.9rem;
-    color: #47507a;
-    font-weight: 600;
-}
-
-.dashboard-overtime-limit__message.is-exceeded {
-    color: var(--danger);
 }
 
 .dashboard-overtime-limit {

@@ -130,8 +130,8 @@
         </section>
     </div>
     <div class="dashboard-top__right">
-        <div class="dashboard-top__metrics">
-            <section class="card dashboard-summary-card">
+        <section class="card dashboard-metrics-card">
+            <div class="dashboard-metrics-card__section dashboard-metrics-card__section--hours">
                 <header class="dashboard-summary-card__header">
                     <h2>Meine Soll-/Ist-Stunden</h2>
                     <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
@@ -188,8 +188,8 @@
                         {% endif %}
                     </p>
                 </div>
-            </section>
-            <section class="card dashboard-vacation-card">
+            </div>
+            <div class="dashboard-metrics-card__section dashboard-metrics-card__section--vacation">
                 <h2>Urlaubsübersicht</h2>
                 <dl class="dashboard-summary__stats">
                     <div>
@@ -215,8 +215,8 @@
                         <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
                     </div>
                 </dl>
-            </section>
-        </div>
+            </div>
+        </section>
     </div>
 </section>
 
