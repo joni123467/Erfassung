@@ -696,6 +696,40 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
             }
         )
 
+    vacations = crud.get_vacations_in_range(
+        db,
+        start_date,
+        end_date,
+        statuses=[models.VacationStatus.APPROVED],
+    )
+    vacation_minutes_total = 0
+    vacation_minutes_by_user: dict[int, int] = {}
+    vacation_records: list[dict[str, object]] = []
+    for vacation in vacations:
+        if not vacation.user:
+            continue
+        overlap_start = max(start_date, vacation.start_date)
+        overlap_end = min(end_date, vacation.end_date)
+        credited = services.calculate_required_vacation_minutes(
+            vacation.user,
+            overlap_start,
+            overlap_end,
+        )
+        if credited <= 0:
+            continue
+        vacation_minutes_total += credited
+        vacation_minutes_by_user[vacation.user_id] = (
+            vacation_minutes_by_user.get(vacation.user_id, 0) + credited
+        )
+        vacation_records.append(
+            {
+                "vacation": vacation,
+                "start": overlap_start,
+                "end": overlap_end,
+                "minutes": credited,
+            }
+        )
+
     company_filter_id: Optional[int] = None
     company_filter_none = False
     company_param_value = company_param
