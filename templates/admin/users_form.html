@@ -9,62 +9,77 @@
         <h1>{% if is_edit %}Benutzer bearbeiten{% else %}Neuen Benutzer anlegen{% endif %}</h1>
         <a href="/admin/users" class="button ghost">Zur Übersicht</a>
     </div>
-    <form method="post" action="{% if is_edit %}/admin/users/{{ form_user.id }}/update{% else %}/admin/users/create{% endif %}" class="form-grid">
-        <label>
-            Benutzername
-            <input type="text" name="username" value="{{ form_user.username if is_edit else '' }}" required>
-        </label>
-        <label>
-            Anzeigename
-            <input type="text" name="full_name" value="{{ form_user.full_name if is_edit else '' }}" required>
-        </label>
-        <label>
-            Email
-            <input type="email" name="email" value="{{ form_user.email if is_edit else '' }}" required>
-        </label>
-        <label>
-            Login-PIN
-            <input type="text" name="pin_code" value="{{ form_user.pin_code if is_edit else '' }}" pattern="\d{4}" maxlength="4" required>
-        </label>
-        <label>
-            Wochenarbeitszeit (Stunden)
-            <input type="number" name="standard_weekly_hours" value="{{ form_user.standard_weekly_hours if is_edit else 40 }}" min="0" step="0.25" required>
-        </label>
-        <label>
-            Urlaubstage pro Jahr
-            <input type="number" name="annual_vacation_days" value="{{ form_user.annual_vacation_days if is_edit else 30 }}" min="0" required>
-        </label>
-        <label>
-            Gruppe
-            <select name="group_id">
-                <option value="">ohne Gruppe</option>
-                {% for group in groups %}
-                    <option value="{{ group.id }}" {% if is_edit and form_user.group and form_user.group.id == group.id %}selected{% endif %}>{{ group.name }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label class="checkbox">
-            <input type="checkbox" name="time_account_enabled" {% if is_edit and form_user.time_account_enabled %}checked{% endif %}>
-            Zeitkonto aktivieren (Über- und Minusstunden anzeigen)
-        </label>
-        <label class="checkbox">
-            <input type="checkbox" name="overtime_vacation_enabled" {% if is_edit and form_user.overtime_vacation_enabled %}checked{% endif %}>
-            Überstundenabbau über Urlaubsanträge erlauben (Zeitkonto erforderlich)
-        </label>
-        <label class="checkbox">
-            <input type="checkbox" name="vacation_carryover_enabled" {% if is_edit and form_user.vacation_carryover_enabled %}checked{% endif %}>
-            Übertrag aus dem Vorjahr erlauben
-        </label>
-        <label>
-            Übertragstage
-            <input type="number" name="vacation_carryover_days" value="{{ form_user.vacation_carryover_days if is_edit else 0 }}" min="0">
-        </label>
-        <p class="form-hint full-width">Übertragstage werden nur berücksichtigt, wenn der Übertrag aktiviert ist.</p>
-        <label>
-            RFID-Tag
-            <input type="text" name="rfid_tag" value="{{ form_user.rfid_tag if is_edit and form_user.rfid_tag else '' }}" placeholder="Optional">
-        </label>
-        <div class="form-actions full-width">
+    <form method="post" action="{% if is_edit %}/admin/users/{{ form_user.id }}/update{% else %}/admin/users/create{% endif %}" class="user-form">
+        <div class="user-form__columns">
+            <fieldset class="user-form__section user-form__section--stacked">
+                <legend>Zugang &amp; Profil</legend>
+                <label>
+                    Benutzername
+                    <input type="text" name="username" value="{{ form_user.username if is_edit else '' }}" required>
+                </label>
+                <label>
+                    Anzeigename
+                    <input type="text" name="full_name" value="{{ form_user.full_name if is_edit else '' }}" required>
+                </label>
+                <label>
+                    Email
+                    <input type="email" name="email" value="{{ form_user.email if is_edit else '' }}" required>
+                </label>
+                <label>
+                    Login-PIN
+                    <input type="text" name="pin_code" value="{{ form_user.pin_code if is_edit else '' }}" pattern="\d{4}" maxlength="4" required>
+                </label>
+                <label>
+                    Gruppe
+                    <select name="group_id">
+                        <option value="">ohne Gruppe</option>
+                        {% for group in groups %}
+                            <option value="{{ group.id }}" {% if is_edit and form_user.group and form_user.group.id == group.id %}selected{% endif %}>{{ group.name }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    RFID-Tag
+                    <input type="text" name="rfid_tag" value="{{ form_user.rfid_tag if is_edit and form_user.rfid_tag else '' }}" placeholder="Optional">
+                </label>
+            </fieldset>
+            <fieldset class="user-form__section user-form__section--stacked">
+                <legend>Arbeitszeit &amp; Urlaub</legend>
+                <label>
+                    Wochenarbeitszeit (Stunden)
+                    <input type="number" name="standard_weekly_hours" value="{{ form_user.standard_weekly_hours if is_edit else 40 }}" min="0" step="0.25" required>
+                </label>
+                <label>
+                    Überstundenlimit (Std/Monat)
+                    <input type="number" name="monthly_overtime_limit_hours" value="{{ (form_user.monthly_overtime_limit_minutes / 60)|round(2) if is_edit else 20 }}" min="0" step="0.5" required>
+                </label>
+                <label>
+                    Urlaubstage pro Jahr
+                    <input type="number" name="annual_vacation_days" value="{{ form_user.annual_vacation_days if is_edit else 30 }}" min="0" required>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" name="vacation_carryover_enabled" {% if is_edit and form_user.vacation_carryover_enabled %}checked{% endif %}>
+                    Übertrag aus dem Vorjahr erlauben
+                </label>
+                <label>
+                    Übertragstage
+                    <input type="number" name="vacation_carryover_days" value="{{ form_user.vacation_carryover_days if is_edit else 0 }}" min="0">
+                </label>
+                <p class="form-hint user-form__hint">Übertragstage werden nur berücksichtigt, wenn der Übertrag aktiviert ist.</p>
+            </fieldset>
+        </div>
+        <fieldset class="user-form__section">
+            <legend>Zeiterfassung</legend>
+            <label class="checkbox">
+                <input type="checkbox" name="time_account_enabled" {% if is_edit and form_user.time_account_enabled %}checked{% endif %}>
+                Zeitkonto aktivieren (Über- und Minusstunden anzeigen)
+            </label>
+            <label class="checkbox">
+                <input type="checkbox" name="overtime_vacation_enabled" {% if is_edit and form_user.overtime_vacation_enabled %}checked{% endif %}>
+                Überstundenabbau über Urlaubsanträge erlauben (Zeitkonto erforderlich)
+            </label>
+        </fieldset>
+        <div class="user-form__actions">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Benutzer anlegen{% endif %}</button>
         </div>
     </form>

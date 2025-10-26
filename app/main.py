@@ -120,6 +120,18 @@ def ensure_schema() -> None:
             if "rfid_tag" not in columns:
                 connection.execute(text("ALTER TABLE users ADD COLUMN rfid_tag VARCHAR"))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_rfid_tag ON users(rfid_tag)"))
+            if "monthly_overtime_limit_minutes" not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN monthly_overtime_limit_minutes INTEGER DEFAULT 1200"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "UPDATE users SET monthly_overtime_limit_minutes = 1200 "
+                        "WHERE monthly_overtime_limit_minutes IS NULL"
+                    )
+                )
         if "groups" in table_names:
             columns = {column["name"] for column in inspector.get_columns("groups")}
             if "can_manage_users" not in columns:
@@ -715,6 +727,18 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
     total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
     vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
     company_totals_all = _aggregate_company_totals(approved_month_entries)
+    overtime_limit_minutes = int(user.monthly_overtime_limit_minutes or 0)
+    overtime_limit_exceeded = bool(
+        overtime_limit_minutes and total_overtime_minutes > overtime_limit_minutes
+    )
+    overtime_limit_excess_minutes = (
+        total_overtime_minutes - overtime_limit_minutes if overtime_limit_exceeded else 0
+    )
+    overtime_limit_remaining_minutes = (
+        overtime_limit_minutes - total_overtime_minutes
+        if overtime_limit_minutes and not overtime_limit_exceeded
+        else 0
+    )
     buffer = export_time_overview_pdf(
         user=user,
         selected_month=selected_month,
@@ -726,6 +750,10 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         total_undertime_minutes=total_undertime_minutes,
         vacation_summary=vacation_summary,
         company_totals=company_totals_all,
+        overtime_limit_minutes=overtime_limit_minutes,
+        overtime_limit_exceeded=overtime_limit_exceeded,
+        overtime_limit_excess_minutes=overtime_limit_excess_minutes,
+        overtime_limit_remaining_minutes=overtime_limit_remaining_minutes,
     )
     filename = f"arbeitszeit_{user.username}_{selected_month.strftime('%Y_%m')}.pdf"
     return StreamingResponse(
@@ -1195,6 +1223,7 @@ def create_user_html(
     email: str = Form(...),
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
+    monthly_overtime_limit_hours: float = Form(20.0),
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
@@ -1217,6 +1246,7 @@ def create_user_html(
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
+    overtime_limit_minutes = int(round(max(monthly_overtime_limit_hours, 0.0) * 60))
     try:
         crud.create_user(
             db,
@@ -1233,6 +1263,7 @@ def create_user_html(
                 vacation_carryover_enabled=carryover_enabled,
                 vacation_carryover_days=carryover_days_value,
                 rfid_tag=rfid_value,
+                monthly_overtime_limit_minutes=overtime_limit_minutes,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -1254,6 +1285,7 @@ def update_user_html(
     email: str = Form(...),
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
+    monthly_overtime_limit_hours: float = Form(20.0),
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
@@ -1276,6 +1308,7 @@ def update_user_html(
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
+    overtime_limit_minutes = int(round(max(monthly_overtime_limit_hours, 0.0) * 60))
     try:
         updated = crud.update_user(
             db,
@@ -1293,6 +1326,7 @@ def update_user_html(
                 vacation_carryover_enabled=carryover_enabled,
                 vacation_carryover_days=carryover_days_value,
                 rfid_tag=rfid_value,
+                monthly_overtime_limit_minutes=overtime_limit_minutes,
             ),
         )
     except (ValueError, IntegrityError) as exc:

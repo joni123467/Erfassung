@@ -41,6 +41,10 @@ def export_time_overview_pdf(
     total_undertime_minutes: int,
     vacation_summary: VacationSummary,
     company_totals: List[dict[str, object]],
+    overtime_limit_minutes: int,
+    overtime_limit_exceeded: bool,
+    overtime_limit_excess_minutes: int,
+    overtime_limit_remaining_minutes: int,
 ) -> BytesIO:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -67,6 +71,18 @@ def export_time_overview_pdf(
         ["Überstundenabbau", f"{_format_minutes(overtime_taken_minutes)} Std"],
         ["Überstunden (Monat)", f"{_format_minutes(total_overtime_minutes)} Std"],
     ]
+    if overtime_limit_minutes:
+        summary_data.append(
+            ["Überstundenlimit (Monat)", f"{_format_minutes(overtime_limit_minutes)} Std"]
+        )
+        if overtime_limit_exceeded:
+            summary_data.append(
+                ["Limit überschritten", f"{_format_minutes(overtime_limit_excess_minutes)} Std"]
+            )
+        else:
+            summary_data.append(
+                ["Verfügbar bis Limit", f"{_format_minutes(overtime_limit_remaining_minutes)} Std"]
+            )
     if user.time_account_enabled:
         summary_data.append(["Minusstunden", f"{_format_minutes(total_undertime_minutes)} Std"])
     summary_table = Table(summary_data, hAlign="LEFT")

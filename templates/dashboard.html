@@ -13,9 +13,22 @@
 {% set overtime_taken_minutes = metrics.overtime_taken_minutes %}
 {% set diff_minutes = ist_minutes + overtime_taken_minutes - soll_minutes %}
 {% set diff_class = 'is-positive' if diff_minutes >= 0 else 'is-negative' %}
+{% set overtime_limit_minutes = metrics.overtime_limit_minutes %}
+{% set overtime_limit_exceeded = metrics.overtime_limit_exceeded %}
+{% set overtime_limit_remaining_minutes = metrics.overtime_limit_remaining_minutes %}
+{% set overtime_limit_excess_minutes = metrics.overtime_limit_excess_minutes %}
 <section class="dashboard-top">
-    <section class="card dashboard-top__punch">
-        <h2>Schnell stempeln</h2>
+    <div class="dashboard-top__left">
+        <div class="dashboard-top__intro">
+            <h1 class="dashboard-heading">Arbeitszeiten</h1>
+            <p class="dashboard-summary__hint">
+                <strong>Hinweis (Arbeitsschutz):</strong>
+                Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich,
+                nach 9 Stunden mindestens 45 Minuten (ArbZG). Bitte stempel deine Pause entsprechend.
+            </p>
+        </div>
+        <section class="card dashboard-punch-card">
+            <h2>Schnell stempeln</h2>
         {% if active_entry %}
             <div class="punch-status">
                 <div>
@@ -112,24 +125,17 @@
                     </div>
                 </form>
             </div>
-        </div>
-        {% endif %}
-    </section>
-    <div class="dashboard-top__metrics">
-        <section class="card dashboard-summary-card">
-            <div class="dashboard-summary-card__header">
-                <div>
-                    <h1>Arbeitszeiten</h1>
-                    <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
-                </div>
-                <p class="dashboard-summary__hint">
-                    <strong>Hinweis (Arbeitsschutz):</strong>
-                    Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich,
-                    nach 9 Stunden mindestens 45 Minuten (ArbZG). Bitte stempel deine Pause entsprechend.
-                </p>
             </div>
-            <div class="dashboard-summary-card__body">
+        {% endif %}
+        </section>
+    </div>
+    <div class="dashboard-top__right">
+        <section class="card dashboard-summary-card">
+            <header class="dashboard-summary-card__header">
                 <h2>Meine Soll-/Ist-Stunden</h2>
+                <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
+            </header>
+            <div class="dashboard-summary-card__body">
                 <dl class="dashboard-summary__stats">
                     <div>
                         <dt>Aktueller Monat</dt>
@@ -157,7 +163,22 @@
                             <dd>{{ metrics.total_undertime_minutes|format_minutes }} Std</dd>
                         </div>
                     {% endif %}
+                    {% if overtime_limit_minutes > 0 %}
+                        <div class="dashboard-overtime-limit {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
+                            <dt>Überstundenlimit (Monat)</dt>
+                            <dd>{{ overtime_limit_minutes|format_minutes }} Std</dd>
+                        </div>
+                    {% endif %}
                 </dl>
+                {% if overtime_limit_minutes > 0 %}
+                    <p class="dashboard-overtime-limit__message {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
+                        {% if overtime_limit_exceeded %}
+                            Limit überschritten um {{ overtime_limit_excess_minutes|format_minutes }} Std.
+                        {% else %}
+                            Noch {{ overtime_limit_remaining_minutes|format_minutes }} Std bis zum Limit.
+                        {% endif %}
+                    </p>
+                {% endif %}
                 <p class="dashboard-summary__meta">
                     {% if metrics.pending_vacations > 0 %}
                         {{ metrics.pending_vacations }} offene Urlaubsanträge warten auf Freigabe.
