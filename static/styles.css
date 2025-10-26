@@ -219,6 +219,12 @@ li {
     gap: 1.5rem;
 }
 
+.dashboard-top__metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
 .dashboard-top__intro {
     display: flex;
     flex-direction: column;
@@ -234,6 +240,7 @@ li {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    font-size: 0.95rem;
 }
 
 .dashboard-summary-card__header {
@@ -270,6 +277,13 @@ li {
         grid-template-columns: minmax(320px, 1fr) minmax(420px, 1.25fr);
         align-items: stretch;
     }
+
+    .dashboard-top__metrics {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) minmax(320px, 2fr);
+        gap: 1.5rem;
+        align-items: stretch;
+    }
 }
 
 .dashboard-summary__stats {
@@ -286,11 +300,45 @@ li {
 
 .dashboard-summary__stats dt {
     font-weight: 600;
+    font-size: 0.95em;
 }
 
 .dashboard-summary__stats dd {
     margin: 0;
     font-weight: 600;
+    font-size: 0.95em;
+}
+
+.dashboard-overtime-limit {
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    background: #eef4ff;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.dashboard-overtime-limit dt {
+    font-weight: 700;
+}
+
+.dashboard-overtime-limit.is-exceeded {
+    background: #fdecea;
+}
+
+.dashboard-overtime-limit.is-exceeded dd {
+    color: var(--danger);
+}
+
+.dashboard-overtime-limit__message {
+    margin: -0.5rem 0 0;
+    font-size: 0.9rem;
+    color: #47507a;
+    font-weight: 600;
+}
+
+.dashboard-overtime-limit__message.is-exceeded {
+    color: var(--danger);
 }
 
 .dashboard-overtime-limit {
@@ -546,12 +594,23 @@ body.modal-open {
     gap: 1.5rem;
 }
 
+.user-form__column {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
 .user-form__section {
     border: 1px solid #dbe3ff;
     border-radius: 12px;
     padding: 1.25rem 1.5rem;
     display: grid;
     gap: 1rem;
+}
+
+.user-form__option-group {
+    display: grid;
+    gap: 0.75rem;
 }
 
 .user-form__section legend {
