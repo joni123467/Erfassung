@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, Time
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Time,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -51,6 +63,7 @@ class User(Base):
     vacation_carryover_enabled = Column(Boolean, default=False)
     vacation_carryover_days = Column(Integer, default=0)
     rfid_tag = Column(String, unique=True, nullable=True)
+    monthly_overtime_limit_minutes = Column(Integer, default=1200)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
@@ -183,10 +196,11 @@ class VacationRequest(Base):
 
 class Holiday(Base):
     __tablename__ = "holidays"
+    __table_args__ = (UniqueConstraint("date", "region", name="uq_holidays_date_region"),)
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    date = Column(Date, unique=True, nullable=False)
+    date = Column(Date, nullable=False)
     region = Column(String, default="DE")
     created_at = Column(DateTime, default=datetime.utcnow)
 
