@@ -32,7 +32,7 @@ def calculate_german_holidays(year: int, state: str = "BY") -> Iterable[schemas.
     """Return German public holidays for a given year and federal state."""
     state = (state or "DE").upper()
     subdiv = state if state != "DE" else None
-    holiday_set = holidays.Germany(years=year, subdiv=subdiv)
+    holiday_set = holidays.Germany(years=year, subdiv=subdiv, language="de")
     for holiday_date, name in sorted(holiday_set.items()):
         yield schemas.HolidayCreate(name=name, date=holiday_date, region=state or "DE")
 

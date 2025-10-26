@@ -191,29 +191,8 @@ li {
     color: white;
 }
 
-.dashboard-summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.5rem;
-    align-items: flex-start;
-    background: transparent;
-    padding: 0;
-    box-shadow: none;
-    border-radius: 0;
-}
-
-.dashboard-summary__info {
-    flex: 1 1 320px;
-    min-width: 260px;
-}
-
-.dashboard-summary__info h1 {
-    margin-bottom: 0.25rem;
-    font-size: 1.75rem;
-}
-
 .dashboard-summary__month {
-    margin: 0 0 1rem;
+    margin: 0.25rem 0 0;
     color: #606a92;
     font-weight: 600;
 }
@@ -221,22 +200,108 @@ li {
 .dashboard-summary__hint {
     background: #eef4ff;
     border-left: 4px solid var(--brand);
-    padding: 1rem;
+    padding: 0.75rem 1rem;
     border-radius: 10px;
     line-height: 1.5;
+    margin: 0;
+    color: #384169;
 }
 
-.dashboard-summary__card {
-    flex: 0 1 360px;
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(31, 60, 136, 0.08);
-    padding: 1.5rem;
+.dashboard-top {
+    display: grid;
+    gap: 1.5rem;
 }
 
-.dashboard-summary__card h2 {
-    margin-top: 0;
-    margin-bottom: 1rem;
+.dashboard-top__left,
+.dashboard-top__right {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.dashboard-top__intro {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.dashboard-heading {
+    margin: 0;
+    font-size: 2rem;
+}
+
+.dashboard-summary-card__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.dashboard-summary-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.dashboard-summary-card__header h2,
+.dashboard-metrics-card__section h2 {
+    margin: 0;
+}
+
+.dashboard-metrics-card {
+    display: grid;
+    gap: 1.5rem;
+    font-size: 0.95rem;
+}
+
+.dashboard-metrics-card__section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.dashboard-metrics-card__section--hours {
+    border-bottom: 1px solid #e4e7f3;
+    padding-bottom: 1.25rem;
+}
+
+.dashboard-metrics-card__section--vacation {
+    padding-top: 0.5rem;
+}
+
+@media (min-width: 640px) {
+    .dashboard-summary-card__header {
+        flex-direction: row;
+        align-items: flex-end;
+        justify-content: space-between;
+    }
+
+    .dashboard-summary__hint {
+        max-width: 340px;
+    }
+}
+
+@media (min-width: 960px) {
+    .dashboard-top {
+        grid-template-columns: minmax(320px, 1fr) minmax(420px, 1.25fr);
+        align-items: stretch;
+    }
+
+    .dashboard-metrics-card {
+        grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.8fr);
+        align-items: start;
+    }
+
+    .dashboard-metrics-card__section--hours {
+        border-bottom: none;
+        border-right: 1px solid #e4e7f3;
+        padding-bottom: 0;
+        padding-right: 1.25rem;
+    }
+
+    .dashboard-metrics-card__section--vacation {
+        padding-left: 1.25rem;
+        padding-top: 0;
+    }
 }
 
 .dashboard-summary__stats {
@@ -253,11 +318,45 @@ li {
 
 .dashboard-summary__stats dt {
     font-weight: 600;
+    font-size: 0.95em;
 }
 
 .dashboard-summary__stats dd {
     margin: 0;
     font-weight: 600;
+    font-size: 0.95em;
+}
+
+.dashboard-overtime-limit {
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    background: #eef4ff;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.dashboard-overtime-limit dt {
+    font-weight: 700;
+}
+
+.dashboard-overtime-limit.is-exceeded {
+    background: #fdecea;
+}
+
+.dashboard-overtime-limit.is-exceeded dd {
+    color: var(--danger);
+}
+
+.dashboard-overtime-limit__message {
+    margin: -0.5rem 0 0;
+    font-size: 0.9rem;
+    color: #47507a;
+    font-weight: 600;
+}
+
+.dashboard-overtime-limit__message.is-exceeded {
+    color: var(--danger);
 }
 
 .dashboard-summary__diff.is-positive dd {
@@ -273,6 +372,12 @@ li {
     margin-bottom: 0;
     font-size: 0.9rem;
     color: #606a92;
+}
+
+@media (min-width: 720px) {
+    .dashboard-summary__stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 .punch-start-options {
@@ -462,6 +567,80 @@ body.modal-open {
 .form-grid textarea,
 .user-form textarea {
     resize: vertical;
+}
+
+.user-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.user-form__columns {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.user-form__column {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.user-form__section {
+    border: 1px solid #dbe3ff;
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    display: grid;
+    gap: 1rem;
+}
+
+.user-form__option-group {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.user-form__section legend {
+    font-weight: 700;
+    color: #1f3c88;
+    padding: 0 0.4rem;
+}
+
+.user-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+
+.user-form__actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+}
+
+.checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+
+.user-form__hint {
+    margin: -0.75rem 0 0;
+}
+
+.user-form__section--stacked {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+@media (min-width: 860px) {
+    .user-form__columns {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 .full-width {
