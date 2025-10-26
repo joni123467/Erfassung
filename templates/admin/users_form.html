@@ -54,7 +54,7 @@
                             </label>
                             <label class="checkbox">
                                 <input type="checkbox" name="overtime_vacation_enabled" {% if is_edit and form_user.overtime_vacation_enabled %}checked{% endif %}>
-                                Überstundenabbau über Urlaubsanträge erlauben (Zeitkonto erforderlich)
+                                Überstundenabbau über Urlaubsanträge erlauben
                             </label>
                         </div>
                     </fieldset>
@@ -68,7 +68,8 @@
                         </label>
                         <label>
                             Überstundenlimit (Std/Monat)
-                            <input type="number" name="monthly_overtime_limit_hours" value="{{ (form_user.monthly_overtime_limit_minutes / 60)|round(2) if is_edit else 20 }}" min="0" step="0.5" required>
+                            <input type="number" name="monthly_overtime_limit_hours" value="{{ (form_user.monthly_overtime_limit_minutes / 60)|round(2) if is_edit and form_user.monthly_overtime_limit_minutes is not none else '' }}" min="0" step="0.5" placeholder="Optional">
+                            <span class="form-hint">Leer lassen, um kein Limit festzulegen.</span>
                         </label>
                     </fieldset>
                     <fieldset class="user-form__section user-form__section--stacked">

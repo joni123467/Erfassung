@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
-from typing import Iterable
+from typing import Iterable, Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 
-from .models import TimeEntry
+from . import services
+from .models import TimeEntry, VacationRequest
 
 
-def export_time_entries(entries: Iterable[TimeEntry]) -> BytesIO:
+def export_time_entries(
+    entries: Iterable[TimeEntry],
+    vacations: Optional[Iterable[VacationRequest]] = None,
+    *,
+    period_start: Optional[date] = None,
+    period_end: Optional[date] = None,
+    holiday_dates: Optional[Iterable[date]] = None,
+) -> BytesIO:
     wb = Workbook()
     ws = wb.active
     ws.title = "Arbeitszeiten"
@@ -52,6 +61,39 @@ def export_time_entries(entries: Iterable[TimeEntry]) -> BytesIO:
         max_length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)
         adjusted_width = max_length + 2
         ws.column_dimensions[column_cells[0].column_letter].width = adjusted_width
+
+    vacation_list = list(vacations or [])
+    holiday_date_set = set(holiday_dates or [])
+    if vacation_list:
+        vacation_ws = wb.create_sheet(title="Urlaub")
+        vacation_ws.append(["Start", "Ende", "Anzurechnung (Min)", "Typ", "Kommentar"])
+        for cell in vacation_ws[1]:
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+        for vacation in vacation_list:
+            start_date = max(period_start or vacation.start_date, vacation.start_date)
+            end_date = min(period_end or vacation.end_date, vacation.end_date)
+            credited = services.calculate_required_vacation_minutes(
+                vacation.user,
+                start_date,
+                end_date,
+                holiday_date_set,
+            )
+            if credited <= 0:
+                continue
+            vacation_ws.append(
+                [
+                    start_date.strftime("%d.%m.%Y"),
+                    end_date.strftime("%d.%m.%Y"),
+                    credited,
+                    "Überstundenabbau" if vacation.use_overtime else "Urlaub",
+                    vacation.comment or "",
+                ]
+            )
+        for column_cells in vacation_ws.columns:
+            max_length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)
+            adjusted_width = max_length + 2
+            vacation_ws.column_dimensions[column_cells[0].column_letter].width = adjusted_width
 
     buffer = BytesIO()
     wb.save(buffer)

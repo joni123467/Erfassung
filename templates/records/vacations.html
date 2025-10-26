@@ -81,6 +81,7 @@
                 <th>Status</th>
                 <th>Überstundenabbau</th>
                 <th>Kommentar</th>
+                <th>Aktionen</th>
             </tr>
             </thead>
             <tbody>
@@ -88,7 +89,17 @@
                 <tr class="status-{{ vacation.status }}">
                     <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
                     <td class="status-label status-{{ vacation.status }}">
-                        {% if vacation.status == 'approved' %}Genehmigt{% elif vacation.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
+                        {% if vacation.status == 'approved' %}
+                            Genehmigt
+                        {% elif vacation.status == 'pending' %}
+                            Wartet auf Freigabe
+                        {% elif vacation.status == 'withdraw_requested' %}
+                            Rücknahme angefragt
+                        {% elif vacation.status == 'cancelled' %}
+                            Zurückgezogen
+                        {% else %}
+                            Abgelehnt
+                        {% endif %}
                     </td>
                     <td>
                         {% if vacation.use_overtime %}
@@ -98,9 +109,20 @@
                         {% endif %}
                     </td>
                     <td>{{ vacation.comment or '-' }}</td>
+                    <td class="actions">
+                        {% if vacation.status in ['pending', 'approved'] %}
+                            <form method="post" action="/vacations/{{ vacation.id }}/withdraw" class="inline-form">
+                                <button type="submit" class="button small ghost">Zurückziehen</button>
+                            </form>
+                        {% elif vacation.status == 'withdraw_requested' %}
+                            <span class="status-badge warning">In Prüfung</span>
+                        {% else %}
+                            –
+                        {% endif %}
+                    </td>
                 </tr>
             {% else %}
-                <tr><td colspan="4">Keine Urlaubsanträge vorhanden.</td></tr>
+                <tr><td colspan="5">Keine Urlaubsanträge vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>

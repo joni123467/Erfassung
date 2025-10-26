@@ -38,6 +38,10 @@
             <input type="checkbox" name="can_view_time_reports" {% if is_edit and group.can_view_time_reports %}checked{% endif %}>
             Team-Zeitübersichten einsehen
         </label>
+        <label class="checkbox">
+            <input type="checkbox" name="can_edit_time_entries" {% if is_edit and group.can_edit_time_entries %}checked{% endif %}>
+            Zeitbuchungen bearbeiten
+        </label>
         <p class="form-hint full-width">Administratorgruppen erhalten automatisch alle Berechtigungen.</p>
         <div class="form-actions full-width">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Gruppe anlegen{% endif %}</button>

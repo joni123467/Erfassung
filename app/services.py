@@ -3,7 +3,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, timedelta
 
-from typing import List
+from typing import Dict, Iterable, List, Optional, Set
 
 from sqlalchemy.orm import Session
 
@@ -33,7 +33,10 @@ def calculate_monthly_target_minutes(user: models.User | None, year: int, month:
 
 
 def calculate_required_vacation_minutes(
-    user: models.User | None, start: date, end: date
+    user: models.User | None,
+    start: date,
+    end: date,
+    holiday_dates: Iterable[date] | None = None,
 ) -> int:
     if not user:
         return 0
@@ -42,8 +45,9 @@ def calculate_required_vacation_minutes(
         return 0
     current = start
     total = 0
+    skipped: Set[date] = set(holiday_dates or [])
     while current <= end:
-        if current.weekday() < 5:
+        if current.weekday() < 5 and current not in skipped:
             total += daily_minutes
         current += timedelta(days=1)
     return total
@@ -54,6 +58,7 @@ def calculate_vacation_overtime_in_range(
     vacations: list[models.VacationRequest],
     start: date,
     end: date,
+    holiday_dates: Iterable[date] | None = None,
 ) -> int:
     if not user or not vacations:
         return 0
@@ -67,14 +72,75 @@ def calculate_vacation_overtime_in_range(
         overlap_end = min(end, vacation.end_date)
         if overlap_start > overlap_end:
             continue
-        total += calculate_required_vacation_minutes(user, overlap_start, overlap_end)
+        total += calculate_required_vacation_minutes(
+            user,
+            overlap_start,
+            overlap_end,
+            holiday_dates,
+        )
     return total
+
+
+def calculate_approved_vacation_minutes(
+    user: models.User | None,
+    vacations: list[models.VacationRequest],
+    start: date,
+    end: date,
+    holiday_dates: Iterable[date] | None = None,
+) -> int:
+    if not user or not vacations:
+        return 0
+    total = 0
+    for vacation in vacations:
+        if vacation.status != models.VacationStatus.APPROVED:
+            continue
+        overlap_start = max(start, vacation.start_date)
+        overlap_end = min(end, vacation.end_date)
+        if overlap_start > overlap_end:
+            continue
+        total += calculate_required_vacation_minutes(
+            user,
+            overlap_start,
+            overlap_end,
+            holiday_dates,
+        )
+    return total
+
+
+def calculate_vacation_minutes_by_day(
+    user: models.User | None,
+    vacations: list[models.VacationRequest],
+    start: date,
+    end: date,
+    holiday_dates: Iterable[date] | None = None,
+) -> dict[date, int]:
+    if not user or not vacations:
+        return {}
+    daily_minutes = int(round(user.daily_target_minutes or 0))
+    if daily_minutes <= 0:
+        return {}
+    totals: Dict[date, int] = {}
+    skipped: Set[date] = set(holiday_dates or [])
+    for vacation in vacations:
+        if vacation.status != models.VacationStatus.APPROVED:
+            continue
+        overlap_start = max(start, vacation.start_date)
+        overlap_end = min(end, vacation.end_date)
+        if overlap_start > overlap_end:
+            continue
+        current = overlap_start
+        while current <= overlap_end:
+            if current.weekday() < 5 and current not in skipped:
+                totals[current] = totals.get(current, 0) + daily_minutes
+            current += timedelta(days=1)
+    return totals
 
 
 def calculate_vacation_summary(
     user: models.User | None,
     vacations: List[models.VacationRequest],
     year: int,
+    holiday_dates: Iterable[date] | None = None,
 ) -> schemas.VacationSummary:
     if not user:
         return schemas.VacationSummary(
@@ -100,14 +166,25 @@ def calculate_vacation_summary(
     period_end = date(year, 12, 31)
     used_minutes = 0
     planned_minutes = 0
+    skipped: Set[date] = set(holiday_dates or [])
     for vacation in vacations:
         if vacation.use_overtime:
+            continue
+        if vacation.status in (
+            models.VacationStatus.CANCELLED,
+            models.VacationStatus.WITHDRAW_REQUESTED,
+        ):
             continue
         overlap_start = max(period_start, vacation.start_date)
         overlap_end = min(period_end, vacation.end_date)
         if overlap_start > overlap_end:
             continue
-        minutes = calculate_required_vacation_minutes(user, overlap_start, overlap_end)
+        minutes = calculate_required_vacation_minutes(
+            user,
+            overlap_start,
+            overlap_end,
+            skipped,
+        )
         if vacation.status == models.VacationStatus.APPROVED:
             used_minutes += minutes
         elif vacation.status == models.VacationStatus.PENDING:
@@ -141,9 +218,24 @@ def calculate_dashboard_metrics(
     user = crud.get_user(db, user_id)
     total_work = sum(entry.worked_minutes for entry in entries)
     vacations = crud.get_vacations_for_user(db, user_id)
-    overtime_taken = calculate_vacation_overtime_in_range(user, vacations, month_start, month_end)
+    region = crud.get_default_holiday_region(db)
+    holiday_dates = crud.get_holiday_dates_in_range(db, month_start, month_end, region)
+    overtime_taken = calculate_vacation_overtime_in_range(
+        user,
+        vacations,
+        month_start,
+        month_end,
+        holiday_dates,
+    )
+    vacation_minutes = calculate_approved_vacation_minutes(
+        user,
+        vacations,
+        month_start,
+        month_end,
+        holiday_dates,
+    )
     target_minutes = calculate_monthly_target_minutes(user, reference.year, reference.month)
-    effective_minutes = total_work + overtime_taken
+    effective_minutes = total_work + vacation_minutes
     balance = effective_minutes - target_minutes
     total_overtime = max(balance, 0)
     total_undertime = max(-balance, 0) if user and user.time_account_enabled else 0
@@ -159,14 +251,32 @@ def calculate_dashboard_metrics(
     pending_vacations = (
         db.query(models.VacationRequest)
         .filter(models.VacationRequest.user_id == user_id)
-        .filter(models.VacationRequest.status == models.VacationStatus.PENDING)
+        .filter(
+            models.VacationRequest.status.in_(
+                [
+                    models.VacationStatus.PENDING,
+                    models.VacationStatus.WITHDRAW_REQUESTED,
+                ]
+            )
+        )
         .count()
     )
-    region = crud.get_default_holiday_region(db)
     upcoming_holidays = crud.get_upcoming_holidays(db, region, limit=5)
-    vacation_summary = calculate_vacation_summary(user, vacations, reference.year)
+    summary_holidays = crud.get_holiday_dates_in_range(
+        db,
+        date(reference.year, 1, 1),
+        date(reference.year, 12, 31),
+        region,
+    )
+    vacation_summary = calculate_vacation_summary(
+        user,
+        vacations,
+        reference.year,
+        summary_holidays,
+    )
     return schemas.DashboardMetrics(
         total_work_minutes=total_work,
+        vacation_minutes=vacation_minutes,
         total_overtime_minutes=total_overtime,
         total_undertime_minutes=total_undertime,
         target_minutes=target_minutes,
@@ -179,3 +289,63 @@ def calculate_dashboard_metrics(
         overtime_limit_exceeded=overtime_limit_exceeded,
         overtime_limit_excess_minutes=overtime_limit_excess,
     )
+
+
+def calculate_available_overtime_minutes(
+    db: Session,
+    user: models.User | None,
+    until: date | None = None,
+) -> int:
+    if not user:
+        return 0
+    target_date = until or date.today()
+    approved_entries = crud.get_time_entries_for_user(
+        db,
+        user.id,
+        end=target_date,
+        statuses=[models.TimeEntryStatus.APPROVED],
+    )
+    vacations = [
+        vacation
+        for vacation in crud.get_vacations_for_user(db, user.id)
+        if vacation.status == models.VacationStatus.APPROVED
+        and vacation.start_date <= target_date
+    ]
+    if not approved_entries and not vacations:
+        return 0
+    start_candidates = []
+    if approved_entries:
+        start_candidates.append(min(entry.work_date for entry in approved_entries))
+    if vacations:
+        start_candidates.append(min(vacation.start_date for vacation in vacations))
+    start_date = min(start_candidates) if start_candidates else target_date
+    region = crud.get_default_holiday_region(db)
+    holiday_dates = crud.get_holiday_dates_in_range(db, start_date, target_date, region)
+    daily_minutes = int(round(user.daily_target_minutes or 0))
+    work_minutes = sum(entry.worked_minutes for entry in approved_entries)
+    regular_vacation_minutes = 0
+    overtime_vacation_minutes = 0
+    for vacation in vacations:
+        overlap_start = max(start_date, vacation.start_date)
+        overlap_end = min(target_date, vacation.end_date)
+        if overlap_start > overlap_end:
+            continue
+        credited = calculate_required_vacation_minutes(
+            user,
+            overlap_start,
+            overlap_end,
+            holiday_dates,
+        )
+        if vacation.use_overtime:
+            overtime_vacation_minutes += credited
+        else:
+            regular_vacation_minutes += credited
+    target_total = 0
+    if daily_minutes > 0:
+        day = start_date
+        while day <= target_date:
+            if day.weekday() < 5 and day not in holiday_dates:
+                target_total += daily_minutes
+            day += timedelta(days=1)
+    balance = work_minutes + regular_vacation_minutes - target_total - overtime_vacation_minutes
+    return balance

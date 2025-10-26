@@ -4,7 +4,10 @@ from datetime import date
 from io import BytesIO
 from typing import Iterable, List, Sequence
 
-from .models import TimeEntry, TimeEntryStatus, User
+from calendar import monthrange
+
+from . import services
+from .models import TimeEntry, User, VacationRequest
 from .schemas import VacationSummary
 
 try:
@@ -40,16 +43,6 @@ def _format_minutes(value: int) -> str:
     return f"{hours:02d}:{minutes:02d}"
 
 
-def _status_label(status: str) -> str:
-    if status == TimeEntryStatus.APPROVED:
-        return "Freigegeben"
-    if status == TimeEntryStatus.PENDING:
-        return "Wartet auf Freigabe"
-    if status == TimeEntryStatus.REJECTED:
-        return "Abgelehnt"
-    return status.title()
-
-
 def export_time_overview_pdf(
     *,
     user: User,
@@ -57,6 +50,7 @@ def export_time_overview_pdf(
     entries: Iterable[TimeEntry],
     total_work_minutes: int,
     target_minutes: int,
+    vacation_minutes: int,
     overtime_taken_minutes: int,
     total_overtime_minutes: int,
     total_undertime_minutes: int,
@@ -66,6 +60,8 @@ def export_time_overview_pdf(
     overtime_limit_exceeded: bool,
     overtime_limit_excess_minutes: int,
     overtime_limit_remaining_minutes: int,
+    vacations: Iterable[VacationRequest] | None = None,
+    holiday_dates: Iterable[date] | None = None,
 ) -> BytesIO:
     _ensure_reportlab()
 
@@ -73,24 +69,26 @@ def export_time_overview_pdf(
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        leftMargin=20 * mm,
-        rightMargin=20 * mm,
-        topMargin=20 * mm,
-        bottomMargin=20 * mm,
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
     )
     styles = getSampleStyleSheet()
     story: List[object] = []
+    holiday_date_set = set(holiday_dates or [])
 
     title = f"Arbeitszeitübersicht – {selected_month.strftime('%m/%Y')}"
     story.append(Paragraph(title, styles["Title"]))
-    story.append(Spacer(1, 4 * mm))
+    story.append(Spacer(1, 3 * mm))
     footer_left = f"Mitarbeiter: {user.full_name} ({user.username})"
     footer_right = f"Erstellt am: {date.today().strftime('%d.%m.%Y')}"
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 5 * mm))
 
     summary_data = [
         ["Monatliches Soll", f"{_format_minutes(target_minutes)} Std"],
         ["Ist-Stunden", f"{_format_minutes(total_work_minutes)} Std"],
+        ["Urlaubsstunden", f"{_format_minutes(vacation_minutes)} Std"],
         ["Überstundenabbau", f"{_format_minutes(overtime_taken_minutes)} Std"],
         ["Überstunden (Monat)", f"{_format_minutes(total_overtime_minutes)} Std"],
     ]
@@ -158,7 +156,7 @@ def export_time_overview_pdf(
         )
     )
     story.append(metrics_table)
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 5 * mm))
 
     if company_totals:
         company_data = [["Firma", "Arbeitszeit", "Buchungen"]]
@@ -184,14 +182,14 @@ def export_time_overview_pdf(
         )
         story.append(Paragraph("Firmenübersicht (freigegeben)", styles["Heading2"]))
         story.append(company_table)
-        story.append(Spacer(1, 6 * mm))
+        story.append(Spacer(1, 5 * mm))
 
-    entry_data = [["Datum", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Kommentar"]]
+    entry_data = [["Datum", "Firma", "Start", "Ende", "Arbeitszeit", "Kommentar"]]
     sorted_entries = sorted(entries, key=lambda item: (item.work_date, item.start_time))
     total_minutes = 0
     for entry in sorted_entries:
         end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
-        company_name = entry.company.name if entry.company else "Allgemein"
+        company_name = entry.company.name if entry.company else "Allgemeine Arbeitszeit"
         total_minutes += entry.worked_minutes
         entry_data.append(
             [
@@ -200,7 +198,6 @@ def export_time_overview_pdf(
                 entry.start_time.strftime("%H:%M"),
                 end_value,
                 f"{_format_minutes(entry.worked_minutes)} Std",
-                _status_label(entry.status),
                 entry.notes or "-",
             ]
         )
@@ -211,15 +208,13 @@ def export_time_overview_pdf(
         "",
         f"{_format_minutes(total_minutes)} Std",
         "",
-        "",
     ])
     entry_col_widths = [
+        doc.width * 0.14,
+        doc.width * 0.26,
         doc.width * 0.12,
-        doc.width * 0.2,
-        doc.width * 0.1,
-        doc.width * 0.1,
-        doc.width * 0.15,
-        doc.width * 0.15,
+        doc.width * 0.12,
+        doc.width * 0.18,
         doc.width * 0.18,
     ]
     entry_table = Table(entry_data, colWidths=entry_col_widths, repeatRows=1)
@@ -242,6 +237,52 @@ def export_time_overview_pdf(
     )
     story.append(Paragraph("Zeitbuchungen (Monat)", styles["Heading2"]))
     story.append(entry_table)
+
+    month_start = selected_month.replace(day=1)
+    month_end = date(selected_month.year, selected_month.month, monthrange(selected_month.year, selected_month.month)[1])
+    vacation_list = list(vacations or [])
+    vacation_rows: list[list[str]] = []
+    for vacation in vacation_list:
+        overlap_start = max(month_start, vacation.start_date)
+        overlap_end = min(month_end, vacation.end_date)
+        if overlap_start > overlap_end:
+            continue
+        credited = services.calculate_required_vacation_minutes(
+            vacation.user,
+            overlap_start,
+            overlap_end,
+            holiday_date_set,
+        )
+        if credited <= 0:
+            continue
+        label = "Überstundenabbau" if vacation.use_overtime else "Urlaub"
+        vacation_rows.append(
+            [
+                overlap_start.strftime("%d.%m.%Y"),
+                overlap_end.strftime("%d.%m.%Y"),
+                f"{_format_minutes(credited)} Std",
+                label,
+            ]
+        )
+    if vacation_rows:
+        vacation_table = Table(
+            [["Start", "Ende", "Anzurechnung", "Typ"], *vacation_rows],
+            hAlign="LEFT",
+        )
+        vacation_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ]
+            )
+        )
+        story.append(Spacer(1, 5 * mm))
+        story.append(Paragraph("Urlaub im Monat", styles["Heading2"]))
+        story.append(vacation_table)
 
     def _add_footer(canvas, document):  # type: ignore[override]
         canvas.saveState()
@@ -270,6 +311,10 @@ def export_team_overview_pdf(
     company_totals: Sequence[dict[str, object]],
     user_totals: Sequence[dict[str, object]],
     entries: Iterable[TimeEntry],
+    vacation_minutes_total: int,
+    effective_minutes: int,
+    vacations: Iterable[VacationRequest] | None = None,
+    holiday_dates: Iterable[date] | None = None,
 ) -> BytesIO:
     _ensure_reportlab()
 
@@ -277,22 +322,25 @@ def export_team_overview_pdf(
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        leftMargin=20 * mm,
-        rightMargin=20 * mm,
-        topMargin=20 * mm,
-        bottomMargin=20 * mm,
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
     )
     styles = getSampleStyleSheet()
     story: List[object] = []
+    holiday_date_set = set(holiday_dates or [])
 
     story.append(Paragraph(f"Team-Zeitübersicht – {period_label}", styles["Title"]))
     story.append(Spacer(1, 3 * mm))
     story.append(Paragraph(f"Zeitraum: {period_range}", styles["Normal"]))
     story.append(Paragraph(f"Erstellt am: {date.today().strftime('%d.%m.%Y')}", styles["Normal"]))
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 5 * mm))
 
     summary_data = [
         ["Arbeitszeit (bewertet)", f"{_format_minutes(total_minutes)} Std"],
+        ["Effektiv inkl. Urlaub", f"{_format_minutes(effective_minutes)} Std"],
+        ["Urlaubsstunden", f"{_format_minutes(vacation_minutes_total)} Std"],
         ["Buchungen gesamt", str(total_entries)],
         ["Mitarbeitende", str(unique_users)],
     ]
@@ -309,7 +357,7 @@ def export_team_overview_pdf(
         )
     )
     story.append(summary_table)
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 5 * mm))
 
     if status_summary:
         status_data = [["Status", "Anzahl"]]
@@ -329,7 +377,7 @@ def export_team_overview_pdf(
         )
         story.append(Paragraph("Statusverteilung", styles["Heading2"]))
         story.append(status_table)
-        story.append(Spacer(1, 6 * mm))
+        story.append(Spacer(1, 5 * mm))
 
     if company_totals:
         company_data = [["Firma", "Buchungen", "Arbeitszeit"]]
@@ -355,10 +403,10 @@ def export_team_overview_pdf(
         )
         story.append(Paragraph("Firmenübersicht", styles["Heading2"]))
         story.append(company_table)
-        story.append(Spacer(1, 6 * mm))
+        story.append(Spacer(1, 5 * mm))
 
     if user_totals:
-        user_data = [["Mitarbeiter", "Arbeitszeit", "Buchungen", "Firmen"]]
+        user_data = [["Mitarbeiter", "Arbeitszeit", "Buchungen", "Firmen", "Urlaub"]]
         for record in user_totals:
             user_obj = record.get("user")
             companies = record.get("companies", [])
@@ -375,12 +423,19 @@ def export_team_overview_pdf(
                     f"{_format_minutes(int(record.get('minutes', 0)))} Std",
                     str(record.get("count", 0)),
                     Paragraph(companies_text, styles["Normal"]),
+                    _format_minutes(int(record.get("vacation_minutes", 0))),
                 ]
             )
         user_table = Table(
             user_data,
             hAlign="LEFT",
-            colWidths=[doc.width * 0.25, doc.width * 0.2, doc.width * 0.15, doc.width * 0.4],
+            colWidths=[
+                doc.width * 0.24,
+                doc.width * 0.18,
+                doc.width * 0.12,
+                doc.width * 0.28,
+                doc.width * 0.18,
+            ],
         )
         user_table.setStyle(
             TableStyle(
@@ -396,9 +451,9 @@ def export_team_overview_pdf(
         )
         story.append(Paragraph("Mitarbeiterübersicht", styles["Heading2"]))
         story.append(user_table)
-        story.append(Spacer(1, 6 * mm))
+        story.append(Spacer(1, 5 * mm))
 
-    entry_data = [["Datum", "Mitarbeiter", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Quelle", "Kommentar"]]
+    entry_data = [["Datum", "Mitarbeiter", "Firma", "Start", "Ende", "Arbeitszeit", "Kommentar"]]
     sorted_entries = sorted(
         entries,
         key=lambda item: (item.work_date, item.start_time, getattr(item.user, "full_name", "")),
@@ -411,12 +466,10 @@ def export_team_overview_pdf(
             [
                 entry.work_date.strftime("%d.%m.%Y"),
                 entry.user.full_name if entry.user else "-",
-                entry.company.name if entry.company else "Allgemein",
+                entry.company.name if entry.company else "Allgemeine Arbeitszeit",
                 entry.start_time.strftime("%H:%M"),
                 end_value,
                 f"{_format_minutes(entry.worked_minutes)} Std",
-                _status_label(entry.status),
-                "Manuell" if entry.is_manual else "Automatisch",
                 entry.notes or "-",
             ]
         )
@@ -427,9 +480,6 @@ def export_team_overview_pdf(
             "",
             "",
             f"{_format_minutes(total_entry_minutes)} Std",
-            "",
-            "",
-            "",
             "",
         ]
     )
@@ -442,9 +492,7 @@ def export_team_overview_pdf(
             doc.width * 0.08,
             doc.width * 0.08,
             doc.width * 0.12,
-            doc.width * 0.12,
-            doc.width * 0.08,
-            doc.width * 0.17,
+            doc.width * 0.27,
         ],
         repeatRows=1,
     )
@@ -461,6 +509,61 @@ def export_team_overview_pdf(
     )
     story.append(Paragraph("Einzelbuchungen", styles["Heading2"]))
     story.append(entry_table)
+
+    vacation_list = list(vacations or [])
+    if vacation_list:
+        vacation_data = [["Mitarbeiter", "Start", "Ende", "Anzurechnung", "Typ", "Kommentar"]]
+        for vacation in vacation_list:
+            overlap_start = max(start_date, vacation.start_date)
+            overlap_end = min(end_date, vacation.end_date)
+            if overlap_start > overlap_end:
+                continue
+            credited = services.calculate_required_vacation_minutes(
+                vacation.user,
+                overlap_start,
+                overlap_end,
+                holiday_date_set,
+            )
+            if credited <= 0:
+                continue
+            vacation_data.append(
+                [
+                    vacation.user.full_name if vacation.user else "Unbekannt",
+                    overlap_start.strftime("%d.%m.%Y"),
+                    overlap_end.strftime("%d.%m.%Y"),
+                    f"{_format_minutes(credited)} Std",
+                    "Überstundenabbau" if vacation.use_overtime else "Urlaub",
+                    vacation.comment or "-",
+                ]
+            )
+        if len(vacation_data) > 1:
+            vacation_table = Table(
+                vacation_data,
+                hAlign="LEFT",
+                colWidths=[
+                    doc.width * 0.22,
+                    doc.width * 0.16,
+                    doc.width * 0.16,
+                    doc.width * 0.16,
+                    doc.width * 0.14,
+                    doc.width * 0.16,
+                ],
+                repeatRows=1,
+            )
+            vacation_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                        ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ]
+                )
+            )
+            story.append(Spacer(1, 5 * mm))
+            story.append(Paragraph("Urlaub im Zeitraum", styles["Heading2"]))
+            story.append(vacation_table)
 
     doc.build(story)
     buffer.seek(0)
