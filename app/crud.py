@@ -45,8 +45,12 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     weekly_hours = float(payload.get("standard_weekly_hours", 0) or 0)
     payload["standard_weekly_hours"] = weekly_hours
     payload["standard_daily_minutes"] = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
-    limit_minutes = int(payload.get("monthly_overtime_limit_minutes", 0) or 0)
-    payload["monthly_overtime_limit_minutes"] = max(limit_minutes, 0)
+    limit_value = payload.get("monthly_overtime_limit_minutes", None)
+    if limit_value is None:
+        payload["monthly_overtime_limit_minutes"] = None
+    else:
+        limit_minutes = int(limit_value)
+        payload["monthly_overtime_limit_minutes"] = max(limit_minutes, 0)
     if not payload.get("rfid_tag"):
         payload["rfid_tag"] = None
     db_user = models.User(**payload)
@@ -67,9 +71,12 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
         db_user.standard_daily_minutes = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
         payload.pop("standard_weekly_hours", None)
     if "monthly_overtime_limit_minutes" in payload:
-        limit_minutes = int(payload["monthly_overtime_limit_minutes"] or 0)
-        db_user.monthly_overtime_limit_minutes = max(limit_minutes, 0)
-        payload.pop("monthly_overtime_limit_minutes", None)
+        limit_value = payload.pop("monthly_overtime_limit_minutes")
+        if limit_value is None:
+            db_user.monthly_overtime_limit_minutes = None
+        else:
+            limit_minutes = int(limit_value)
+            db_user.monthly_overtime_limit_minutes = max(limit_minutes, 0)
     if "rfid_tag" in payload and not payload["rfid_tag"]:
         payload["rfid_tag"] = None
     for key, value in payload.items():

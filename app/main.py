@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request as URLRequest, urlopen
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -48,6 +48,22 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
 UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
 UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
+
+
+def _parse_overtime_limit_hours(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = text.replace(",", ".")
+    try:
+        hours = float(normalized)
+    except ValueError as exc:
+        raise ValueError("Ungültiges Überstundenlimit") from exc
+    if hours < 0:
+        raise ValueError("Überstundenlimit darf nicht negativ sein")
+    return int(round(hours * 60))
 
 
 def _format_minutes(value: object) -> str:
@@ -125,8 +141,8 @@ def _fetch_remote_refs_via_http(repo_url: str) -> set[str]:
     refs: set[str] = set()
     for endpoint in endpoints:
         try:
-            request = Request(endpoint, headers=headers)
-            with urlopen(request, timeout=10) as response:
+            http_request = URLRequest(endpoint, headers=headers)
+            with urlopen(http_request, timeout=10) as response:
                 payload = response.read()
         except (HTTPError, URLError, TimeoutError, socket.timeout, OSError):
             continue
@@ -1896,7 +1912,7 @@ def create_user_html(
     email: str = Form(...),
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
-    monthly_overtime_limit_hours: float = Form(20.0),
+    monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
@@ -1919,7 +1935,13 @@ def create_user_html(
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
-    overtime_limit_minutes = int(round(max(monthly_overtime_limit_hours, 0.0) * 60))
+    try:
+        overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
+    except ValueError:
+        return RedirectResponse(
+            url="/admin/users/new?error=Ung%C3%BCltiges+%C3%9Cberstundenlimit",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     try:
         crud.create_user(
             db,
@@ -1958,7 +1980,7 @@ def update_user_html(
     email: str = Form(...),
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
-    monthly_overtime_limit_hours: float = Form(20.0),
+    monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
@@ -1981,7 +2003,13 @@ def update_user_html(
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
-    overtime_limit_minutes = int(round(max(monthly_overtime_limit_hours, 0.0) * 60))
+    try:
+        overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
+    except ValueError:
+        return RedirectResponse(
+            url=f"/admin/users/{user_id}?error=Ung%C3%BCltiges+%C3%9Cberstundenlimit",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     try:
         updated = crud.update_user(
             db,
