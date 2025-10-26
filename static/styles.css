@@ -1028,6 +1028,12 @@ body.modal-open {
     }
 }
 
+@media (min-width: 1240px) {
+    .user-form {
+        max-width: 960px;
+    }
+}
+
 .full-width {
     grid-column: 1 / -1;
 }
