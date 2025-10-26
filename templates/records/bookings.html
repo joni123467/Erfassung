@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Buchungen – Erfassung{% endblock %}
+{% block content %}
+{% set records_active = 'bookings' %}
+{% include "records/_nav.html" %}
+<section class="card records-hero">
+    <div class="card-header">
+        <h1>Arbeitszeitübersicht – {{ selected_month.strftime('%m/%Y') }}</h1>
+        <div class="card-header__actions">
+            <a class="button ghost" href="/records/pdf?month={{ month_value }}">PDF-Export</a>
+            <a class="button" href="/api/users/{{ user.id }}/excel">Excel-Export</a>
+        </div>
+    </div>
+    <form method="get" action="/records" class="filter-bar">
+        <label>
+            Monat
+            <input type="month" name="month" value="{{ month_value }}">
+        </label>
+        <button type="submit" class="button small">Monat wechseln</button>
+        <a class="button ghost small" href="/records">Zurücksetzen</a>
+    </form>
+    <dl class="dashboard-summary-list records-summary">
+        <div class="dashboard-summary-list__item">
+            <dt>Ist-Stunden (Monat)</dt>
+            <dd>{{ total_work_minutes|format_minutes }} Stunden</dd>
+        </div>
+        <div class="dashboard-summary-list__item">
+            <dt>Soll-Stunden (Monat)</dt>
+            <dd>{{ target_minutes|format_minutes }} Stunden</dd>
+        </div>
+        <div class="dashboard-summary-list__item dashboard-summary-list__item--diff {% if total_overtime_minutes >= total_undertime_minutes %}is-positive{% else %}is-negative{% endif %}">
+            <dt>Saldo</dt>
+            <dd>
+                {% if total_overtime_minutes %}+{{ total_overtime_minutes|format_minutes }} Std{% elif total_undertime_minutes %}-{{ total_undertime_minutes|format_minutes }} Std{% else %}Ausgeglichen{% endif %}
+            </dd>
+        </div>
+        <div class="dashboard-summary-list__item">
+            <dt>Überstundenabbau</dt>
+            <dd>{{ overtime_taken_minutes|format_minutes }} Stunden</dd>
+        </div>
+        {% if user.time_account_enabled %}
+            <div class="dashboard-summary-list__item">
+                <dt>Überstunden (Monat)</dt>
+                <dd>{{ total_overtime_minutes|format_minutes }} Stunden</dd>
+            </div>
+            <div class="dashboard-summary-list__item">
+                <dt>Minusstunden (Monat)</dt>
+                <dd>{{ total_undertime_minutes|format_minutes }} Stunden</dd>
+            </div>
+        {% endif %}
+    </dl>
+    <p class="form-hint">Alle Kennzahlen berücksichtigen ausschließlich freigegebene Buchungen des Monats.</p>
+</section>
+
+<section class="card records-table" id="entries-section">
+    <div class="card-header">
+        <h2>Buchungen im ausgewählten Monat</h2>
+        <form method="get" action="/records" class="filter-inline">
+            <input type="hidden" name="month" value="{{ month_value }}">
+            <label>
+                Firma
+                <select name="company">
+                    <option value="">Alle Firmen</option>
+                    <option value="none" {% if company_filter_none %}selected{% endif %}>Allgemeine Arbeitszeit</option>
+                    {% for company in companies %}
+                        <option value="{{ company.id }}" {% if company_filter_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button type="submit" class="button small">Filtern</button>
+            <a class="button ghost small" href="/records?month={{ month_value }}">Alle Buchungen</a>
+        </form>
+    </div>
+    <div class="company-summary" aria-live="polite">
+        {% if company_totals_filtered %}
+            {% for row in company_totals_filtered %}
+                <div class="company-summary__item">
+                    <span class="company-summary__name">{{ row.name }}</span>
+                    <span class="company-summary__stats">{{ row.minutes|format_minutes }} Std · {{ row.count }} Buchungen</span>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="company-summary__item is-empty">Keine freigegebenen Buchungen im Filter.</div>
+        {% endif %}
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Datum</th>
+                <th>Firma</th>
+                <th>Start</th>
+                <th>Ende</th>
+                <th>Pausen</th>
+                <th>Arbeitszeit</th>
+                <th>Status</th>
+                <th>Quelle</th>
+                <th>Kommentar</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for entry in entries %}
+                <tr class="status-{{ entry.status }}">
+                    <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ entry.company.name if entry.company else 'Allgemein' }}</td>
+                    <td>{{ entry.start_time.strftime('%H:%M') }}</td>
+                    <td>{{ entry.end_time.strftime('%H:%M') }}</td>
+                    <td>
+                        {{ entry.total_break_minutes|format_minutes }} Std
+                        {% if entry.required_break_minutes > entry.total_break_minutes %}
+                            ({{ entry.required_break_minutes|format_minutes }} Std erforderlich)
+                        {% endif %}
+                    </td>
+                    <td>{{ entry.worked_minutes|format_minutes }} Std</td>
+                    <td class="status-label status-{{ entry.status }}">
+                        {% if entry.status == 'approved' %}Freigegeben{% elif entry.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
+                    </td>
+                    <td>{{ 'Manuell' if entry.is_manual else 'Automatisch' }}</td>
+                    <td>{{ entry.notes or '-' }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="9">Keine Buchungen im ausgewählten Zeitraum gefunden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card records-table">
+    <div class="card-header">
+        <h2>Auswertung nach Firmen</h2>
+        <p class="card-header__hint">Gesamte Monatswerte über alle freigegebenen Buchungen.</p>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Firma</th>
+                <th>Buchungen</th>
+                <th>Arbeitszeit</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in company_totals_all %}
+                <tr>
+                    <td>{{ row.name }}</td>
+                    <td>{{ row.count }}</td>
+                    <td>{{ row.minutes|format_minutes }} Std</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="3">Keine freigegebenen Buchungen vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

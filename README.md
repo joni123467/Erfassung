@@ -71,3 +71,20 @@ Die Architektur ist so aufgebaut, dass später eine RFID-Erweiterung realisiert 
 ## Tests
 
 Zurzeit sind keine automatisierten Tests hinterlegt. Es wird empfohlen, für produktive Szenarien API- und Integrationstests zu ergänzen.
+
+## Aktualisierung
+
+Für installierte Instanzen steht mit `update.sh` ein zweistufiger Updater zur Verfügung. Beim Start lädt das Skript automatisch die
+aktuellste Version des Repository-Archivs, führt daraus die jüngste Update-Routine aus und übernimmt anschließend den Quellcode in
+das Installationsverzeichnis. Dabei bleiben lokale Datenordner (`data`, `logs`), Konfigurationsdateien (`config`, `config.yml`,
+`config.yaml`, `.env`) sowie vorhandene virtuelle Umgebungen (`.venv`) erhalten.
+
+Der Updater kann – ähnlich wie die Installation – ohne lokale Git-Kopie genutzt werden:
+
+```bash
+wget https://raw.githubusercontent.com/joni123467/Erfassung/main/update.sh -O update.sh
+bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467/Erfassung --ref main
+```
+
+Über `--repo-url` lässt sich bei Bedarf ein eigener Fork bzw. eine alternative Quelle angeben, `--ref` steuert den Branch oder Tag.
+Vorhandene Abhängigkeiten werden nach dem Kopiervorgang automatisch aktualisiert.

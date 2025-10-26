@@ -1,17 +1,17 @@
-<nav class="admin-nav">
+<nav class="timetac-subnav" aria-label="Administration">
     {% if admin_permissions.users %}
-        <a href="/admin/users" class="admin-nav__link {% if admin_active == 'users' %}active{% endif %}">Benutzer</a>
+        <a href="/admin/users" class="timetac-subnav__link {% if admin_active == 'users' %}is-active{% endif %}">Benutzer</a>
     {% endif %}
     {% if admin_permissions.groups %}
-        <a href="/admin/groups" class="admin-nav__link {% if admin_active == 'groups' %}active{% endif %}">Gruppen</a>
+        <a href="/admin/groups" class="timetac-subnav__link {% if admin_active == 'groups' %}is-active{% endif %}">Gruppen</a>
     {% endif %}
     {% if admin_permissions.companies %}
-        <a href="/admin/companies" class="admin-nav__link {% if admin_active == 'companies' %}active{% endif %}">Firmen</a>
+        <a href="/admin/companies" class="timetac-subnav__link {% if admin_active == 'companies' %}is-active{% endif %}">Firmen</a>
     {% endif %}
     {% if admin_permissions.holidays %}
-        <a href="/admin/holidays" class="admin-nav__link {% if admin_active == 'holidays' %}active{% endif %}">Feiertage</a>
+        <a href="/admin/holidays" class="timetac-subnav__link {% if admin_active == 'holidays' %}is-active{% endif %}">Feiertage</a>
     {% endif %}
     {% if admin_permissions.approvals %}
-        <a href="/admin/approvals" class="admin-nav__link {% if admin_active == 'approvals' %}active{% endif %}">Freigaben</a>
+        <a href="/admin/approvals" class="timetac-subnav__link {% if admin_active == 'approvals' %}is-active{% endif %}">Freigaben</a>
     {% endif %}
 </nav>
