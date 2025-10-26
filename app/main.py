@@ -11,9 +11,9 @@ from collections import Counter
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request as URLRequest, urlopen
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -48,6 +48,22 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
 UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
 UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
+
+
+def _parse_overtime_limit_hours(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = text.replace(",", ".")
+    try:
+        hours = float(normalized)
+    except ValueError as exc:
+        raise ValueError("Ungültiges Überstundenlimit") from exc
+    if hours < 0:
+        raise ValueError("Überstundenlimit darf nicht negativ sein")
+    return int(round(hours * 60))
 
 
 def _format_minutes(value: object) -> str:
@@ -125,8 +141,8 @@ def _fetch_remote_refs_via_http(repo_url: str) -> set[str]:
     refs: set[str] = set()
     for endpoint in endpoints:
         try:
-            request = Request(endpoint, headers=headers)
-            with urlopen(request, timeout=10) as response:
+            http_request = URLRequest(endpoint, headers=headers)
+            with urlopen(http_request, timeout=10) as response:
                 payload = response.read()
         except (HTTPError, URLError, TimeoutError, socket.timeout, OSError):
             continue
@@ -176,7 +192,13 @@ def _list_remote_branches(repo_url: str) -> List[str]:
 
 def _execute_update(ref: str, repo_url: str) -> bool:
     UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cleanup_error: OSError | None = None
+    try:
+        UPDATE_LOG_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        cleanup_error = exc
     shell = shutil.which("bash") or shutil.which("sh")
     if not shell:
         raise FileNotFoundError("Keine Shell zum Ausführen des Update-Skripts gefunden")
@@ -192,8 +214,18 @@ def _execute_update(ref: str, repo_url: str) -> bool:
     ]
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
-    with UPDATE_LOG_PATH.open("a", encoding="utf-8") as log_file:
-        log_file.write(f"[{timestamp}] Starte Update auf '{ref}'\n")
+    try:
+        log_file_handle = UPDATE_LOG_PATH.open("w", encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError("Update-Protokoll konnte nicht erstellt werden") from exc
+    with log_file_handle as log_file:
+        if cleanup_error is not None:
+            cleanup_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(
+                f"[{cleanup_stamp}] ⚠️ Altes Update-Protokoll konnte nicht entfernt werden: {cleanup_error}\n"
+            )
+        start_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        log_file.write(f"[{start_stamp}] Starte Update auf '{ref}'\n")
         log_file.flush()
         try:
             process = subprocess.Popen(
@@ -387,6 +419,10 @@ SELECT id, name, date, region, created_at FROM holidays
                 connection.execute(
                     text("ALTER TABLE vacation_requests ADD COLUMN overtime_minutes INTEGER DEFAULT 0")
                 )
+            if "previous_status" not in columns:
+                connection.execute(
+                    text("ALTER TABLE vacation_requests ADD COLUMN previous_status VARCHAR")
+                )
 
 
 def _sanitize_next(next_url: str, default: str = "/time") -> str:
@@ -398,6 +434,8 @@ def _sanitize_next(next_url: str, default: str = "/time") -> str:
     path = parsed.path or default
     if not path.startswith("/"):
         return default
+    if parsed.query:
+        return f"{path}?{parsed.query}"
     return path
 
 
@@ -406,6 +444,20 @@ def _build_redirect(path: str, **params: str) -> str:
     if query:
         return f"{path}?{query}"
     return path
+
+
+def _build_redirect_with_next(
+    default_path: str, next_url: Optional[str], **params: str
+) -> str:
+    sanitized = _sanitize_next(next_url or "", default_path)
+    parsed = urlparse(sanitized)
+    base_path = parsed.path or default_path
+    merged_params = dict(parse_qsl(parsed.query))
+    merged_params.update({key: value for key, value in params.items() if value})
+    query = urlencode(merged_params)
+    if query:
+        return f"{base_path}?{query}"
+    return base_path
 
 
 def _resolve_month_period(month_param: Optional[str]) -> tuple[date, date, date]:
@@ -431,7 +483,7 @@ def _aggregate_company_totals(source_entries: List[models.TimeEntry]):
             key,
             {
                 "company_id": entry.company_id,
-                "name": entry.company.name if entry.company else "Allgemein",
+                "name": entry.company.name if entry.company else "Allgemeine Arbeitszeit",
                 "minutes": 0,
                 "count": 0,
             },
@@ -477,7 +529,10 @@ def _resolve_range_period(start_param: Optional[str], end_param: Optional[str]) 
     return start, end
 
 
-def _build_user_totals(entries: List[models.TimeEntry]) -> List[dict[str, object]]:
+def _build_user_totals(
+    entries: List[models.TimeEntry],
+    vacation_minutes: Optional[dict[int, int]] = None,
+) -> List[dict[str, object]]:
     summary: dict[int, dict[str, object]] = {}
     for entry in entries:
         if not entry.user:
@@ -490,24 +545,27 @@ def _build_user_totals(entries: List[models.TimeEntry]) -> List[dict[str, object
                 "count": 0,
                 "status_counts": Counter(),
                 "companies": {},
+                "vacation_minutes": 0,
             },
         )
         record["minutes"] = int(record["minutes"]) + entry.worked_minutes
         record["count"] = int(record["count"]) + 1
         record["status_counts"][entry.status] += 1
-        company_name = entry.company.name if entry.company else "Allgemein"
+        company_name = entry.company.name if entry.company else "Allgemeine Arbeitszeit"
         company_record = record["companies"].setdefault(
             company_name,
             {"name": company_name, "minutes": 0, "count": 0},
         )
         company_record["minutes"] = int(company_record["minutes"]) + entry.worked_minutes
         company_record["count"] = int(company_record["count"]) + 1
+        if vacation_minutes and entry.user_id in vacation_minutes:
+            record["vacation_minutes"] = vacation_minutes[entry.user_id]
 
     results: List[dict[str, object]] = []
     for payload in summary.values():
         companies = list(payload["companies"].values())
         companies.sort(key=lambda item: (-int(item["minutes"]), str(item["name"]).lower()))
-        primary_company = companies[0]["name"] if companies else "Allgemein"
+        primary_company = companies[0]["name"] if companies else "Allgemeine Arbeitszeit"
         status_counts: Counter = payload["status_counts"]
         status_breakdown = [
             {
@@ -531,6 +589,7 @@ def _build_user_totals(entries: List[models.TimeEntry]) -> List[dict[str, object
                 "status_breakdown": status_breakdown,
                 "companies": companies,
                 "primary_company": primary_company,
+                "vacation_minutes": int(payload.get("vacation_minutes", 0)),
             }
         )
     return results
@@ -582,6 +641,40 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
         )
     )
 
+    vacations = crud.get_vacations_in_range(
+        db,
+        start_date,
+        end_date,
+        statuses=[models.VacationStatus.APPROVED],
+    )
+    vacation_minutes_total = 0
+    vacation_minutes_by_user: dict[int, int] = {}
+    vacation_records: list[dict[str, object]] = []
+    for vacation in vacations:
+        if not vacation.user:
+            continue
+        overlap_start = max(start_date, vacation.start_date)
+        overlap_end = min(end_date, vacation.end_date)
+        credited = services.calculate_required_vacation_minutes(
+            vacation.user,
+            overlap_start,
+            overlap_end,
+        )
+        if credited <= 0:
+            continue
+        vacation_minutes_total += credited
+        vacation_minutes_by_user[vacation.user_id] = (
+            vacation_minutes_by_user.get(vacation.user_id, 0) + credited
+        )
+        vacation_records.append(
+            {
+                "vacation": vacation,
+                "start": overlap_start,
+                "end": overlap_end,
+                "minutes": credited,
+            }
+        )
+
     company_filter_id: Optional[int] = None
     company_filter_none = False
     company_param_value = company_param
@@ -608,6 +701,7 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
     )
 
     total_minutes = sum(entry.worked_minutes for entry in entries)
+    effective_minutes = total_minutes + vacation_minutes_total
     total_entries = len(entries)
     unique_users = len({entry.user_id for entry in entries})
 
@@ -630,7 +724,7 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
     company_totals = _aggregate_company_totals(entries)
     company_totals.sort(key=lambda row: (-int(row["minutes"]), str(row["name"]).lower()))
 
-    user_totals = _build_user_totals(entries)
+    user_totals = _build_user_totals(entries, vacation_minutes_by_user)
     if sort_param == "minutes_desc":
         user_totals.sort(key=lambda item: (-int(item["minutes"]), item["user"].full_name.lower()))
     elif sort_param == "entries_desc":
@@ -712,12 +806,16 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
         "entries": entries,
         "entries_sorted": entries_sorted,
         "total_minutes": total_minutes,
+        "effective_minutes": effective_minutes,
+        "vacation_minutes_total": vacation_minutes_total,
         "total_entries": total_entries,
         "unique_users": unique_users,
         "status_summary": status_summary,
         "status_counts": status_counts,
         "company_totals": company_totals,
         "user_totals": user_totals,
+        "vacations": vacations,
+        "vacation_records": vacation_records,
         "period_label": period_label,
         "period_range": period_range,
         "period_filename": period_filename,
@@ -742,6 +840,7 @@ def _seed_default_records() -> None:
                     can_approve_manual_entries=True,
                     can_create_companies=True,
                     can_view_time_reports=True,
+                    can_edit_time_entries=True,
                 ),
             )
         else:
@@ -756,9 +855,20 @@ def _seed_default_records() -> None:
                 admin_group.can_approve_manual_entries = True
                 admin_group.can_create_companies = True
                 admin_group.can_view_time_reports = True
+                admin_group.can_edit_time_entries = True
                 db.commit()
-        if not crud.get_companies(db):
-            crud.create_company(db, schemas.CompanyCreate(name="Allgemein"))
+        companies = crud.get_companies(db)
+        if not companies:
+            crud.create_company(db, schemas.CompanyCreate(name="Firma"))
+        else:
+            legacy_default = (
+                db.query(models.Company)
+                .filter(models.Company.name == "Allgemein")
+                .first()
+            )
+            if legacy_default:
+                legacy_default.name = "Firma"
+                db.commit()
         if not crud.get_users(db):
             crud.create_user(
                 db,
@@ -855,7 +965,21 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
     weekly_entries = crud.get_time_entries_for_user(db, user.id, start=week_start, end=week_end)
-    weekly_total_minutes = sum(entry.worked_minutes for entry in weekly_entries)
+    weekly_vacations = crud.get_vacations_in_range(
+        db,
+        week_start,
+        week_end,
+        user_id=user.id,
+        statuses=[models.VacationStatus.APPROVED],
+    )
+    vacation_minutes_by_day = services.calculate_vacation_minutes_by_day(
+        user,
+        weekly_vacations,
+        week_start,
+        week_end,
+    )
+    weekly_vacation_minutes = sum(vacation_minutes_by_day.values())
+    weekly_total_minutes = sum(entry.worked_minutes for entry in weekly_entries) + weekly_vacation_minutes
     weekly_target_minutes = int(round(user.weekly_target_minutes or 0)) if user else 0
     daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
     elapsed_workdays = sum(
@@ -878,12 +1002,18 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     week_days = []
     current_day = week_start
     while current_day <= week_end:
-        day_minutes = sum(entry.worked_minutes for entry in weekly_entries if entry.work_date == current_day)
+        work_minutes = sum(
+            entry.worked_minutes for entry in weekly_entries if entry.work_date == current_day
+        )
+        vacation_minutes = vacation_minutes_by_day.get(current_day, 0)
+        day_minutes = work_minutes + vacation_minutes
         target_for_day = daily_target_minutes if current_day.weekday() < 5 else 0
         week_days.append(
             {
                 "date": current_day,
                 "minutes": day_minutes,
+                "worked_minutes": work_minutes,
+                "vacation_minutes": vacation_minutes,
                 "target_minutes": target_for_day,
                 "is_today": current_day == today,
             }
@@ -899,6 +1029,7 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
         "progress_percent": progress_percent,
         "progress_to_date_percent": progress_to_date_percent,
         "days": week_days,
+        "vacation_minutes": weekly_vacation_minutes,
     }
     return templates.TemplateResponse(
         "dashboard.html",
@@ -979,8 +1110,11 @@ def submit_time_entry(
             is_manual=True,
         )
         crud.create_time_entry(db, entry)
-    except ValueError:
-        redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Zeiteingabe")
+    except ValueError as exc:
+        error_message = "Ungültige Zeiteingabe"
+        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+            error_message = "Zeit überschneidet sich mit einer bestehenden Buchung"
+        redirect = _build_redirect(_sanitize_next(next_url), error=error_message)
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
         _sanitize_next(next_url), msg="Zeitbuchung eingereicht und wartet auf Freigabe"
@@ -1143,21 +1277,63 @@ def submit_vacation(
     overtime_minutes = 0
     if use_overtime_value:
         overtime_minutes = services.calculate_required_vacation_minutes(user, start_date, end_date)
-    crud.create_vacation_request(
-        db,
-        schemas.VacationRequestCreate(
-            user_id=user.id,
-            start_date=start_date,
-            end_date=end_date,
-            comment=comment,
-            use_overtime=use_overtime_value,
-            overtime_minutes=overtime_minutes,
-        ),
-    )
+    try:
+        crud.create_vacation_request(
+            db,
+            schemas.VacationRequestCreate(
+                user_id=user.id,
+                start_date=start_date,
+                end_date=end_date,
+                comment=comment,
+                use_overtime=use_overtime_value,
+                overtime_minutes=overtime_minutes,
+            ),
+        )
+    except ValueError as exc:
+        error_message = "Urlaubsantrag konnte nicht gespeichert werden"
+        if str(exc) == "VACATION_OVERLAP":
+            error_message = "Es besteht bereits ein Urlaubsantrag für diesen Zeitraum"
+        redirect = _build_redirect("/records/vacations", error=error_message)
+        return RedirectResponse(
+            url=redirect,
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     return RedirectResponse(
         url="/records/vacations?msg=Urlaubsantrag+erstellt",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+@app.post("/vacations/{vacation_id}/withdraw")
+def withdraw_vacation_request(
+    request: Request,
+    vacation_id: int,
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    vacation = (
+        db.query(models.VacationRequest)
+        .filter(models.VacationRequest.id == vacation_id)
+        .filter(models.VacationRequest.user_id == user.id)
+        .first()
+    )
+    if not vacation:
+        redirect = _build_redirect("/records/vacations", error="Urlaubsantrag nicht gefunden")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    updated = crud.request_vacation_withdrawal(db, vacation_id)
+    if not updated:
+        redirect = _build_redirect(
+            "/records/vacations",
+            error="Urlaubsantrag kann nicht zurückgezogen werden",
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    redirect = _build_redirect(
+        "/records/vacations",
+        msg="Rücknahme angefragt",
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/records", response_class=HTMLResponse)
@@ -1201,10 +1377,13 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
         user, selected_month.year, selected_month.month
     )
     vacations = crud.get_vacations_for_user(db, user.id)
+    vacation_minutes = services.calculate_approved_vacation_minutes(
+        user, vacations, start_date, end_date
+    )
     overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
         user, vacations, start_date, end_date
     )
-    effective_minutes = total_work_minutes + overtime_taken_minutes
+    effective_minutes = total_work_minutes + vacation_minutes
     balance = effective_minutes - target_minutes
     total_overtime_minutes = max(balance, 0)
     total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
@@ -1225,6 +1404,7 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
             "entries": entries,
             "approved_entries": approved_entries,
             "total_work_minutes": total_work_minutes,
+            "vacation_minutes": vacation_minutes,
             "total_overtime_minutes": total_overtime_minutes,
             "total_undertime_minutes": total_undertime_minutes,
             "target_minutes": target_minutes,
@@ -1252,7 +1432,12 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
     vacations = crud.get_vacations_for_user(db, user.id)
     today = date.today()
     vacation_summary = services.calculate_vacation_summary(user, vacations, today.year)
-    pending_vacations = sum(1 for vacation in vacations if vacation.status == models.VacationRequestStatus.PENDING)
+    pending_vacations = sum(
+        1
+        for vacation in vacations
+        if vacation.status
+        in (models.VacationStatus.PENDING, models.VacationStatus.WITHDRAW_REQUESTED)
+    )
     return templates.TemplateResponse(
         "records/vacations.html",
         {
@@ -1289,10 +1474,13 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         user, selected_month.year, selected_month.month
     )
     vacations = crud.get_vacations_for_user(db, user.id)
+    vacation_minutes = services.calculate_approved_vacation_minutes(
+        user, vacations, start_date, end_date
+    )
     overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
         user, vacations, start_date, end_date
     )
-    effective_minutes = total_work_minutes + overtime_taken_minutes
+    effective_minutes = total_work_minutes + vacation_minutes
     balance = effective_minutes - target_minutes
     total_overtime_minutes = max(balance, 0)
     total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
@@ -1310,6 +1498,13 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         if overtime_limit_minutes and not overtime_limit_exceeded
         else 0
     )
+    approved_vacations = [
+        vacation
+        for vacation in vacations
+        if vacation.status == models.VacationStatus.APPROVED
+        and vacation.start_date <= end_date
+        and vacation.end_date >= start_date
+    ]
     try:
         buffer = export_time_overview_pdf(
             user=user,
@@ -1317,6 +1512,7 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
             entries=month_entries,
             total_work_minutes=total_work_minutes,
             target_minutes=target_minutes,
+            vacation_minutes=vacation_minutes,
             overtime_taken_minutes=overtime_taken_minutes,
             total_overtime_minutes=total_overtime_minutes,
             total_undertime_minutes=total_undertime_minutes,
@@ -1326,6 +1522,7 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
             overtime_limit_exceeded=overtime_limit_exceeded,
             overtime_limit_excess_minutes=overtime_limit_excess_minutes,
             overtime_limit_remaining_minutes=overtime_limit_remaining_minutes,
+            vacations=approved_vacations,
         )
     except RuntimeError as exc:
         redirect_params = []
@@ -1379,6 +1576,10 @@ def _can_view_time_reports(user: models.User) -> bool:
     return _has_group_permission(user, "can_view_time_reports")
 
 
+def _can_edit_time_entries(user: models.User) -> bool:
+    return _has_group_permission(user, "can_edit_time_entries")
+
+
 def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
     permissions = {
         "users": _can_manage_users(user),
@@ -1389,6 +1590,7 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "approvals_vacations": _can_manage_vacations(user),
         "updates": _ensure_admin(user),
         "reports": _can_view_time_reports(user),
+        "edit_time_entries": _can_edit_time_entries(user),
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
     permissions["create_companies"] = _can_create_companies(user)
@@ -1676,11 +1878,15 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         if can_manual
         else []
     )
-    pending_vacations = (
-        crud.get_vacation_requests(db, status=models.VacationStatus.PENDING)
-        if can_vacation
-        else []
-    )
+    pending_vacations: list[models.VacationRequest] = []
+    withdrawal_requests: list[models.VacationRequest] = []
+    if can_vacation:
+        pending_vacations = crud.get_vacation_requests(
+            db, statuses=[models.VacationStatus.PENDING]
+        )
+        withdrawal_requests = crud.get_vacation_requests(
+            db, statuses=[models.VacationStatus.WITHDRAW_REQUESTED]
+        )
     return _admin_template(
         "admin/approvals.html",
         request,
@@ -1689,6 +1895,7 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         error=error,
         pending_entries=pending_entries,
         pending_vacations=pending_vacations,
+        withdrawal_requests=withdrawal_requests,
         show_manual_section=can_manual,
         show_vacation_section=can_vacation,
     )
@@ -1735,6 +1942,9 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
             company_totals=report_data["company_totals"],
             user_totals=report_data["user_totals"],
             entries=report_data["entries_sorted"],
+            vacation_minutes_total=report_data["vacation_minutes_total"],
+            effective_minutes=report_data["effective_minutes"],
+            vacations=report_data.get("vacations"),
         )
     except RuntimeError as exc:
         params = list(request.query_params.multi_items())
@@ -1760,7 +1970,12 @@ def admin_time_reports_excel(request: Request, db: Session = Depends(database.ge
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_time_report_data(request.query_params, db)
-    buffer = export_time_entries(report_data["entries_sorted"])
+    buffer = export_time_entries(
+        report_data["entries_sorted"],
+        report_data.get("vacations"),
+        period_start=report_data["start_date"],
+        period_end=report_data["end_date"],
+    )
     filename = f"team_zeit_{report_data['period_filename']}.xlsx"
     return StreamingResponse(
         buffer,
@@ -1779,6 +1994,7 @@ def create_group_html(
     can_approve_manual_entries: Optional[str] = Form(None),
     can_create_companies: Optional[str] = Form(None),
     can_view_time_reports: Optional[str] = Form(None),
+    can_edit_time_entries: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -1790,12 +2006,14 @@ def create_group_html(
     approve_manual_value = can_approve_manual_entries == "on"
     create_companies_value = can_create_companies == "on"
     view_time_reports_value = can_view_time_reports == "on"
+    edit_time_entries_value = can_edit_time_entries == "on"
     if is_admin_value:
         manage_users_value = True
         manage_vacations_value = True
         approve_manual_value = True
         create_companies_value = True
         view_time_reports_value = True
+        edit_time_entries_value = True
     try:
         crud.create_group(
             db,
@@ -1807,6 +2025,7 @@ def create_group_html(
                 can_approve_manual_entries=approve_manual_value,
                 can_create_companies=create_companies_value,
                 can_view_time_reports=view_time_reports_value,
+                can_edit_time_entries=edit_time_entries_value,
             ),
         )
     except IntegrityError:
@@ -1829,6 +2048,7 @@ def update_group_html(
     can_approve_manual_entries: Optional[str] = Form(None),
     can_create_companies: Optional[str] = Form(None),
     can_view_time_reports: Optional[str] = Form(None),
+    can_edit_time_entries: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -1840,12 +2060,14 @@ def update_group_html(
     approve_manual_value = can_approve_manual_entries == "on"
     create_companies_value = can_create_companies == "on"
     view_time_reports_value = can_view_time_reports == "on"
+    edit_time_entries_value = can_edit_time_entries == "on"
     if is_admin_value:
         manage_users_value = True
         manage_vacations_value = True
         approve_manual_value = True
         create_companies_value = True
         view_time_reports_value = True
+        edit_time_entries_value = True
     try:
         updated = crud.update_group(
             db,
@@ -1858,6 +2080,7 @@ def update_group_html(
                 can_approve_manual_entries=approve_manual_value,
                 can_create_companies=create_companies_value,
                 can_view_time_reports=view_time_reports_value,
+                can_edit_time_entries=edit_time_entries_value,
             ),
         )
     except IntegrityError:
@@ -1896,7 +2119,7 @@ def create_user_html(
     email: str = Form(...),
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
-    monthly_overtime_limit_hours: float = Form(20.0),
+    monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
@@ -1914,12 +2137,16 @@ def create_user_html(
     group_value = int(group_id) if group_id else None
     time_account_value = time_account_enabled == "on"
     overtime_vacation_value = overtime_vacation_enabled == "on"
-    if not time_account_value:
-        overtime_vacation_value = False
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
-    overtime_limit_minutes = int(round(max(monthly_overtime_limit_hours, 0.0) * 60))
+    try:
+        overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
+    except ValueError:
+        return RedirectResponse(
+            url="/admin/users/new?error=Ung%C3%BCltiges+%C3%9Cberstundenlimit",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     try:
         crud.create_user(
             db,
@@ -1958,7 +2185,7 @@ def update_user_html(
     email: str = Form(...),
     pin_code: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
-    monthly_overtime_limit_hours: float = Form(20.0),
+    monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
@@ -1976,12 +2203,16 @@ def update_user_html(
     group_value = int(group_id) if group_id else None
     time_account_value = time_account_enabled == "on"
     overtime_vacation_value = overtime_vacation_enabled == "on"
-    if not time_account_value:
-        overtime_vacation_value = False
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
-    overtime_limit_minutes = int(round(max(monthly_overtime_limit_hours, 0.0) * 60))
+    try:
+        overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
+    except ValueError:
+        return RedirectResponse(
+            url=f"/admin/users/{user_id}?error=Ung%C3%BCltiges+%C3%9Cberstundenlimit",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     try:
         updated = crud.update_user(
             db,
@@ -2106,6 +2337,40 @@ def delete_company_html(request: Request, company_id: int, db: Session = Depends
     return RedirectResponse(url="/admin/companies?msg=Firma+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.get("/admin/time-entries/{entry_id}/edit", response_class=HTMLResponse)
+def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not (_ensure_admin(user) or _can_edit_time_entries(user)):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    entry = crud.get_time_entry(db, entry_id)
+    next_param = request.query_params.get("next")
+    redirect_user = request.query_params.get("user")
+    default_redirect = _build_redirect(
+        "/admin/users",
+        user=redirect_user or (str(entry.user_id) if entry else None),
+    )
+    sanitized_next = _sanitize_next(next_param or default_redirect, default_redirect)
+    if not entry:
+        redirect = _build_redirect_with_next(
+            "/admin/users", next_param, error="Buchung nicht gefunden"
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    companies = crud.get_companies(db)
+    active_tab = "approvals" if sanitized_next.startswith("/admin/approvals") else "users"
+    return _admin_template(
+        "admin/time_entry_form.html",
+        request,
+        user,
+        entry=entry,
+        companies=companies,
+        next_url=sanitized_next,
+        redirect_user=redirect_user or (str(entry.user_id) if entry.user_id else None),
+        active_tab=active_tab,
+    )
+
+
 @app.post("/admin/time-entries/{entry_id}/update")
 def update_time_entry_html(
     request: Request,
@@ -2118,14 +2383,16 @@ def update_time_entry_html(
     company_id: Optional[str] = Form(None),
     notes: str = Form(""),
     redirect_user: Optional[str] = Form(None),
+    next_url: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not (_ensure_admin(user) or _can_edit_time_entries(user)):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if end_time <= start_time:
-        redirect = _build_redirect(
+        redirect = _build_redirect_with_next(
             "/admin/users",
+            next_url,
             error="Endzeit muss nach der Startzeit liegen",
             user=redirect_user,
         )
@@ -2147,17 +2414,28 @@ def update_time_entry_html(
                 notes=notes,
             ),
         )
-    except ValueError:
-        redirect = _build_redirect(
-            "/admin/users", error="Ungültige Angaben", user=redirect_user
+    except ValueError as exc:
+        error_message = "Ungültige Angaben"
+        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+            error_message = "Zeiten überschneiden sich mit einer bestehenden Buchung"
+        redirect = _build_redirect_with_next(
+            "/admin/users", next_url, error=error_message, user=redirect_user
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if not updated:
-        redirect = _build_redirect(
-            "/admin/users", error="Buchung nicht gefunden", user=redirect_user
+        redirect = _build_redirect_with_next(
+            "/admin/users",
+            next_url,
+            error="Buchung nicht gefunden",
+            user=redirect_user,
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect("/admin/users", msg="Buchung aktualisiert", user=redirect_user)
+    redirect = _build_redirect_with_next(
+        "/admin/users",
+        next_url,
+        msg="Buchung aktualisiert",
+        user=redirect_user,
+    )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2166,18 +2444,25 @@ def delete_time_entry_html(
     request: Request,
     entry_id: int,
     redirect_user: Optional[str] = Form(None),
+    next_url: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not (_ensure_admin(user) or _can_edit_time_entries(user)):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_time_entry(db, entry_id):
-        redirect = _build_redirect(
-            "/admin/users", error="Buchung konnte nicht gelöscht werden", user=redirect_user
+        redirect = _build_redirect_with_next(
+            "/admin/users",
+            next_url,
+            error="Buchung konnte nicht gelöscht werden",
+            user=redirect_user,
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect(
-        "/admin/users", msg="Buchung gelöscht", user=redirect_user
+    redirect = _build_redirect_with_next(
+        "/admin/users",
+        next_url,
+        msg="Buchung gelöscht",
+        user=redirect_user,
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -2260,17 +2545,23 @@ def set_vacation_status_admin(
     if not _can_manage_vacations(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if action == "approve":
-        new_status = models.VacationStatus.APPROVED
+        updated = crud.update_vacation_status(db, vacation_id, models.VacationStatus.APPROVED)
+        message = "Urlaub genehmigt"
     elif action == "reject":
-        new_status = models.VacationStatus.REJECTED
+        updated = crud.update_vacation_status(db, vacation_id, models.VacationStatus.REJECTED)
+        message = "Urlaub abgelehnt"
+    elif action == "approve_withdraw":
+        updated = crud.approve_vacation_withdrawal(db, vacation_id)
+        message = "Urlaub wurde zurückgezogen"
+    elif action == "deny_withdraw":
+        updated = crud.deny_vacation_withdrawal(db, vacation_id)
+        message = "Rücknahme abgelehnt"
     else:
         redirect = _build_redirect("/admin/approvals", error="Ungültige Aktion")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    updated = crud.update_vacation_status(db, vacation_id, new_status)
     if not updated:
         redirect = _build_redirect("/admin/approvals", error="Urlaubsantrag nicht gefunden")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    message = "Urlaub genehmigt" if new_status == models.VacationStatus.APPROVED else "Urlaub abgelehnt"
     redirect = _build_redirect("/admin/approvals", msg=message)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -2457,7 +2748,13 @@ def create_time_entry(entry: schemas.TimeEntryCreate, db: Session = Depends(data
     user = crud.get_user(db, entry.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
-    db_entry = crud.create_time_entry(db, entry)
+    try:
+        db_entry = crud.create_time_entry(db, entry)
+    except ValueError as exc:
+        detail = "Ungültige Zeiterfassung"
+        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+            detail = "Zeitüberschneidung mit bestehender Buchung"
+        raise HTTPException(status_code=400, detail=detail)
     return schemas.TimeEntry.model_validate(db_entry)
 
 
@@ -2485,7 +2782,13 @@ def create_vacation(vacation: schemas.VacationRequestCreate, db: Session = Depen
             "overtime_minutes": overtime_minutes,
         }
     )
-    db_vacation = crud.create_vacation_request(db, payload)
+    try:
+        db_vacation = crud.create_vacation_request(db, payload)
+    except ValueError as exc:
+        detail = "Urlaubsantrag konnte nicht gespeichert werden"
+        if str(exc) == "VACATION_OVERLAP":
+            detail = "Urlaubsantrag überschneidet sich mit vorhandenem Antrag"
+        raise HTTPException(status_code=400, detail=detail)
     return schemas.VacationRequest.model_validate(db_vacation)
 
 
@@ -2511,7 +2814,12 @@ def export_user_time_entries(user_id: int, db: Session = Depends(database.get_db
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
     entries = crud.get_time_entries_for_user(db, user_id)
-    buffer = export_time_entries(entries)
+    vacations = [
+        vacation
+        for vacation in crud.get_vacations_for_user(db, user_id)
+        if vacation.status == models.VacationStatus.APPROVED
+    ]
+    buffer = export_time_entries(entries, vacations)
     filename = f"arbeitszeiten_{user.username}.xlsx"
     return StreamingResponse(
         buffer,

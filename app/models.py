@@ -43,6 +43,7 @@ class Group(Base):
     can_approve_manual_entries = Column(Boolean, default=False)
     can_create_companies = Column(Boolean, default=False)
     can_view_time_reports = Column(Boolean, default=False)
+    can_edit_time_entries = Column(Boolean, default=False)
 
     users = relationship("User", back_populates="group")
 
@@ -64,7 +65,7 @@ class User(Base):
     vacation_carryover_enabled = Column(Boolean, default=False)
     vacation_carryover_days = Column(Integer, default=0)
     rfid_tag = Column(String, unique=True, nullable=True)
-    monthly_overtime_limit_minutes = Column(Integer, default=1200)
+    monthly_overtime_limit_minutes = Column(Integer, nullable=True)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
@@ -177,6 +178,8 @@ class VacationStatus:
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    WITHDRAW_REQUESTED = "withdraw_requested"
+    CANCELLED = "cancelled"
 
 
 class VacationRequest(Base):
@@ -191,6 +194,7 @@ class VacationRequest(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     use_overtime = Column(Boolean, default=False)
     overtime_minutes = Column(Integer, default=0)
+    previous_status = Column(String, nullable=True)
 
     user = relationship("User", back_populates="vacation_requests")
 

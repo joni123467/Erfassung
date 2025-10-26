@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Dashboard – Erfassung{% endblock %}
 {% block content %}
-{% set ist_minutes = metrics.total_work_minutes %}
+{% set vacation_minutes = metrics.vacation_minutes %}
+{% set ist_minutes = metrics.total_work_minutes + vacation_minutes %}
 {% set soll_minutes = metrics.target_minutes %}
 {% set overtime_taken_minutes = metrics.overtime_taken_minutes %}
-{% set diff_minutes = ist_minutes + overtime_taken_minutes - soll_minutes %}
+{% set total_overtime_minutes = metrics.total_overtime_minutes %}
+{% set diff_minutes = ist_minutes - soll_minutes %}
 {% set diff_class = 'is-positive' if diff_minutes >= 0 else 'is-negative' %}
 {% set overtime_limit_minutes = metrics.overtime_limit_minutes %}
 {% set overtime_limit_exceeded = metrics.overtime_limit_exceeded %}
@@ -194,6 +196,9 @@
                 <div class="dashboard-week-card__total">
                     <span>Ist</span>
                     <strong>{{ weekly_summary.total_minutes|format_minutes }} Std</strong>
+                    {% if weekly_summary.vacation_minutes %}
+                        <span class="dashboard-week-card__total-note">davon Urlaub {{ weekly_summary.vacation_minutes|format_minutes }} Std</span>
+                    {% endif %}
                 </div>
             </header>
             <div class="dashboard-week-card__progress" role="presentation">
@@ -219,7 +224,12 @@
                 {% for day in weekly_summary.days %}
                     <li class="dashboard-week-card__day {% if day.is_today %}is-today{% endif %}">
                         <span class="dashboard-week-card__day-label">{{ day.date.strftime('%a, %d.%m.') }}</span>
-                        <span class="dashboard-week-card__day-actual">{{ day.minutes|format_minutes }} Std</span>
+                        <span class="dashboard-week-card__day-actual">
+                            {{ day.minutes|format_minutes }} Std
+                            {% if day.vacation_minutes %}
+                                <span class="dashboard-week-card__day-actual-note">inkl. Urlaub {{ day.vacation_minutes|format_minutes }} Std</span>
+                            {% endif %}
+                        </span>
                         <span class="dashboard-week-card__day-target">
                             {% if day.target_minutes > 0 %}
                                 Soll {{ day.target_minutes|format_minutes }}
@@ -263,6 +273,10 @@
                         <div class="dashboard-summary-list__item">
                             <dt>Überstundenabbau</dt>
                             <dd>{{ overtime_taken_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div class="dashboard-summary-list__item">
+                            <dt>Überstunden (Monat)</dt>
+                            <dd>{{ total_overtime_minutes|format_minutes }} Std</dd>
                         </div>
                         {% if user.time_account_enabled %}
                             <div class="dashboard-summary-list__item">

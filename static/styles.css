@@ -513,6 +513,12 @@ li {
     color: var(--brand-dark);
 }
 
+.dashboard-week-card__total-note {
+    font-size: 0.75rem;
+    color: var(--brand-dark);
+    font-weight: 500;
+}
+
 .dashboard-week-card__bar {
     width: 100%;
     height: 10px;
@@ -588,6 +594,13 @@ li {
 .dashboard-week-card__day-actual {
     font-weight: 700;
     color: var(--brand);
+}
+
+.dashboard-week-card__day-actual-note {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
 }
 
 .dashboard-week-card__day-target {
@@ -1365,8 +1378,11 @@ body.modal-open {
     border-radius: 10px;
     max-height: 320px;
     overflow-y: auto;
+    overflow-x: auto;
     font-size: 0.85rem;
     line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .update-log__empty {
