@@ -32,6 +32,7 @@ class GroupBase(BaseModel):
     can_manage_users: bool = False
     can_manage_vacations: bool = False
     can_approve_manual_entries: bool = False
+    can_create_companies: bool = False
 
 
 class GroupCreate(GroupBase):
@@ -51,12 +52,23 @@ class UserBase(BaseModel):
     group_id: Optional[int] = None
     time_account_enabled: bool = False
     overtime_vacation_enabled: bool = False
+    annual_vacation_days: int = 30
+    vacation_carryover_enabled: bool = False
+    vacation_carryover_days: int = 0
+    rfid_tag: Optional[str] = None
 
     @field_validator("standard_weekly_hours")
     @classmethod
     def validate_weekly_hours(cls, value: float) -> float:
         if value < 0:
             raise ValueError("Wochenarbeitszeit darf nicht negativ sein")
+        return value
+
+    @field_validator("annual_vacation_days", "vacation_carryover_days")
+    @classmethod
+    def validate_vacation_days(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("Urlaubstage dürfen nicht negativ sein")
         return value
 
 
@@ -152,6 +164,14 @@ class Holiday(HolidayBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class VacationSummary(BaseModel):
+    total_days: float
+    remaining_days: float
+    used_days: float
+    planned_days: float
+    carryover_days: float = 0.0
+
+
 class DashboardMetrics(BaseModel):
     total_work_minutes: int
     total_overtime_minutes: int
@@ -160,3 +180,4 @@ class DashboardMetrics(BaseModel):
     overtime_taken_minutes: int
     pending_vacations: int
     upcoming_holidays: List[Holiday]
+    vacation_summary: VacationSummary

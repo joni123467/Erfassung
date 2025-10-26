@@ -61,6 +61,33 @@
             {% endif %}
         </p>
     </aside>
+    <aside class="dashboard-summary__card">
+        <h2>Urlaubsübersicht</h2>
+        <dl class="dashboard-summary__stats">
+            <div>
+                <dt>Gesamturlaub</dt>
+                <dd>{{ metrics.vacation_summary.total_days|round(2) }} Tage</dd>
+            </div>
+            {% if metrics.vacation_summary.carryover_days > 0 %}
+                <div>
+                    <dt>Übertrag</dt>
+                    <dd>{{ metrics.vacation_summary.carryover_days|round(2) }} Tage</dd>
+                </div>
+            {% endif %}
+            <div>
+                <dt>Verbraucht</dt>
+                <dd>{{ metrics.vacation_summary.used_days|round(2) }} Tage</dd>
+            </div>
+            <div>
+                <dt>Geplant</dt>
+                <dd>{{ metrics.vacation_summary.planned_days|round(2) }} Tage</dd>
+            </div>
+            <div>
+                <dt>Resturlaub</dt>
+                <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
+            </div>
+        </dl>
+    </aside>
 </section>
 
 <section class="card">
@@ -104,7 +131,7 @@
                     <button type="submit" class="button">Auftrag beenden</button>
                 </form>
             {% endif %}
-            {% if companies %}
+            {% if companies or can_create_companies %}
                 <button type="button" class="button" data-open="order-modal">Auftrag starten</button>
             {% endif %}
             <form method="post" action="/punch">
@@ -120,30 +147,38 @@
                 <input type="hidden" name="action" value="start_work">
                 <button type="submit" class="button primary">Arbeitszeit starten</button>
             </form>
-            {% if companies %}
+            {% if companies or can_create_companies %}
             <button type="button" class="button ghost" data-open="order-modal">Auftrag starten</button>
             {% endif %}
         </div>
     {% endif %}
-    {% if companies %}
+    {% if companies or can_create_companies %}
     <div class="modal" id="order-modal" aria-hidden="true" role="dialog" aria-modal="true">
         <div class="modal__backdrop" data-close></div>
         <div class="modal__dialog">
             <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
             <h3>Auftrag starten</h3>
-            <p class="modal__hint">Wähle eine Firma aus und hinterlasse optional einen Kommentar.</p>
+            <p class="modal__hint">Wähle eine bestehende Firma oder lege einen neuen Auftrag an.</p>
             <form method="post" action="/punch" class="modal__form">
                 <input type="hidden" name="next_url" value="/dashboard">
                 <input type="hidden" name="action" value="start_company">
-                <label>
-                    Firma auswählen
-                    <select name="company_id" required>
-                        <option value="" disabled selected>Firma wählen</option>
-                        {% for company in companies %}
-                            <option value="{{ company.id }}">{{ company.name }}</option>
-                        {% endfor %}
-                    </select>
-                </label>
+                {% if companies %}
+                    <label>
+                        Firma auswählen
+                        <select name="company_id">
+                            <option value="">Firma wählen</option>
+                            {% for company in companies %}
+                                <option value="{{ company.id }}">{{ company.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                {% endif %}
+                {% if can_create_companies %}
+                    <label>
+                        Neue Firma anlegen
+                        <input type="text" name="new_company_name" placeholder="Name der neuen Firma">
+                    </label>
+                {% endif %}
                 <label>
                     Kommentar (optional)
                     <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">

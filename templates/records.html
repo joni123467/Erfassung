@@ -15,7 +15,10 @@
 <section class="card">
     <div class="card-header">
         <h1>Arbeitszeitübersicht – {{ selected_month.strftime('%m/%Y') }}</h1>
-        <a class="button" href="/api/users/{{ user.id }}/excel">Excel-Export</a>
+        <div class="card-header__actions">
+            <a class="button ghost" href="/records/pdf?month={{ month_value }}">PDF-Export</a>
+            <a class="button" href="/api/users/{{ user.id }}/excel">Excel-Export</a>
+        </div>
     </div>
     <form method="get" action="/records" class="filter-bar">
         <label>
@@ -56,6 +59,18 @@
                 <p>{{ total_undertime_minutes|format_minutes }} Stunden</p>
             </article>
         {% endif %}
+        <article>
+            <h2>Gesamturlaub</h2>
+            <p>{{ vacation_summary.total_days|round(2) }} Tage</p>
+        </article>
+        <article>
+            <h2>Geplant</h2>
+            <p>{{ vacation_summary.planned_days|round(2) }} Tage</p>
+        </article>
+        <article>
+            <h2>Resturlaub</h2>
+            <p>{{ vacation_summary.remaining_days|round(2) }} Tage</p>
+        </article>
     </div>
     <p class="form-hint">Kennzahlen beziehen sich immer auf den gesamten Monat und berücksichtigen nur freigegebene Buchungen.</p>
 </section>

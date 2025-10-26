@@ -3,6 +3,8 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, timedelta
 
+from typing import List
+
 from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
@@ -69,6 +71,60 @@ def calculate_vacation_overtime_in_range(
     return total
 
 
+def calculate_vacation_summary(
+    user: models.User | None,
+    vacations: List[models.VacationRequest],
+    year: int,
+) -> schemas.VacationSummary:
+    if not user:
+        return schemas.VacationSummary(
+            total_days=0.0,
+            remaining_days=0.0,
+            used_days=0.0,
+            planned_days=0.0,
+            carryover_days=0.0,
+        )
+    daily_minutes = int(round(user.daily_target_minutes or 0))
+    base_days = float(user.annual_vacation_days or 0)
+    carryover_days = float(user.vacation_carryover_days or 0) if user.vacation_carryover_enabled else 0.0
+    if daily_minutes <= 0:
+        total_days = base_days + carryover_days
+        return schemas.VacationSummary(
+            total_days=total_days,
+            remaining_days=total_days,
+            used_days=0.0,
+            planned_days=0.0,
+            carryover_days=carryover_days,
+        )
+    period_start = date(year, 1, 1)
+    period_end = date(year, 12, 31)
+    used_minutes = 0
+    planned_minutes = 0
+    for vacation in vacations:
+        if vacation.use_overtime:
+            continue
+        overlap_start = max(period_start, vacation.start_date)
+        overlap_end = min(period_end, vacation.end_date)
+        if overlap_start > overlap_end:
+            continue
+        minutes = calculate_required_vacation_minutes(user, overlap_start, overlap_end)
+        if vacation.status == models.VacationStatus.APPROVED:
+            used_minutes += minutes
+        elif vacation.status == models.VacationStatus.PENDING:
+            planned_minutes += minutes
+    used_days = used_minutes / daily_minutes if daily_minutes else 0.0
+    planned_days = planned_minutes / daily_minutes if daily_minutes else 0.0
+    total_days = base_days + carryover_days
+    remaining_days = max(total_days - used_days - planned_days, 0.0)
+    return schemas.VacationSummary(
+        total_days=round(total_days, 2),
+        remaining_days=round(remaining_days, 2),
+        used_days=round(used_days, 2),
+        planned_days=round(planned_days, 2),
+        carryover_days=round(carryover_days, 2),
+    )
+
+
 def calculate_dashboard_metrics(
     db: Session, user_id: int, reference_date: date | None = None
 ) -> schemas.DashboardMetrics:
@@ -102,6 +158,7 @@ def calculate_dashboard_metrics(
     )
     region = crud.get_default_holiday_region(db)
     upcoming_holidays = crud.get_upcoming_holidays(db, region, limit=5)
+    vacation_summary = calculate_vacation_summary(user, vacations, reference.year)
     return schemas.DashboardMetrics(
         total_work_minutes=total_work,
         total_overtime_minutes=total_overtime,
@@ -110,4 +167,5 @@ def calculate_dashboard_metrics(
         overtime_taken_minutes=overtime_taken,
         pending_vacations=pending_vacations,
         upcoming_holidays=upcoming_holidays,
+        vacation_summary=vacation_summary,
     )

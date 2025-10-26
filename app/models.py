@@ -29,6 +29,7 @@ class Group(Base):
     can_manage_users = Column(Boolean, default=False)
     can_manage_vacations = Column(Boolean, default=False)
     can_approve_manual_entries = Column(Boolean, default=False)
+    can_create_companies = Column(Boolean, default=False)
 
     users = relationship("User", back_populates="group")
 
@@ -46,6 +47,10 @@ class User(Base):
     group_id = Column(Integer, ForeignKey("groups.id"))
     time_account_enabled = Column(Boolean, default=False)
     overtime_vacation_enabled = Column(Boolean, default=False)
+    annual_vacation_days = Column(Integer, default=30)
+    vacation_carryover_enabled = Column(Boolean, default=False)
+    vacation_carryover_days = Column(Integer, default=0)
+    rfid_tag = Column(String, unique=True, nullable=True)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")

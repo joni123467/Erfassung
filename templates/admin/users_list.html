@@ -18,6 +18,8 @@
                 <th>Wochenarbeitszeit</th>
                 <th>Zeitkonto</th>
                 <th>Überstundenabbau</th>
+                <th>Urlaub</th>
+                <th>RFID-Tag</th>
                 <th>Aktionen</th>
             </tr>
             </thead>
@@ -30,6 +32,14 @@
                     <td>{{ item.standard_weekly_hours|round(2) }} Std/Woche</td>
                     <td>{{ 'Aktiv' if item.time_account_enabled else 'Aus' }}</td>
                     <td>{{ 'Erlaubt' if item.overtime_vacation_enabled else 'Aus' }}</td>
+                    <td>
+                        {{ item.annual_vacation_days }}
+                        {% if item.vacation_carryover_enabled and item.vacation_carryover_days %}
+                            (+{{ item.vacation_carryover_days }})
+                        {% endif %}
+                        Tage
+                    </td>
+                    <td>{{ item.rfid_tag or '-' }}</td>
                     <td>
                         <a class="button small" href="/admin/users/{{ item.id }}">Bearbeiten</a>
                     </td>
