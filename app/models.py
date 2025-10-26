@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, Time
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Time,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -183,10 +195,11 @@ class VacationRequest(Base):
 
 class Holiday(Base):
     __tablename__ = "holidays"
+    __table_args__ = (UniqueConstraint("date", "region", name="uq_holidays_date_region"),)
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    date = Column(Date, unique=True, nullable=False)
+    date = Column(Date, nullable=False)
     region = Column(String, default="DE")
     created_at = Column(DateTime, default=datetime.utcnow)
 

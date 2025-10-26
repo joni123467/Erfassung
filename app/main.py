@@ -55,6 +55,20 @@ def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
     return crud.get_user(db, user_id)
 
 
+def _row_get(row: object, key: str, fallback_index: int | None = None):
+    """Return a value from a SQLite PRAGMA row that may be tuple-like."""
+
+    mapping = getattr(row, "_mapping", None)
+    if mapping and key in mapping:
+        return mapping[key]
+    if fallback_index is not None:
+        try:
+            return row[fallback_index]  # type: ignore[index]
+        except (IndexError, KeyError, TypeError):
+            pass
+    return None
+
+
 def ensure_schema() -> None:
     with database.engine.connect() as connection:
         inspector = inspect(connection)
@@ -120,6 +134,48 @@ def ensure_schema() -> None:
                 connection.execute(
                     text("ALTER TABLE groups ADD COLUMN can_create_companies BOOLEAN DEFAULT 0")
                 )
+        if "holidays" in table_names:
+            index_rows = connection.execute(text("PRAGMA index_list('holidays')")).fetchall()
+            legacy_unique_index = None
+            for row in index_rows:
+                name = _row_get(row, "name", 1)
+                is_unique = _row_get(row, "unique", 2)
+                if not is_unique or not str(name).startswith("sqlite_autoindex"):
+                    continue
+                index_info = connection.execute(text(f"PRAGMA index_info('{name}')")).fetchall()
+                columns = [
+                    _row_get(info, "name", 2)
+                    for info in index_info
+                ]
+                if columns == ["date"]:
+                    legacy_unique_index = name
+                    break
+            if legacy_unique_index:
+                connection.execute(text("DROP TABLE IF EXISTS holidays_migrated"))
+                connection.execute(
+                    text(
+                        """
+CREATE TABLE holidays_migrated (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    date DATE NOT NULL,
+    region VARCHAR DEFAULT 'DE',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, region)
+)
+"""
+                    )
+                )
+                connection.execute(
+                    text(
+                        """
+INSERT INTO holidays_migrated (id, name, date, region, created_at)
+SELECT id, name, date, region, created_at FROM holidays
+"""
+                    )
+                )
+                connection.execute(text("DROP TABLE holidays"))
+                connection.execute(text("ALTER TABLE holidays_migrated RENAME TO holidays"))
         if "vacation_requests" in table_names:
             columns = {column["name"] for column in inspector.get_columns("vacation_requests")}
             if "use_overtime" not in columns:
@@ -307,6 +363,7 @@ def submit_time_entry(
     break_minutes: int = Form(0),
     notes: str = Form(""),
     company_id: Optional[str] = Form(None),
+    new_company_name: Optional[str] = Form(None),
     next_url: str = Form("/time"),
     db: Session = Depends(database.get_db),
 ):
@@ -318,7 +375,26 @@ def submit_time_entry(
     if end_time <= start_time:
         redirect = _build_redirect(_sanitize_next(next_url), error="Endzeit muss nach der Startzeit liegen")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    company_value = int(company_id) if company_id else None
+    new_company_value = (new_company_name or "").strip()
+    company_value: Optional[int] = None
+    if new_company_value:
+        if not _can_create_companies(user):
+            redirect = _build_redirect(
+                _sanitize_next(next_url), error="Du darfst keine neuen Firmen anlegen."
+            )
+            return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+        existing_company = crud.get_company_by_name(db, new_company_value)
+        if existing_company:
+            company_value = existing_company.id
+        else:
+            created_company = crud.create_company(db, schemas.CompanyCreate(name=new_company_value))
+            company_value = created_company.id
+    elif company_id:
+        try:
+            company_value = int(company_id)
+        except (TypeError, ValueError):
+            redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Firmenauswahl")
+            return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     try:
         entry = schemas.TimeEntryCreate(
             user_id=user.id,
