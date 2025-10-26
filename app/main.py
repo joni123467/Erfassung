@@ -55,6 +55,20 @@ def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
     return crud.get_user(db, user_id)
 
 
+def _row_get(row: object, key: str, fallback_index: int | None = None):
+    """Return a value from a SQLite PRAGMA row that may be tuple-like."""
+
+    mapping = getattr(row, "_mapping", None)
+    if mapping and key in mapping:
+        return mapping[key]
+    if fallback_index is not None:
+        try:
+            return row[fallback_index]  # type: ignore[index]
+        except (IndexError, KeyError, TypeError):
+            pass
+    return None
+
+
 def ensure_schema() -> None:
     with database.engine.connect() as connection:
         inspector = inspect(connection)
@@ -124,12 +138,15 @@ def ensure_schema() -> None:
             index_rows = connection.execute(text("PRAGMA index_list('holidays')")).fetchall()
             legacy_unique_index = None
             for row in index_rows:
-                name = row["name"] if "name" in row.keys() else row[1]
-                is_unique = row["unique"] if "unique" in row.keys() else row[2]
+                name = _row_get(row, "name", 1)
+                is_unique = _row_get(row, "unique", 2)
                 if not is_unique or not str(name).startswith("sqlite_autoindex"):
                     continue
                 index_info = connection.execute(text(f"PRAGMA index_info('{name}')")).fetchall()
-                columns = [info["name"] if "name" in info.keys() else info[2] for info in index_info]
+                columns = [
+                    _row_get(info, "name", 2)
+                    for info in index_info
+                ]
                 if columns == ["date"]:
                     legacy_unique_index = name
                     break
