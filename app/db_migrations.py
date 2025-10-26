@@ -25,8 +25,22 @@ def _baseline(_connection: sqlite3.Connection) -> None:
     return None
 
 
+def _add_group_time_report_permission(connection: sqlite3.Connection) -> None:
+    cursor = connection.execute("PRAGMA table_info('groups')")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "can_view_time_reports" not in columns:
+        connection.execute(
+            "ALTER TABLE groups ADD COLUMN can_view_time_reports INTEGER DEFAULT 0"
+        )
+        connection.execute(
+            "UPDATE groups SET can_view_time_reports = 1 WHERE is_admin = 1"
+        )
+        connection.commit()
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
+    (2, _add_group_time_report_permission),
 ]
 
 

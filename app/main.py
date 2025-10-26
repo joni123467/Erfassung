@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import logging
 import subprocess
 from calendar import monthrange
 from collections import Counter
@@ -15,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -200,8 +201,11 @@ def _row_get(row: object, key: str, fallback_index: int | None = None):
     return None
 
 
+logger = logging.getLogger(__name__)
+
+
 def ensure_schema() -> None:
-    with database.engine.connect() as connection:
+    with database.engine.begin() as connection:
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
         if "companies" not in table_names:
@@ -677,9 +681,7 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
         "export_query": export_query,
         "status_labels": TIME_ENTRY_STATUS_LABELS,
     }
-@app.on_event("startup")
-def ensure_seed_data():
-    ensure_schema()
+def _seed_default_records() -> None:
     db = database.SessionLocal()
     try:
         if not crud.get_groups(db):
@@ -696,7 +698,11 @@ def ensure_seed_data():
                 ),
             )
         else:
-            admin_group = db.query(models.Group).filter(models.Group.is_admin == True).first()  # noqa: E712
+            admin_group = (
+                db.query(models.Group)
+                .filter(models.Group.is_admin == True)  # noqa: E712
+                .first()
+            )
             if admin_group:
                 admin_group.can_manage_users = True
                 admin_group.can_manage_vacations = True
@@ -720,6 +726,27 @@ def ensure_seed_data():
             )
     finally:
         db.close()
+
+
+@app.on_event("startup")
+def ensure_seed_data():
+    ensure_schema()
+    try:
+        _seed_default_records()
+    except OperationalError as exc:
+        logger.warning(
+            "Database schema mismatch detected during startup. Attempting automatic repair.",
+            exc_info=exc,
+        )
+        ensure_schema()
+        try:
+            _seed_default_records()
+        except OperationalError:
+            logger.error(
+                "Automatic schema repair failed; manual intervention required.",
+                exc_info=True,
+            )
+            raise
 
 
 @app.middleware("http")
