@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Iterable, List, Optional
 
 from sqlalchemy.orm import Session
@@ -45,8 +45,12 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     weekly_hours = float(payload.get("standard_weekly_hours", 0) or 0)
     payload["standard_weekly_hours"] = weekly_hours
     payload["standard_daily_minutes"] = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
-    limit_minutes = int(payload.get("monthly_overtime_limit_minutes", 0) or 0)
-    payload["monthly_overtime_limit_minutes"] = max(limit_minutes, 0)
+    limit_value = payload.get("monthly_overtime_limit_minutes", None)
+    if limit_value is None:
+        payload["monthly_overtime_limit_minutes"] = None
+    else:
+        limit_minutes = int(limit_value)
+        payload["monthly_overtime_limit_minutes"] = max(limit_minutes, 0)
     if not payload.get("rfid_tag"):
         payload["rfid_tag"] = None
     db_user = models.User(**payload)
@@ -67,9 +71,12 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
         db_user.standard_daily_minutes = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
         payload.pop("standard_weekly_hours", None)
     if "monthly_overtime_limit_minutes" in payload:
-        limit_minutes = int(payload["monthly_overtime_limit_minutes"] or 0)
-        db_user.monthly_overtime_limit_minutes = max(limit_minutes, 0)
-        payload.pop("monthly_overtime_limit_minutes", None)
+        limit_value = payload.pop("monthly_overtime_limit_minutes")
+        if limit_value is None:
+            db_user.monthly_overtime_limit_minutes = None
+        else:
+            limit_minutes = int(limit_value)
+            db_user.monthly_overtime_limit_minutes = max(limit_minutes, 0)
     if "rfid_tag" in payload and not payload["rfid_tag"]:
         payload["rfid_tag"] = None
     for key, value in payload.items():
@@ -110,10 +117,80 @@ def delete_group(db: Session, group_id: int) -> bool:
     return True
 
 
+_PREVIOUS_STATUS_SENTINEL = object()
+
+
+def _entry_bounds(work_date: date, start_time: time, end_time: time, is_open: bool) -> tuple[datetime, datetime]:
+    start_dt = datetime.combine(work_date, start_time)
+    if is_open:
+        current_end = max(datetime.now(), start_dt + timedelta(seconds=1))
+        return start_dt, current_end
+    end_dt = datetime.combine(work_date, end_time)
+    if end_dt <= start_dt:
+        end_dt += timedelta(days=1)
+    return start_dt, end_dt
+
+
+def _intervals_overlap(
+    first_start: datetime, first_end: datetime, second_start: datetime, second_end: datetime
+) -> bool:
+    return first_start < second_end and second_start < first_end
+
+
+def _ensure_no_time_overlap(
+    db: Session, payload: dict, *, exclude_id: Optional[int] = None
+) -> None:
+    user_id = payload["user_id"]
+    work_date = payload["work_date"]
+    start_time = payload["start_time"]
+    end_time = payload["end_time"]
+    is_open = bool(payload.get("is_open"))
+    new_start, new_end = _entry_bounds(work_date, start_time, end_time, is_open)
+    window_start = (new_start - timedelta(days=1)).date()
+    window_end = (new_end + timedelta(days=1)).date()
+    query = (
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.user_id == user_id)
+        .filter(models.TimeEntry.status != models.TimeEntryStatus.REJECTED)
+        .filter(models.TimeEntry.work_date >= window_start)
+        .filter(models.TimeEntry.work_date <= window_end)
+    )
+    if exclude_id is not None:
+        query = query.filter(models.TimeEntry.id != exclude_id)
+    for existing in query.all():
+        existing_start, existing_end = _entry_bounds(
+            existing.work_date, existing.start_time, existing.end_time, existing.is_open
+        )
+        if _intervals_overlap(new_start, new_end, existing_start, existing_end):
+            raise ValueError("OVERLAPPING_TIME_ENTRY")
+
+
+def _ensure_no_vacation_overlap(db: Session, vacation: schemas.VacationRequestCreate) -> None:
+    conflict = (
+        db.query(models.VacationRequest)
+        .filter(models.VacationRequest.user_id == vacation.user_id)
+        .filter(
+            models.VacationRequest.status.in_(
+                [
+                    models.VacationStatus.PENDING,
+                    models.VacationStatus.APPROVED,
+                    models.VacationStatus.WITHDRAW_REQUESTED,
+                ]
+            )
+        )
+        .filter(models.VacationRequest.end_date >= vacation.start_date)
+        .filter(models.VacationRequest.start_date <= vacation.end_date)
+        .first()
+    )
+    if conflict:
+        raise ValueError("VACATION_OVERLAP")
+
+
 def create_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> models.TimeEntry:
     payload = entry.model_dump()
     if payload.get("break_started_at") and not payload.get("is_open"):
         payload["break_started_at"] = None
+    _ensure_no_time_overlap(db, payload)
     db_entry = models.TimeEntry(**payload)
     db.add(db_entry)
     db.commit()
@@ -253,6 +330,7 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
     payload = entry.model_dump()
     payload["break_started_at"] = None
     payload["is_open"] = False
+    _ensure_no_time_overlap(db, payload, exclude_id=entry_id)
     for key, value in payload.items():
         setattr(db_entry, key, value)
     db.commit()
@@ -280,6 +358,7 @@ def delete_time_entry(db: Session, entry_id: int) -> bool:
 
 
 def create_vacation_request(db: Session, vacation: schemas.VacationRequestCreate) -> models.VacationRequest:
+    _ensure_no_vacation_overlap(db, vacation)
     db_vacation = models.VacationRequest(**vacation.model_dump())
     db.add(db_vacation)
     db.commit()
@@ -287,11 +366,21 @@ def create_vacation_request(db: Session, vacation: schemas.VacationRequestCreate
     return db_vacation
 
 
-def update_vacation_status(db: Session, vacation_id: int, status: str) -> Optional[models.VacationRequest]:
+def update_vacation_status(
+    db: Session,
+    vacation_id: int,
+    status: str,
+    *,
+    previous_status: object = _PREVIOUS_STATUS_SENTINEL,
+) -> Optional[models.VacationRequest]:
     db_vacation = db.query(models.VacationRequest).filter(models.VacationRequest.id == vacation_id).first()
     if not db_vacation:
         return None
     db_vacation.status = status
+    if previous_status is not _PREVIOUS_STATUS_SENTINEL:
+        db_vacation.previous_status = previous_status
+    elif status != models.VacationStatus.WITHDRAW_REQUESTED:
+        db_vacation.previous_status = None
     db.commit()
     db.refresh(db_vacation)
     return db_vacation
@@ -306,11 +395,57 @@ def get_vacations_for_user(db: Session, user_id: int) -> List[models.VacationReq
     )
 
 
+def request_vacation_withdrawal(db: Session, vacation_id: int) -> Optional[models.VacationRequest]:
+    db_vacation = db.query(models.VacationRequest).filter(models.VacationRequest.id == vacation_id).first()
+    if not db_vacation:
+        return None
+    if db_vacation.status == models.VacationStatus.WITHDRAW_REQUESTED:
+        return db_vacation
+    if db_vacation.status not in (models.VacationStatus.PENDING, models.VacationStatus.APPROVED):
+        return None
+    previous = db_vacation.status
+    return update_vacation_status(
+        db,
+        vacation_id,
+        models.VacationStatus.WITHDRAW_REQUESTED,
+        previous_status=previous,
+    )
+
+
+def approve_vacation_withdrawal(db: Session, vacation_id: int) -> Optional[models.VacationRequest]:
+    db_vacation = db.query(models.VacationRequest).filter(models.VacationRequest.id == vacation_id).first()
+    if not db_vacation or db_vacation.status != models.VacationStatus.WITHDRAW_REQUESTED:
+        return None
+    return update_vacation_status(
+        db,
+        vacation_id,
+        models.VacationStatus.CANCELLED,
+        previous_status=None,
+    )
+
+
+def deny_vacation_withdrawal(db: Session, vacation_id: int) -> Optional[models.VacationRequest]:
+    db_vacation = db.query(models.VacationRequest).filter(models.VacationRequest.id == vacation_id).first()
+    if not db_vacation or db_vacation.status != models.VacationStatus.WITHDRAW_REQUESTED:
+        return None
+    previous = db_vacation.previous_status or models.VacationStatus.PENDING
+    return update_vacation_status(
+        db,
+        vacation_id,
+        previous,
+        previous_status=None,
+    )
+
+
 def get_vacation_requests(
-    db: Session, status: Optional[str] = None
+    db: Session,
+    status: Optional[str] = None,
+    statuses: Optional[Iterable[str]] = None,
 ) -> List[models.VacationRequest]:
     query = db.query(models.VacationRequest).order_by(models.VacationRequest.start_date)
-    if status:
+    if statuses:
+        query = query.filter(models.VacationRequest.status.in_(list(statuses)))
+    elif status:
         query = query.filter(models.VacationRequest.status == status)
     return query.all()
 

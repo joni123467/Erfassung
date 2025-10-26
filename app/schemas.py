@@ -57,7 +57,7 @@ class UserBase(BaseModel):
     vacation_carryover_enabled: bool = False
     vacation_carryover_days: int = 0
     rfid_tag: Optional[str] = None
-    monthly_overtime_limit_minutes: int = 1200
+    monthly_overtime_limit_minutes: Optional[int] = None
 
     @field_validator("standard_weekly_hours")
     @classmethod
@@ -75,7 +75,9 @@ class UserBase(BaseModel):
 
     @field_validator("monthly_overtime_limit_minutes")
     @classmethod
-    def validate_overtime_limit(cls, value: int) -> int:
+    def validate_overtime_limit(cls, value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return None
         if value < 0:
             raise ValueError("Überstundenlimit darf nicht negativ sein")
         return value
@@ -155,6 +157,7 @@ class VacationRequest(VacationRequestBase):
     id: int
     status: str
     overtime_minutes: int
+    previous_status: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -183,6 +186,7 @@ class VacationSummary(BaseModel):
 
 class DashboardMetrics(BaseModel):
     total_work_minutes: int
+    vacation_minutes: int
     total_overtime_minutes: int
     total_undertime_minutes: int
     target_minutes: int

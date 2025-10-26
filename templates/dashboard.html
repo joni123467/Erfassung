@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Dashboard – Erfassung{% endblock %}
 {% block content %}
-{% set ist_minutes = metrics.total_work_minutes %}
+{% set vacation_minutes = metrics.vacation_minutes %}
+{% set ist_minutes = metrics.total_work_minutes + vacation_minutes %}
 {% set soll_minutes = metrics.target_minutes %}
 {% set overtime_taken_minutes = metrics.overtime_taken_minutes %}
-{% set diff_minutes = ist_minutes + overtime_taken_minutes - soll_minutes %}
+{% set total_overtime_minutes = metrics.total_overtime_minutes %}
+{% set diff_minutes = ist_minutes - soll_minutes %}
 {% set diff_class = 'is-positive' if diff_minutes >= 0 else 'is-negative' %}
 {% set overtime_limit_minutes = metrics.overtime_limit_minutes %}
 {% set overtime_limit_exceeded = metrics.overtime_limit_exceeded %}
@@ -263,6 +265,10 @@
                         <div class="dashboard-summary-list__item">
                             <dt>Überstundenabbau</dt>
                             <dd>{{ overtime_taken_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div class="dashboard-summary-list__item">
+                            <dt>Überstunden (Monat)</dt>
+                            <dd>{{ total_overtime_minutes|format_minutes }} Std</dd>
                         </div>
                         {% if user.time_account_enabled %}
                             <div class="dashboard-summary-list__item">
