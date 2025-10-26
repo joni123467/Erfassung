@@ -504,6 +504,16 @@ body.modal-open {
     gap: 1rem;
 }
 
+.card-header__actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.card-header__actions .button {
+    margin: 0;
+}
+
 .filter-bar {
     display: flex;
     flex-wrap: wrap;

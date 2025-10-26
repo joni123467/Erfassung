@@ -30,6 +30,7 @@
                             {% if group.can_manage_users %}{% set _ = perms.items.append('Benutzerverwaltung') %}{% endif %}
                             {% if group.can_manage_vacations %}{% set _ = perms.items.append('Urlaubsverwaltung') %}{% endif %}
                             {% if group.can_approve_manual_entries %}{% set _ = perms.items.append('Manuelle Buchungen') %}{% endif %}
+                            {% if group.can_create_companies %}{% set _ = perms.items.append('Firmen anlegen') %}{% endif %}
                             {{ perms.items|join(', ') if perms.items else 'Keine zusätzlichen Rechte' }}
                         {% endif %}
                     </td>

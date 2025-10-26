@@ -45,6 +45,8 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     weekly_hours = float(payload.get("standard_weekly_hours", 0) or 0)
     payload["standard_weekly_hours"] = weekly_hours
     payload["standard_daily_minutes"] = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
+    if not payload.get("rfid_tag"):
+        payload["rfid_tag"] = None
     db_user = models.User(**payload)
     db.add(db_user)
     db.commit()
@@ -62,6 +64,8 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
         db_user.standard_weekly_hours = weekly_hours
         db_user.standard_daily_minutes = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
         payload.pop("standard_weekly_hours", None)
+    if "rfid_tag" in payload and not payload["rfid_tag"]:
+        payload["rfid_tag"] = None
     for key, value in payload.items():
         setattr(db_user, key, value)
     db.commit()
@@ -413,6 +417,10 @@ def get_company(db: Session, company_id: int) -> Optional[models.Company]:
 
 def get_companies(db: Session) -> List[models.Company]:
     return db.query(models.Company).order_by(models.Company.name).all()
+
+
+def get_company_by_name(db: Session, name: str) -> Optional[models.Company]:
+    return db.query(models.Company).filter(models.Company.name == name).first()
 
 
 def create_company(db: Session, company: schemas.CompanyCreate) -> models.Company:

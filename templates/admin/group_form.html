@@ -30,6 +30,10 @@
             <input type="checkbox" name="can_approve_manual_entries" {% if is_edit and group.can_approve_manual_entries %}checked{% endif %}>
             Manuelle Stempelungen freigeben
         </label>
+        <label class="checkbox">
+            <input type="checkbox" name="can_create_companies" {% if is_edit and group.can_create_companies %}checked{% endif %}>
+            Firmen beim Stempeln anlegen
+        </label>
         <p class="form-hint full-width">Administratorgruppen erhalten automatisch alle Berechtigungen.</p>
         <div class="form-actions full-width">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Gruppe anlegen{% endif %}</button>

@@ -31,6 +31,10 @@
             <input type="number" name="standard_weekly_hours" value="{{ form_user.standard_weekly_hours if is_edit else 40 }}" min="0" step="0.25" required>
         </label>
         <label>
+            Urlaubstage pro Jahr
+            <input type="number" name="annual_vacation_days" value="{{ form_user.annual_vacation_days if is_edit else 30 }}" min="0" required>
+        </label>
+        <label>
             Gruppe
             <select name="group_id">
                 <option value="">ohne Gruppe</option>
@@ -46,6 +50,19 @@
         <label class="checkbox">
             <input type="checkbox" name="overtime_vacation_enabled" {% if is_edit and form_user.overtime_vacation_enabled %}checked{% endif %}>
             Überstundenabbau über Urlaubsanträge erlauben (Zeitkonto erforderlich)
+        </label>
+        <label class="checkbox">
+            <input type="checkbox" name="vacation_carryover_enabled" {% if is_edit and form_user.vacation_carryover_enabled %}checked{% endif %}>
+            Übertrag aus dem Vorjahr erlauben
+        </label>
+        <label>
+            Übertragstage
+            <input type="number" name="vacation_carryover_days" value="{{ form_user.vacation_carryover_days if is_edit else 0 }}" min="0">
+        </label>
+        <p class="form-hint full-width">Übertragstage werden nur berücksichtigt, wenn der Übertrag aktiviert ist.</p>
+        <label>
+            RFID-Tag
+            <input type="text" name="rfid_tag" value="{{ form_user.rfid_tag if is_edit and form_user.rfid_tag else '' }}" placeholder="Optional">
         </label>
         <div class="form-actions full-width">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Benutzer anlegen{% endif %}</button>

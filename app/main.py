@@ -16,6 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import crud, database, holiday_calculator, models, schemas, services
 from .excel_export import export_time_entries
+from .pdf_export import export_time_overview_pdf
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -90,6 +91,21 @@ def ensure_schema() -> None:
                 connection.execute(
                     text("ALTER TABLE users ADD COLUMN overtime_vacation_enabled BOOLEAN DEFAULT 0")
                 )
+            if "annual_vacation_days" not in columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN annual_vacation_days INTEGER DEFAULT 30")
+                )
+            if "vacation_carryover_enabled" not in columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN vacation_carryover_enabled BOOLEAN DEFAULT 0")
+                )
+            if "vacation_carryover_days" not in columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN vacation_carryover_days INTEGER DEFAULT 0")
+                )
+            if "rfid_tag" not in columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN rfid_tag VARCHAR"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_rfid_tag ON users(rfid_tag)"))
         if "groups" in table_names:
             columns = {column["name"] for column in inspector.get_columns("groups")}
             if "can_manage_users" not in columns:
@@ -99,6 +115,10 @@ def ensure_schema() -> None:
             if "can_approve_manual_entries" not in columns:
                 connection.execute(
                     text("ALTER TABLE groups ADD COLUMN can_approve_manual_entries BOOLEAN DEFAULT 0")
+                )
+            if "can_create_companies" not in columns:
+                connection.execute(
+                    text("ALTER TABLE groups ADD COLUMN can_create_companies BOOLEAN DEFAULT 0")
                 )
         if "vacation_requests" in table_names:
             columns = {column["name"] for column in inspector.get_columns("vacation_requests")}
@@ -131,6 +151,39 @@ def _build_redirect(path: str, **params: str) -> str:
     return path
 
 
+def _resolve_month_period(month_param: Optional[str]) -> tuple[date, date, date]:
+    try:
+        if month_param:
+            year, month = map(int, month_param.split("-"))
+            selected_month = date(year, month, 1)
+        else:
+            selected_month = date.today().replace(day=1)
+    except ValueError:
+        selected_month = date.today().replace(day=1)
+    last_day = monthrange(selected_month.year, selected_month.month)[1]
+    start_date = selected_month
+    end_date = date(selected_month.year, selected_month.month, last_day)
+    return selected_month, start_date, end_date
+
+
+def _aggregate_company_totals(source_entries: List[models.TimeEntry]):
+    totals: dict[str, dict[str, object]] = {}
+    for entry in source_entries:
+        key = "none" if entry.company_id is None else str(entry.company_id)
+        record = totals.setdefault(
+            key,
+            {
+                "company_id": entry.company_id,
+                "name": entry.company.name if entry.company else "Allgemein",
+                "minutes": 0,
+                "count": 0,
+            },
+        )
+        record["minutes"] = int(record["minutes"]) + entry.worked_minutes
+        record["count"] = int(record["count"]) + 1
+    return sorted(totals.values(), key=lambda item: str(item["name"]).lower())
+
+
 @app.on_event("startup")
 def ensure_seed_data():
     ensure_schema()
@@ -145,6 +198,7 @@ def ensure_seed_data():
                     can_manage_users=True,
                     can_manage_vacations=True,
                     can_approve_manual_entries=True,
+                    can_create_companies=True,
                 ),
             )
         else:
@@ -153,6 +207,7 @@ def ensure_seed_data():
                 admin_group.can_manage_users = True
                 admin_group.can_manage_vacations = True
                 admin_group.can_approve_manual_entries = True
+                admin_group.can_create_companies = True
                 db.commit()
         if not crud.get_companies(db):
             crud.create_company(db, schemas.CompanyCreate(name="Allgemein"))
@@ -238,6 +293,7 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
             "error": error,
             "active_entry": active_entry,
             "metrics_month": reference_month.replace(day=1),
+            "can_create_companies": _can_create_companies(user),
         },
     )
 
@@ -292,6 +348,7 @@ def punch_action(
     request: Request,
     action: str = Form(...),
     company_id: Optional[str] = Form(None),
+    new_company_name: Optional[str] = Form(None),
     notes: str = Form(""),
     next_url: str = Form("/dashboard"),
     db: Session = Depends(database.get_db),
@@ -312,34 +369,58 @@ def punch_action(
             crud.start_running_entry(db, user_id=user.id, started_at=now, notes=notes.strip())
             message = "Arbeitszeit gestartet."
     elif action == "start_company":
-        if not company_id:
-            error = "Bitte eine Firma auswählen."
-        else:
-            try:
-                company_value = int(company_id)
-            except ValueError:
-                error = "Ungültige Firma ausgewählt."
+        new_company_value = (new_company_name or "").strip()
+        target_company = None
+        created_company = False
+        if new_company_value:
+            if not _can_create_companies(user):
+                error = "Du darfst keine neuen Firmen anlegen."
             else:
-                company = crud.get_company(db, company_value)
-                if not company:
-                    error = "Firma wurde nicht gefunden."
-                elif active_entry and active_entry.company_id == company.id:
-                    error = "Dieser Auftrag läuft bereits."
+                existing_company = crud.get_company_by_name(db, new_company_value)
+                if existing_company:
+                    target_company = existing_company
                 else:
-                    previous_company = active_entry.company if active_entry else None
-                    if active_entry:
-                        crud.finish_running_entry(db, active_entry, now)
-                    crud.start_running_entry(
-                        db,
-                        user_id=user.id,
-                        started_at=now,
-                        company_id=company.id,
-                        notes=notes.strip(),
-                    )
-                    if previous_company and previous_company.id != company.id:
-                        message = f"Auftrag zu {company.name} gewechselt."
-                    else:
-                        message = f"Auftrag bei {company.name} gestartet."
+                    try:
+                        target_company = crud.create_company(
+                            db,
+                            schemas.CompanyCreate(name=new_company_value, description=""),
+                        )
+                        created_company = True
+                    except IntegrityError:
+                        db.rollback()
+                        error = "Firma existiert bereits."
+        else:
+            if not company_id:
+                error = "Bitte eine Firma auswählen oder neu anlegen."
+            else:
+                try:
+                    company_value = int(company_id)
+                except ValueError:
+                    error = "Ungültige Firma ausgewählt."
+                else:
+                    target_company = crud.get_company(db, company_value)
+                    if not target_company:
+                        error = "Firma wurde nicht gefunden."
+        if not error and target_company:
+            if active_entry and active_entry.company_id == target_company.id:
+                error = "Dieser Auftrag läuft bereits."
+            else:
+                previous_company = active_entry.company if active_entry else None
+                if active_entry:
+                    crud.finish_running_entry(db, active_entry, now)
+                crud.start_running_entry(
+                    db,
+                    user_id=user.id,
+                    started_at=now,
+                    company_id=target_company.id,
+                    notes=notes.strip(),
+                )
+                if created_company:
+                    message = f"Neue Firma {target_company.name} angelegt und Auftrag gestartet."
+                elif previous_company and previous_company.id != target_company.id:
+                    message = f"Auftrag zu {target_company.name} gewechselt."
+                else:
+                    message = f"Auftrag bei {target_company.name} gestartet."
     elif action == "end_work":
         if not active_entry:
             error = "Keine laufende Arbeitszeit vorhanden."
@@ -452,17 +533,7 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
     error = request.query_params.get("error")
     focus = request.query_params.get("focus", "")
     month_param = request.query_params.get("month")
-    try:
-        if month_param:
-            year, month = map(int, month_param.split("-"))
-            selected_month = date(year, month, 1)
-        else:
-            selected_month = date.today().replace(day=1)
-    except ValueError:
-        selected_month = date.today().replace(day=1)
-    last_day = monthrange(selected_month.year, selected_month.month)[1]
-    start_date = selected_month
-    end_date = date(selected_month.year, selected_month.month, last_day)
+    selected_month, start_date, end_date = _resolve_month_period(month_param)
     company_param = request.query_params.get("company")
     company_filter_id: Optional[int] = None
     company_filter_none = False
@@ -473,11 +544,13 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
             company_filter_id = int(company_param)
         except ValueError:
             company_filter_id = None
-    month_entries = crud.get_time_entries(
-        db,
-        user.id,
-        start=start_date,
-        end=end_date,
+    month_entries = list(
+        crud.get_time_entries(
+            db,
+            user.id,
+            start=start_date,
+            end=end_date,
+        )
     )
     entries = list(month_entries)
     if company_filter_none:
@@ -485,9 +558,7 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
     elif company_filter_id is not None:
         entries = [entry for entry in entries if entry.company_id == company_filter_id]
     approved_month_entries = [
-        entry
-        for entry in month_entries
-        if entry.status == models.TimeEntryStatus.APPROVED
+        entry for entry in month_entries if entry.status == models.TimeEntryStatus.APPROVED
     ]
     approved_entries = [entry for entry in entries if entry.status == models.TimeEntryStatus.APPROVED]
     total_work_minutes = sum(entry.worked_minutes for entry in approved_month_entries)
@@ -502,26 +573,10 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
     balance = effective_minutes - target_minutes
     total_overtime_minutes = max(balance, 0)
     total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
+    vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
 
-    def aggregate_company_totals(source_entries: List[models.TimeEntry]):
-        totals: dict[str, dict[str, object]] = {}
-        for entry in source_entries:
-            key = "none" if entry.company_id is None else str(entry.company_id)
-            record = totals.setdefault(
-                key,
-                {
-                    "company_id": entry.company_id,
-                    "name": entry.company.name if entry.company else "Allgemein",
-                    "minutes": 0,
-                    "count": 0,
-                },
-            )
-            record["minutes"] = int(record["minutes"]) + entry.worked_minutes
-            record["count"] = int(record["count"]) + 1
-        return sorted(totals.values(), key=lambda item: str(item["name"]).lower())
-
-    company_totals_all = aggregate_company_totals(approved_month_entries)
-    company_totals_filtered = aggregate_company_totals(approved_entries)
+    company_totals_all = _aggregate_company_totals(approved_month_entries)
+    company_totals_filtered = _aggregate_company_totals(approved_entries)
 
     companies = crud.get_companies(db)
     month_value = f"{selected_month.year:04d}-{selected_month.month:02d}"
@@ -543,12 +598,64 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
             "company_totals_filtered": company_totals_filtered,
             "companies": companies,
             "vacations": vacations,
+            "vacation_summary": vacation_summary,
             "selected_month": selected_month,
             "month_value": month_value,
             "company_filter_id": company_filter_id,
             "company_filter_none": company_filter_none,
             "focus": focus,
         },
+    )
+
+
+@app.get("/records/pdf")
+def export_records_pdf(request: Request, month: Optional[str] = None, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    selected_month, start_date, end_date = _resolve_month_period(month)
+    month_entries = list(
+        crud.get_time_entries(
+            db,
+            user.id,
+            start=start_date,
+            end=end_date,
+        )
+    )
+    approved_month_entries = [
+        entry for entry in month_entries if entry.status == models.TimeEntryStatus.APPROVED
+    ]
+    total_work_minutes = sum(entry.worked_minutes for entry in approved_month_entries)
+    target_minutes = services.calculate_monthly_target_minutes(
+        user, selected_month.year, selected_month.month
+    )
+    vacations = crud.get_vacations_for_user(db, user.id)
+    overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
+        user, vacations, start_date, end_date
+    )
+    effective_minutes = total_work_minutes + overtime_taken_minutes
+    balance = effective_minutes - target_minutes
+    total_overtime_minutes = max(balance, 0)
+    total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
+    vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
+    company_totals_all = _aggregate_company_totals(approved_month_entries)
+    buffer = export_time_overview_pdf(
+        user=user,
+        selected_month=selected_month,
+        entries=month_entries,
+        total_work_minutes=total_work_minutes,
+        target_minutes=target_minutes,
+        overtime_taken_minutes=overtime_taken_minutes,
+        total_overtime_minutes=total_overtime_minutes,
+        total_undertime_minutes=total_undertime_minutes,
+        vacation_summary=vacation_summary,
+        company_totals=company_totals_all,
+    )
+    filename = f"arbeitszeit_{user.username}_{selected_month.strftime('%Y_%m')}.pdf"
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 
@@ -576,6 +683,10 @@ def _can_approve_manual_entries(user: models.User) -> bool:
     return _has_group_permission(user, "can_approve_manual_entries")
 
 
+def _can_create_companies(user: models.User) -> bool:
+    return _has_group_permission(user, "can_create_companies")
+
+
 def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
     permissions = {
         "users": _can_manage_users(user),
@@ -586,6 +697,7 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "approvals_vacations": _can_manage_vacations(user),
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
+    permissions["create_companies"] = _can_create_companies(user)
     return permissions
 
 
@@ -896,6 +1008,7 @@ def create_group_html(
     can_manage_users: Optional[str] = Form(None),
     can_manage_vacations: Optional[str] = Form(None),
     can_approve_manual_entries: Optional[str] = Form(None),
+    can_create_companies: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -905,10 +1018,12 @@ def create_group_html(
     manage_users_value = can_manage_users == "on"
     manage_vacations_value = can_manage_vacations == "on"
     approve_manual_value = can_approve_manual_entries == "on"
+    create_companies_value = can_create_companies == "on"
     if is_admin_value:
         manage_users_value = True
         manage_vacations_value = True
         approve_manual_value = True
+        create_companies_value = True
     try:
         crud.create_group(
             db,
@@ -918,6 +1033,7 @@ def create_group_html(
                 can_manage_users=manage_users_value,
                 can_manage_vacations=manage_vacations_value,
                 can_approve_manual_entries=approve_manual_value,
+                can_create_companies=create_companies_value,
             ),
         )
     except IntegrityError:
@@ -938,6 +1054,7 @@ def update_group_html(
     can_manage_users: Optional[str] = Form(None),
     can_manage_vacations: Optional[str] = Form(None),
     can_approve_manual_entries: Optional[str] = Form(None),
+    can_create_companies: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -947,10 +1064,12 @@ def update_group_html(
     manage_users_value = can_manage_users == "on"
     manage_vacations_value = can_manage_vacations == "on"
     approve_manual_value = can_approve_manual_entries == "on"
+    create_companies_value = can_create_companies == "on"
     if is_admin_value:
         manage_users_value = True
         manage_vacations_value = True
         approve_manual_value = True
+        create_companies_value = True
     try:
         updated = crud.update_group(
             db,
@@ -961,6 +1080,7 @@ def update_group_html(
                 can_manage_users=manage_users_value,
                 can_manage_vacations=manage_vacations_value,
                 can_approve_manual_entries=approve_manual_value,
+                can_create_companies=create_companies_value,
             ),
         )
     except IntegrityError:
@@ -1002,6 +1122,10 @@ def create_user_html(
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
+    annual_vacation_days: int = Form(30),
+    vacation_carryover_enabled: Optional[str] = Form(None),
+    vacation_carryover_days: int = Form(0),
+    rfid_tag: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -1014,6 +1138,9 @@ def create_user_html(
     overtime_vacation_value = overtime_vacation_enabled == "on"
     if not time_account_value:
         overtime_vacation_value = False
+    carryover_enabled = vacation_carryover_enabled == "on"
+    carryover_days_value = vacation_carryover_days if carryover_enabled else 0
+    rfid_value = (rfid_tag or "").strip() or None
     try:
         crud.create_user(
             db,
@@ -1026,6 +1153,10 @@ def create_user_html(
                 group_id=group_value,
                 time_account_enabled=time_account_value,
                 overtime_vacation_enabled=overtime_vacation_value,
+                annual_vacation_days=annual_vacation_days,
+                vacation_carryover_enabled=carryover_enabled,
+                vacation_carryover_days=carryover_days_value,
+                rfid_tag=rfid_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -1050,6 +1181,10 @@ def update_user_html(
     group_id: Optional[str] = Form(None),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
+    annual_vacation_days: int = Form(30),
+    vacation_carryover_enabled: Optional[str] = Form(None),
+    vacation_carryover_days: int = Form(0),
+    rfid_tag: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -1062,6 +1197,9 @@ def update_user_html(
     overtime_vacation_value = overtime_vacation_enabled == "on"
     if not time_account_value:
         overtime_vacation_value = False
+    carryover_enabled = vacation_carryover_enabled == "on"
+    carryover_days_value = vacation_carryover_days if carryover_enabled else 0
+    rfid_value = (rfid_tag or "").strip() or None
     try:
         updated = crud.update_user(
             db,
@@ -1075,6 +1213,10 @@ def update_user_html(
                 group_id=group_value,
                 time_account_enabled=time_account_value,
                 overtime_vacation_enabled=overtime_vacation_value,
+                annual_vacation_days=annual_vacation_days,
+                vacation_carryover_enabled=carryover_enabled,
+                vacation_carryover_days=carryover_days_value,
+                rfid_tag=rfid_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
