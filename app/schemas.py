@@ -33,6 +33,7 @@ class GroupBase(BaseModel):
     can_manage_vacations: bool = False
     can_approve_manual_entries: bool = False
     can_create_companies: bool = False
+    can_view_time_reports: bool = False
 
 
 class GroupCreate(GroupBase):

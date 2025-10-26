@@ -1,5 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
+if (set -o 2>/dev/null | grep -q 'pipefail'); then
+    set -o pipefail 2>/dev/null || true
+fi
 
 DEFAULT_APP_DIR="/opt/erfassung"
 DEFAULT_REPO_URL="https://github.com/joni123467/Erfassung"
@@ -21,17 +24,29 @@ Optionen:
 USAGE
 }
 
-while [[ $# -gt 0 ]]; do
+while [ "$#" -gt 0 ]; do
     case "$1" in
         --app-dir)
+            if [ "$#" -lt 2 ]; then
+                echo "Option --app-dir benötigt einen Wert." >&2
+                exit 1
+            fi
             APP_DIR="$2"
             shift 2
             ;;
         --repo-url)
+            if [ "$#" -lt 2 ]; then
+                echo "Option --repo-url benötigt einen Wert." >&2
+                exit 1
+            fi
             REPO_URL="$2"
             shift 2
             ;;
         --ref)
+            if [ "$#" -lt 2 ]; then
+                echo "Option --ref benötigt einen Wert." >&2
+                exit 1
+            fi
             REPO_REF="$2"
             shift 2
             ;;
@@ -48,35 +63,31 @@ while [[ $# -gt 0 ]]; do
 done
 
 download_file() {
-    local url="$1"
-    local destination="$2"
+    url="$1"
+    destination="$2"
 
     if command -v curl >/dev/null 2>&1; then
         if curl -fsSL "$url" -o "$destination"; then
             return 0
         fi
-    elif command -v wget >/dev/null 2>&1; then
+    fi
+    if command -v wget >/dev/null 2>&1; then
         if wget -q "$url" -O "$destination"; then
             return 0
         fi
-    else
-        echo "Fehler: Für Downloads wird curl oder wget benötigt." >&2
-        exit 1
     fi
-
     return 1
 }
 
-if [[ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]]; then
-    TMP_DIR="$(mktemp -d)"
+if [ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]; then
+    TMP_DIR=$(mktemp -d)
     cleanup_bootstrap() {
         rm -rf "$TMP_DIR"
     }
     trap cleanup_bootstrap EXIT
     ARCHIVE_PATH="$TMP_DIR/source.tar.gz"
 
-    # Entfernt ggf. abschließende Slashes.
-    REPO_URL="${REPO_URL%/}"
+    REPO_URL=${REPO_URL%/}
     ARCHIVE_URL="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz"
 
     echo "⬇️  Lade aktuelle Update-Routine von ${ARCHIVE_URL}..."
@@ -91,24 +102,24 @@ if [[ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]]; then
 
     echo "📦 Entpacke Update-Paket..."
     tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
-    NEW_SOURCE_DIR="$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+    NEW_SOURCE_DIR=$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 
-    if [[ -z "$NEW_SOURCE_DIR" ]]; then
+    if [ -z "$NEW_SOURCE_DIR" ]; then
         echo "Fehler: Entpackte Update-Routine konnte nicht gefunden werden." >&2
         exit 1
     fi
 
-    if [[ ! -f "$NEW_SOURCE_DIR/update.sh" ]]; then
+    if [ ! -f "$NEW_SOURCE_DIR/update.sh" ]; then
         echo "Fehler: Die aktualisierte Update-Routine enthält kein update.sh." >&2
         exit 1
     fi
 
     echo "▶️  Starte aktualisierte Update-Routine..."
-    ERFASSUNG_NO_BOOTSTRAP=1 ERFASSUNG_SOURCE_DIR="$NEW_SOURCE_DIR" bash "$NEW_SOURCE_DIR/update.sh" "$@"
+    ERFASSUNG_NO_BOOTSTRAP=1 ERFASSUNG_SOURCE_DIR="$NEW_SOURCE_DIR" sh "$NEW_SOURCE_DIR/update.sh" "$@"
     EXIT_CODE=$?
     cleanup_bootstrap
     trap - EXIT
-    exit $EXIT_CODE
+    exit "$EXIT_CODE"
 fi
 
 require_command() {
@@ -119,7 +130,7 @@ require_command() {
 }
 
 run_as_root() {
-    if [[ $EUID -ne 0 ]]; then
+    if [ "$(id -u)" -ne 0 ]; then
         if command -v sudo >/dev/null 2>&1; then
             sudo "$@"
         else
@@ -133,86 +144,87 @@ run_as_root() {
 
 echo "🔄 Aktualisiere Installation in ${APP_DIR}..."
 
-if [[ ! -d "$APP_DIR" ]]; then
+if [ ! -d "$APP_DIR" ]; then
     echo "Fehler: Installationsverzeichnis '$APP_DIR' wurde nicht gefunden." >&2
     exit 1
 fi
 
-SOURCE_DIR="${ERFASSUNG_SOURCE_DIR:-}"
-if [[ -n "$SOURCE_DIR" ]]; then
-    if [[ ! -d "$SOURCE_DIR" ]]; then
+SOURCE_DIR=${ERFASSUNG_SOURCE_DIR:-}
+if [ -n "$SOURCE_DIR" ]; then
+    if [ ! -d "$SOURCE_DIR" ]; then
         echo "Fehler: Quelldateien unter '$SOURCE_DIR' wurden nicht gefunden." >&2
         exit 1
     fi
 
     echo "📁 Synchronisiere Programmdateien in ${APP_DIR}..."
-    PRESERVE_ITEMS=(".venv" ".env" "config" "config.yml" "config.yaml" "data" "logs" "erfassung.db")
-    shopt -s dotglob
-    for item in "$APP_DIR"/* "$APP_DIR"/.*; do
-        name="$(basename "$item")"
-        if [[ "$name" == "." || "$name" == ".." ]]; then
-            continue
-        fi
-
-        skip=false
-        for keep in "${PRESERVE_ITEMS[@]}"; do
-            if [[ "$name" == "$keep" ]]; then
-                skip=true
+    PRESERVE_ITEMS=".venv .env config config.yml config.yaml data logs erfassung.db"
+    for item in "$APP_DIR"/* "$APP_DIR"/.[!.]* "$APP_DIR"/..?*; do
+        [ -e "$item" ] || continue
+        name=$(basename "$item")
+        case "$name" in
+            .|..)
+                continue
+                ;;
+        esac
+        skip=0
+        for keep in $PRESERVE_ITEMS; do
+            if [ "$name" = "$keep" ]; then
+                skip=1
                 break
             fi
         done
-
-        if [[ $skip == false ]]; then
+        if [ "$skip" -eq 0 ]; then
             rm -rf "$item"
         fi
     done
-    shopt -u dotglob
 
-    tar -C "$SOURCE_DIR" -cf - --exclude=.git --exclude=.github --exclude='*.pyc' --exclude='__pycache__' . | \
+    tar -C "$SOURCE_DIR" -cf - --exclude=.git --exclude=.github --exclude='*.pyc' --exclude='__pycache__' . |
         tar -C "$APP_DIR" -xf -
 fi
 
-if [[ ! -f "$APP_DIR/requirements.txt" ]]; then
+if [ ! -f "$APP_DIR/requirements.txt" ]; then
     echo "Fehler: requirements.txt wurde im Installationsverzeichnis nicht gefunden." >&2
     exit 1
 fi
 
-BUILD_DEPS=()
 PKG_MANAGER=""
-INSTALL_CMD=()
-UPDATE_CMD=()
-
 if command -v apt-get >/dev/null 2>&1; then
     PKG_MANAGER="apt-get"
-    INSTALL_CMD=(apt-get install -y)
-    UPDATE_CMD=(apt-get update)
 elif command -v dnf >/dev/null 2>&1; then
     PKG_MANAGER="dnf"
-    INSTALL_CMD=(dnf install -y)
-    UPDATE_CMD=(dnf makecache)
 elif command -v yum >/dev/null 2>&1; then
     PKG_MANAGER="yum"
-    INSTALL_CMD=(yum install -y)
-    UPDATE_CMD=(yum makecache)
 else
     echo "Warnung: Kein unterstützter Paketmanager gefunden. Bitte installieren Sie Systemabhängigkeiten manuell." >&2
 fi
 
-if [[ -n "$PKG_MANAGER" ]]; then
+COMMON_PKGS="python3 python3-venv python3-pip sqlite3 wget ca-certificates unzip"
+SLIDESHOW_PKGS="mpv x11-xserver-utils"
+ALL_PKGS="$COMMON_PKGS $SLIDESHOW_PKGS"
+
+if [ -n "$PKG_MANAGER" ]; then
     echo "🔧 Aktualisiere Paketquellen über $PKG_MANAGER..."
-    run_as_root "${UPDATE_CMD[@]}"
-    COMMON_PKGS=(python3 python3-venv python3-pip sqlite3 wget ca-certificates unzip)
-    SLIDESHOW_PKGS=(mpv x11-xserver-utils)
-    ALL_PKGS=("${COMMON_PKGS[@]}" "${SLIDESHOW_PKGS[@]}")
-    echo "🔧 Stelle Systempakete sicher..."
-    run_as_root "${INSTALL_CMD[@]}" "${ALL_PKGS[@]}"
+    case "$PKG_MANAGER" in
+        apt-get)
+            run_as_root apt-get update
+            run_as_root apt-get install -y $ALL_PKGS
+            ;;
+        dnf)
+            run_as_root dnf makecache
+            run_as_root dnf install -y $ALL_PKGS
+            ;;
+        yum)
+            run_as_root yum makecache
+            run_as_root yum install -y $ALL_PKGS
+            ;;
+    esac
 fi
 
 require_command python3
 require_command wget
 
 if ! command -v mpv >/dev/null 2>&1; then
-    if [[ -n "$PKG_MANAGER" ]]; then
+    if [ -n "$PKG_MANAGER" ]; then
         echo "Fehler: 'mpv' wurde trotz Paketinstallation nicht gefunden." >&2
         exit 1
     else
@@ -221,30 +233,30 @@ if ! command -v mpv >/dev/null 2>&1; then
 fi
 
 VENV_DIR="$APP_DIR/.venv"
-if [[ ! -d "$VENV_DIR" ]]; then
+if [ ! -d "$VENV_DIR" ]; then
     echo "🌱 Virtuelle Umgebung wird erstellt..."
     python3 -m venv "$VENV_DIR"
 fi
 
-# shellcheck disable=SC1090
-source "$VENV_DIR/bin/activate"
+. "$VENV_DIR/bin/activate"
 
 pip install --upgrade pip setuptools wheel
 pip install --no-cache-dir -r "$APP_DIR/requirements.txt"
 
-pushd "$APP_DIR" >/dev/null
+CURRENT_DIR=$(pwd)
+cd "$APP_DIR"
 python - <<'PY'
 from app import database, models
 
 models.Base.metadata.create_all(bind=database.engine)
 PY
 python -m app.db_migrations --database "$APP_DIR/erfassung.db"
-popd >/dev/null
+cd "$CURRENT_DIR"
 
 deactivate
 
 if command -v systemctl >/dev/null 2>&1; then
-    if systemctl list-unit-files | grep -q '^erfassung.service'; then
+    if systemctl list-unit-files | grep -q '^erfassung\.service'; then
         echo "🔁 Starte Dienst erfassung.service neu..."
         if ! run_as_root systemctl restart erfassung.service; then
             echo "⚠️  Der Dienst konnte nicht neu gestartet werden." >&2
