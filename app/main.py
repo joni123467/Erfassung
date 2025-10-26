@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse
 
@@ -338,7 +338,8 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    reference_month = date.today()
+    today = date.today()
+    reference_month = today
     metrics = services.calculate_dashboard_metrics(db, user.id, reference_month)
     active_entry = crud.get_open_time_entry(db, user.id)
     holiday_region = crud.get_default_holiday_region(db)
@@ -347,6 +348,57 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     companies = crud.get_companies(db)
+    daily_entries = crud.get_time_entries_for_user(db, user.id, start=today, end=today)
+    daily_entries = sorted(daily_entries, key=lambda entry: (entry.start_time, entry.id))
+    daily_total_minutes = sum(entry.worked_minutes for entry in daily_entries)
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    weekly_entries = crud.get_time_entries_for_user(db, user.id, start=week_start, end=week_end)
+    weekly_total_minutes = sum(entry.worked_minutes for entry in weekly_entries)
+    weekly_target_minutes = int(round(user.weekly_target_minutes or 0)) if user else 0
+    daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
+    elapsed_workdays = sum(
+        1
+        for offset in range((today - week_start).days + 1)
+        if (week_start + timedelta(days=offset)).weekday() < 5 and (week_start + timedelta(days=offset)) <= today
+    )
+    expected_minutes_to_date = elapsed_workdays * daily_target_minutes
+    remaining_week_minutes = max(weekly_target_minutes - weekly_total_minutes, 0)
+    progress_percent = (
+        min(int(round((weekly_total_minutes / weekly_target_minutes) * 100)), 100)
+        if weekly_target_minutes
+        else 0
+    )
+    progress_to_date_percent = (
+        min(int(round((weekly_total_minutes / expected_minutes_to_date) * 100)), 100)
+        if expected_minutes_to_date
+        else 0
+    )
+    week_days = []
+    current_day = week_start
+    while current_day <= week_end:
+        day_minutes = sum(entry.worked_minutes for entry in weekly_entries if entry.work_date == current_day)
+        target_for_day = daily_target_minutes if current_day.weekday() < 5 else 0
+        week_days.append(
+            {
+                "date": current_day,
+                "minutes": day_minutes,
+                "target_minutes": target_for_day,
+                "is_today": current_day == today,
+            }
+        )
+        current_day += timedelta(days=1)
+    weekly_summary = {
+        "week_start": week_start,
+        "week_end": week_end,
+        "total_minutes": weekly_total_minutes,
+        "target_minutes": weekly_target_minutes,
+        "expected_minutes_to_date": expected_minutes_to_date,
+        "remaining_minutes": remaining_week_minutes,
+        "progress_percent": progress_percent,
+        "progress_to_date_percent": progress_to_date_percent,
+        "days": week_days,
+    }
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -362,6 +414,10 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
             "active_entry": active_entry,
             "metrics_month": reference_month.replace(day=1),
             "can_create_companies": _can_create_companies(user),
+            "daily_entries": daily_entries,
+            "daily_total_minutes": daily_total_minutes,
+            "today": today,
+            "weekly_summary": weekly_summary,
         },
     )
 
