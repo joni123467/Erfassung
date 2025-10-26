@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -36,6 +36,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 templates.env.globals["app_version"] = APP_VERSION
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
+UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
+UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")

@@ -277,7 +277,7 @@
                                 <dd>{{ overtime_limit_minutes|format_minutes }} Std</dd>
                             </div>
                         {% endif %}
-                    </dl>
+                    </div>
                     {% if overtime_limit_minutes > 0 %}
                         <p class="dashboard-overtime-limit__message {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
                             {% if overtime_limit_exceeded %}
