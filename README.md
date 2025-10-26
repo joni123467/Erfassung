@@ -20,8 +20,8 @@
 Das Projekt enthält ein Installationsskript, das Systempakete prüft, Abhängigkeiten installiert und eine virtuelle Umgebung vorbereitet. Es kann per `wget` bezogen werden und funktioniert ohne lokal vorhandenes Git.
 
 ```bash
-wget https://raw.githubusercontent.com/joni123467/Erfassung/main/install.sh -O install.sh
-bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/main.tar.gz
+wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.0.4/install.sh -O install.sh
+bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/version-0.0.4.tar.gz
 ```
 
 Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen im Zielverzeichnis (`/opt/erfassung` als Standard), entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
@@ -79,12 +79,12 @@ Für installierte Instanzen steht mit `update.sh` ein zweistufiger Updater zur V
 Der Updater kann – ähnlich wie die Installation – ohne lokale Git-Kopie genutzt werden:
 
 ```bash
-wget https://raw.githubusercontent.com/joni123467/Erfassung/main/update.sh -O update.sh
-bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467/Erfassung --ref main
+wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.0.4/update.sh -O update.sh
+bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467/Erfassung --ref version-0.0.4
 ```
 
 Über `--repo-url` lässt sich bei Bedarf ein eigener Fork bzw. eine alternative Quelle angeben, `--ref` steuert den Branch oder Tag. Vorhandene Abhängigkeiten werden nach dem Kopiervorgang automatisch aktualisiert.
 
 ### Update über die Administrationsoberfläche
 
-Administratoren finden im Bereich **Administration → System & Updates** eine Oberfläche zum Auslösen von Aktualisierungen. Die Seite listet verfügbare Branches, erlaubt eigene Referenzen und zeigt das Protokoll aus `logs/update.log` an. Updates werden im Hintergrund ausgeführt, damit der laufende Betrieb nicht blockiert wird.
+Administratoren finden im Bereich **Administration → System & Updates** eine Oberfläche zum Auslösen von Aktualisierungen. Die Seite listet verfügbare Branches (einschließlich `version-x.x.x`), erlaubt eigene Referenzen und zeigt das Protokoll aus `logs/update.log` an. Während der Vorgang läuft, bleibt die Seite geöffnet; nach erfolgreichem Abschluss wird die Anwendung neu gestartet und der Benutzer landet automatisch wieder auf dem Dashboard.

@@ -17,19 +17,30 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import __version__ as APP_VERSION
 from . import crud, database, holiday_calculator, models, schemas, services
 from .excel_export import export_time_entries
 from .pdf_export import export_time_overview_pdf
 
 models.Base.metadata.create_all(bind=database.engine)
 
-app = FastAPI(title="Erfassung", description="Zeiterfassung mit Überstunden & Urlaub")
+app = FastAPI(
+    title="Erfassung",
+    description="Zeiterfassung mit Überstunden & Urlaub",
+    version=APP_VERSION,
+)
 
 app.add_middleware(SessionMiddleware, secret_key="zeit-erfassung-secret-key")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
+templates.env.globals["app_version"] = APP_VERSION
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
+UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
+UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
@@ -90,7 +101,7 @@ def _list_remote_branches(repo_url: str) -> List[str]:
     return sorted(branches)
 
 
-def _run_update_in_background(ref: str, repo_url: str) -> None:
+def _execute_update(ref: str, repo_url: str) -> bool:
     UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     command = [
@@ -104,25 +115,40 @@ def _run_update_in_background(ref: str, repo_url: str) -> None:
         ref,
     ]
     env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
     with UPDATE_LOG_PATH.open("a", encoding="utf-8") as log_file:
         log_file.write(f"[{timestamp}] Starte Update auf '{ref}'\n")
         log_file.flush()
         try:
-            subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=str(APP_ROOT),
                 env=env,
-                stdout=log_file,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                check=True,
+                text=True,
+                bufsize=1,
+                stdin=subprocess.DEVNULL,
             )
-            end_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        except OSError as exc:
+            error_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(f"[{error_stamp}] ❌ Update konnte nicht gestartet werden: {exc}\n\n")
+            log_file.flush()
+            raise
+        assert process.stdout is not None
+        with process.stdout:
+            for line in process.stdout:
+                log_file.write(line)
+                log_file.flush()
+        return_code = process.wait()
+        end_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        if return_code == 0:
             log_file.write(f"[{end_stamp}] ✅ Update abgeschlossen\n\n")
-        except subprocess.CalledProcessError as exc:
-            end_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            log_file.write(
-                f"[{end_stamp}] ❌ Update fehlgeschlagen (Exit {exc.returncode})\n\n"
-            )
+            log_file.flush()
+            return True
+        log_file.write(f"[{end_stamp}] ❌ Update fehlgeschlagen (Exit {return_code})\n\n")
+        log_file.flush()
+        return False
 
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
@@ -1830,7 +1856,17 @@ def admin_system_overview(request: Request, db: Session = Depends(database.get_d
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     repo_url = DEFAULT_UPDATE_REPO
     branches = _list_remote_branches(repo_url)
-    selected = request.query_params.get("ref") or (branches[0] if branches else "main")
+    preferred_branch = f"version-{APP_VERSION}"
+    selected = request.query_params.get("ref")
+    if not selected:
+        if preferred_branch in branches:
+            selected = preferred_branch
+        elif "main" in branches:
+            selected = "main"
+        elif branches:
+            selected = branches[0]
+        else:
+            selected = preferred_branch
     if selected not in branches:
         branches = [selected] + [branch for branch in branches if branch != selected]
     if not branches:
@@ -1856,7 +1892,6 @@ def admin_system_overview(request: Request, db: Session = Depends(database.get_d
 @app.post("/admin/system/update")
 def admin_system_trigger_update(
     request: Request,
-    background_tasks: BackgroundTasks,
     ref: str = Form(...),
     custom_ref: str = Form(""),
     db: Session = Depends(database.get_db),
@@ -1866,15 +1901,30 @@ def admin_system_trigger_update(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _ensure_admin(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    preferred_branch = f"version-{APP_VERSION}"
     if not UPDATE_SCRIPT_PATH.exists():
         redirect = _build_redirect("/admin/system", error="Updater-Skript wurde nicht gefunden.")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    chosen_ref = (custom_ref or "").strip() or (ref or "main")
+    chosen_ref = (custom_ref or "").strip() or (ref or preferred_branch)
     repo_url = DEFAULT_UPDATE_REPO
-    background_tasks.add_task(_run_update_in_background, chosen_ref, repo_url)
+    try:
+        success = _execute_update(chosen_ref, repo_url)
+    except Exception:
+        redirect = _build_redirect(
+            "/admin/system",
+            error="Update konnte nicht gestartet werden. Bitte Log prüfen.",
+            ref=chosen_ref,
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    if success:
+        redirect = _build_redirect(
+            "/dashboard",
+            msg="Update erfolgreich abgeschlossen.",
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
         "/admin/system",
-        msg=f"Update auf {chosen_ref} gestartet",
+        error="Update fehlgeschlagen. Details im Update-Protokoll.",
         ref=chosen_ref,
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)

@@ -11,6 +11,7 @@
         {% if not updater_available %}
             <p class="alert alert-danger">Das Update-Skript konnte nicht gefunden werden. Bitte prüfen Sie die Installation.</p>
         {% endif %}
+        <p class="form-hint">Installierte Version: v{{ app_version }}</p>
         <form method="post" action="/admin/system/update" class="update-form">
             <div class="update-form__grid">
                 <label>

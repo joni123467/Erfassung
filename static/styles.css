@@ -2,6 +2,7 @@
     --brand: #1d7ed0;
     --brand-dark: #105ca1;
     --accent: #e9f3ff;
+    --accent-soft: rgba(29, 126, 208, 0.15);
     --surface: #ffffff;
     --border: #d6e2f0;
     --danger: #d62839;
@@ -67,6 +68,17 @@ textarea:focus {
     font-size: 1.25rem;
     font-weight: 700;
     color: var(--brand);
+}
+
+.timetac-header__version {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--brand);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
 }
 
 .timetac-header__logo {
@@ -1025,12 +1037,6 @@ body.modal-open {
 @media (min-width: 1200px) {
     .user-form__columns {
         grid-template-columns: repeat(2, minmax(320px, 1fr));
-    }
-}
-
-@media (min-width: 1240px) {
-    .user-form {
-        max-width: 960px;
     }
 }
 

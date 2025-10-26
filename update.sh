@@ -3,7 +3,7 @@ set -euo pipefail
 
 DEFAULT_APP_DIR="/opt/erfassung"
 DEFAULT_REPO_URL="https://github.com/joni123467/Erfassung"
-DEFAULT_REPO_REF="main"
+DEFAULT_REPO_REF="version-0.0.4"
 
 APP_DIR="$DEFAULT_APP_DIR"
 REPO_URL="$DEFAULT_REPO_URL"

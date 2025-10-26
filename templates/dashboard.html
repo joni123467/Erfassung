@@ -1,13 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Dashboard – Erfassung{% endblock %}
 {% block content %}
-{% if message %}
-    <div class="alert alert-success">{{ message }}</div>
-{% endif %}
-{% if error %}
-    <div class="alert alert-danger">{{ error }}</div>
-{% endif %}
-
 {% set ist_minutes = metrics.total_work_minutes %}
 {% set soll_minutes = metrics.target_minutes %}
 {% set overtime_taken_minutes = metrics.overtime_taken_minutes %}

@@ -11,6 +11,7 @@
     <div class="timetac-header__brand">
         <span class="timetac-header__logo" aria-hidden="true">⌚</span>
         <span class="timetac-header__title">Erfassung</span>
+        <span class="timetac-header__version">v{{ app_version }}</span>
     </div>
     {% if user %}
     <nav class="timetac-header__nav" aria-label="Hauptnavigation">
@@ -48,7 +49,7 @@
     {% block content %}{% endblock %}
 </main>
 <footer class="page-footer">
-    <p>Erfassung &copy; {{ now().year }}</p>
+    <p>Erfassung v{{ app_version }} &copy; {{ now().year }}</p>
 </footer>
 </body>
 </html>
