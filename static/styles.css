@@ -341,6 +341,38 @@ li {
     color: var(--danger);
 }
 
+.dashboard-overtime-limit {
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    background: #eef4ff;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.dashboard-overtime-limit dt {
+    font-weight: 700;
+}
+
+.dashboard-overtime-limit.is-exceeded {
+    background: #fdecea;
+}
+
+.dashboard-overtime-limit.is-exceeded dd {
+    color: var(--danger);
+}
+
+.dashboard-overtime-limit__message {
+    margin: -0.5rem 0 0;
+    font-size: 0.9rem;
+    color: #47507a;
+    font-weight: 600;
+}
+
+.dashboard-overtime-limit__message.is-exceeded {
+    color: var(--danger);
+}
+
 .dashboard-summary__diff.is-positive dd {
     color: var(--success);
 }
