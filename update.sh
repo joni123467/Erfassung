@@ -2,14 +2,21 @@
 set -euo pipefail
 
 DEFAULT_APP_DIR="/opt/erfassung"
+DEFAULT_REPO_URL="https://github.com/joni123467/Erfassung"
+DEFAULT_REPO_REF="version-0.0.4"
+
 APP_DIR="$DEFAULT_APP_DIR"
+REPO_URL="$DEFAULT_REPO_URL"
+REPO_REF="$DEFAULT_REPO_REF"
 
 print_help() {
     cat <<USAGE
-$0 [--app-dir <path>]
+$0 [--app-dir <path>] [--repo-url <url>] [--ref <branch-or-tag>]
 
 Optionen:
-  --app-dir     Installationverzeichnis der Anwendung (Standard: ${DEFAULT_APP_DIR}).
+  --app-dir     Installationsverzeichnis der Anwendung (Standard: ${DEFAULT_APP_DIR}).
+  --repo-url    Git-Repository-URL, aus der Updates geladen werden (Standard: ${DEFAULT_REPO_URL}).
+  --ref         Branch oder Tag, der für Updates verwendet wird (Standard: ${DEFAULT_REPO_REF}).
   -h, --help    Diese Hilfe anzeigen.
 USAGE
 }
@@ -18,6 +25,14 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --app-dir)
             APP_DIR="$2"
+            shift 2
+            ;;
+        --repo-url)
+            REPO_URL="$2"
+            shift 2
+            ;;
+        --ref)
+            REPO_REF="$2"
             shift 2
             ;;
         -h|--help)
@@ -31,6 +46,70 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+download_file() {
+    local url="$1"
+    local destination="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsSL "$url" -o "$destination"; then
+            return 0
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q "$url" -O "$destination"; then
+            return 0
+        fi
+    else
+        echo "Fehler: Für Downloads wird curl oder wget benötigt." >&2
+        exit 1
+    fi
+
+    return 1
+}
+
+if [[ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]]; then
+    TMP_DIR="$(mktemp -d)"
+    cleanup_bootstrap() {
+        rm -rf "$TMP_DIR"
+    }
+    trap cleanup_bootstrap EXIT
+    ARCHIVE_PATH="$TMP_DIR/source.tar.gz"
+
+    # Entfernt ggf. abschließende Slashes.
+    REPO_URL="${REPO_URL%/}"
+    ARCHIVE_URL="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz"
+
+    echo "⬇️  Lade aktuelle Update-Routine von ${ARCHIVE_URL}..."
+    if ! download_file "$ARCHIVE_URL" "$ARCHIVE_PATH"; then
+        ALT_ARCHIVE_URL="${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz"
+        echo "⚠️  Branch-Download fehlgeschlagen, versuche Tag ${ALT_ARCHIVE_URL}..."
+        if ! download_file "$ALT_ARCHIVE_URL" "$ARCHIVE_PATH"; then
+            echo "Fehler: Update-Paket konnte nicht geladen werden." >&2
+            exit 1
+        fi
+    fi
+
+    echo "📦 Entpacke Update-Paket..."
+    tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
+    NEW_SOURCE_DIR="$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+
+    if [[ -z "$NEW_SOURCE_DIR" ]]; then
+        echo "Fehler: Entpackte Update-Routine konnte nicht gefunden werden." >&2
+        exit 1
+    fi
+
+    if [[ ! -f "$NEW_SOURCE_DIR/update.sh" ]]; then
+        echo "Fehler: Die aktualisierte Update-Routine enthält kein update.sh." >&2
+        exit 1
+    fi
+
+    echo "▶️  Starte aktualisierte Update-Routine..."
+    ERFASSUNG_NO_BOOTSTRAP=1 ERFASSUNG_SOURCE_DIR="$NEW_SOURCE_DIR" bash "$NEW_SOURCE_DIR/update.sh" "$@"
+    EXIT_CODE=$?
+    cleanup_bootstrap
+    trap - EXIT
+    exit $EXIT_CODE
+fi
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -57,6 +136,40 @@ echo "🔄 Aktualisiere Installation in ${APP_DIR}..."
 if [[ ! -d "$APP_DIR" ]]; then
     echo "Fehler: Installationsverzeichnis '$APP_DIR' wurde nicht gefunden." >&2
     exit 1
+fi
+
+SOURCE_DIR="${ERFASSUNG_SOURCE_DIR:-}"
+if [[ -n "$SOURCE_DIR" ]]; then
+    if [[ ! -d "$SOURCE_DIR" ]]; then
+        echo "Fehler: Quelldateien unter '$SOURCE_DIR' wurden nicht gefunden." >&2
+        exit 1
+    fi
+
+    echo "📁 Synchronisiere Programmdateien in ${APP_DIR}..."
+    PRESERVE_ITEMS=(".venv" ".env" "config" "config.yml" "config.yaml" "data" "logs" "erfassung.db")
+    shopt -s dotglob
+    for item in "$APP_DIR"/* "$APP_DIR"/.*; do
+        name="$(basename "$item")"
+        if [[ "$name" == "." || "$name" == ".." ]]; then
+            continue
+        fi
+
+        skip=false
+        for keep in "${PRESERVE_ITEMS[@]}"; do
+            if [[ "$name" == "$keep" ]]; then
+                skip=true
+                break
+            fi
+        done
+
+        if [[ $skip == false ]]; then
+            rm -rf "$item"
+        fi
+    done
+    shopt -u dotglob
+
+    tar -C "$SOURCE_DIR" -cf - --exclude=.git --exclude=.github --exclude='*.pyc' --exclude='__pycache__' . | \
+        tar -C "$APP_DIR" -xf -
 fi
 
 if [[ ! -f "$APP_DIR/requirements.txt" ]]; then
@@ -119,6 +232,24 @@ source "$VENV_DIR/bin/activate"
 pip install --upgrade pip setuptools wheel
 pip install --no-cache-dir -r "$APP_DIR/requirements.txt"
 
+pushd "$APP_DIR" >/dev/null
+python - <<'PY'
+from app import database, models
+
+models.Base.metadata.create_all(bind=database.engine)
+PY
+python -m app.db_migrations --database "$APP_DIR/erfassung.db"
+popd >/dev/null
+
 deactivate
+
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl list-unit-files | grep -q '^erfassung.service'; then
+        echo "🔁 Starte Dienst erfassung.service neu..."
+        if ! run_as_root systemctl restart erfassung.service; then
+            echo "⚠️  Der Dienst konnte nicht neu gestartet werden." >&2
+        fi
+    fi
+fi
 
 echo "✅ Update abgeschlossen."

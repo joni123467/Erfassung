@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from calendar import monthrange
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse
 
@@ -14,19 +17,30 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import __version__ as APP_VERSION
 from . import crud, database, holiday_calculator, models, schemas, services
 from .excel_export import export_time_entries
 from .pdf_export import export_time_overview_pdf
 
 models.Base.metadata.create_all(bind=database.engine)
 
-app = FastAPI(title="Erfassung", description="Zeiterfassung mit Überstunden & Urlaub")
+app = FastAPI(
+    title="Erfassung",
+    description="Zeiterfassung mit Überstunden & Urlaub",
+    version=APP_VERSION,
+)
 
 app.add_middleware(SessionMiddleware, secret_key="zeit-erfassung-secret-key")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
+templates.env.globals["app_version"] = APP_VERSION
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
+UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
+UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
 
 
 def _format_minutes(value: object) -> str:
@@ -46,6 +60,90 @@ templates.env.filters["format_minutes"] = _format_minutes
 
 HOLIDAY_STATE_CHOICES = sorted(holiday_calculator.GERMAN_STATES.items(), key=lambda item: item[1])
 HOLIDAY_STATE_CODES = set(holiday_calculator.GERMAN_STATES.keys())
+
+
+def _read_update_log(limit: int = 400) -> str:
+    try:
+        with UPDATE_LOG_PATH.open("r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except FileNotFoundError:
+        return ""
+    if not lines:
+        return ""
+    tail = lines[-limit:]
+    return "".join(tail)
+
+
+def _list_remote_branches(repo_url: str) -> List[str]:
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", repo_url],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return []
+    branches: set[str] = set()
+    for line in result.stdout.splitlines():
+        parts = line.strip().split()
+        if len(parts) != 2:
+            continue
+        ref = parts[1]
+        if ref.startswith("refs/heads/"):
+            branches.add(ref[len("refs/heads/") :])
+    return sorted(branches)
+
+
+def _execute_update(ref: str, repo_url: str) -> bool:
+    UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    command = [
+        "bash",
+        str(UPDATE_SCRIPT_PATH),
+        "--app-dir",
+        str(APP_ROOT),
+        "--repo-url",
+        repo_url,
+        "--ref",
+        ref,
+    ]
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    with UPDATE_LOG_PATH.open("a", encoding="utf-8") as log_file:
+        log_file.write(f"[{timestamp}] Starte Update auf '{ref}'\n")
+        log_file.flush()
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(APP_ROOT),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                stdin=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            error_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(f"[{error_stamp}] ❌ Update konnte nicht gestartet werden: {exc}\n\n")
+            log_file.flush()
+            raise
+        assert process.stdout is not None
+        with process.stdout:
+            for line in process.stdout:
+                log_file.write(line)
+                log_file.flush()
+        return_code = process.wait()
+        end_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        if return_code == 0:
+            log_file.write(f"[{end_stamp}] ✅ Update abgeschlossen\n\n")
+            log_file.flush()
+            return True
+        log_file.write(f"[{end_stamp}] ❌ Update fehlgeschlagen (Exit {return_code})\n\n")
+        log_file.flush()
+        return False
 
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
@@ -338,7 +436,8 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    reference_month = date.today()
+    today = date.today()
+    reference_month = today
     metrics = services.calculate_dashboard_metrics(db, user.id, reference_month)
     active_entry = crud.get_open_time_entry(db, user.id)
     holiday_region = crud.get_default_holiday_region(db)
@@ -347,6 +446,57 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     companies = crud.get_companies(db)
+    daily_entries = crud.get_time_entries_for_user(db, user.id, start=today, end=today)
+    daily_entries = sorted(daily_entries, key=lambda entry: (entry.start_time, entry.id))
+    daily_total_minutes = sum(entry.worked_minutes for entry in daily_entries)
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    weekly_entries = crud.get_time_entries_for_user(db, user.id, start=week_start, end=week_end)
+    weekly_total_minutes = sum(entry.worked_minutes for entry in weekly_entries)
+    weekly_target_minutes = int(round(user.weekly_target_minutes or 0)) if user else 0
+    daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
+    elapsed_workdays = sum(
+        1
+        for offset in range((today - week_start).days + 1)
+        if (week_start + timedelta(days=offset)).weekday() < 5 and (week_start + timedelta(days=offset)) <= today
+    )
+    expected_minutes_to_date = elapsed_workdays * daily_target_minutes
+    remaining_week_minutes = max(weekly_target_minutes - weekly_total_minutes, 0)
+    progress_percent = (
+        min(int(round((weekly_total_minutes / weekly_target_minutes) * 100)), 100)
+        if weekly_target_minutes
+        else 0
+    )
+    progress_to_date_percent = (
+        min(int(round((weekly_total_minutes / expected_minutes_to_date) * 100)), 100)
+        if expected_minutes_to_date
+        else 0
+    )
+    week_days = []
+    current_day = week_start
+    while current_day <= week_end:
+        day_minutes = sum(entry.worked_minutes for entry in weekly_entries if entry.work_date == current_day)
+        target_for_day = daily_target_minutes if current_day.weekday() < 5 else 0
+        week_days.append(
+            {
+                "date": current_day,
+                "minutes": day_minutes,
+                "target_minutes": target_for_day,
+                "is_today": current_day == today,
+            }
+        )
+        current_day += timedelta(days=1)
+    weekly_summary = {
+        "week_start": week_start,
+        "week_end": week_end,
+        "total_minutes": weekly_total_minutes,
+        "target_minutes": weekly_target_minutes,
+        "expected_minutes_to_date": expected_minutes_to_date,
+        "remaining_minutes": remaining_week_minutes,
+        "progress_percent": progress_percent,
+        "progress_to_date_percent": progress_to_date_percent,
+        "days": week_days,
+    }
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -362,6 +512,10 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
             "active_entry": active_entry,
             "metrics_month": reference_month.replace(day=1),
             "can_create_companies": _can_create_companies(user),
+            "daily_entries": daily_entries,
+            "daily_total_minutes": daily_total_minutes,
+            "today": today,
+            "weekly_summary": weekly_summary,
         },
     )
 
@@ -560,17 +714,8 @@ def vacation_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    focus = request.query_params.get("focus", "vacations")
-    params = {}
-    if focus:
-        params["focus"] = focus
-    message = request.query_params.get("msg")
-    error = request.query_params.get("error")
-    if message:
-        params["msg"] = message
-    if error:
-        params["error"] = error
-    redirect = _build_redirect("/records", **params)
+    params = dict(request.query_params)
+    redirect = _build_redirect("/records/vacations", **params)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -588,7 +733,7 @@ def submit_vacation(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if end_date < start_date:
         return RedirectResponse(
-            url="/records?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen&focus=vacations",
+            url="/records/vacations?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     use_overtime_value = bool(use_overtime == "on" and user.overtime_vacation_enabled)
@@ -607,19 +752,18 @@ def submit_vacation(
         ),
     )
     return RedirectResponse(
-        url="/records?msg=Urlaubsantrag+erstellt&focus=vacations",
+        url="/records/vacations?msg=Urlaubsantrag+erstellt",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
 @app.get("/records", response_class=HTMLResponse)
-def records_page(request: Request, db: Session = Depends(database.get_db)):
+def records_bookings_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    focus = request.query_params.get("focus", "")
     month_param = request.query_params.get("month")
     selected_month, start_date, end_date = _resolve_month_period(month_param)
     company_param = request.query_params.get("company")
@@ -669,7 +813,7 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
     companies = crud.get_companies(db)
     month_value = f"{selected_month.year:04d}-{selected_month.month:02d}"
     return templates.TemplateResponse(
-        "records.html",
+        "records/bookings.html",
         {
             "request": request,
             "user": user,
@@ -691,7 +835,31 @@ def records_page(request: Request, db: Session = Depends(database.get_db)):
             "month_value": month_value,
             "company_filter_id": company_filter_id,
             "company_filter_none": company_filter_none,
-            "focus": focus,
+        },
+    )
+
+
+@app.get("/records/vacations", response_class=HTMLResponse)
+def records_vacations_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    vacations = crud.get_vacations_for_user(db, user.id)
+    today = date.today()
+    vacation_summary = services.calculate_vacation_summary(user, vacations, today.year)
+    pending_vacations = sum(1 for vacation in vacations if vacation.status == models.VacationRequestStatus.PENDING)
+    return templates.TemplateResponse(
+        "records/vacations.html",
+        {
+            "request": request,
+            "user": user,
+            "message": message,
+            "error": error,
+            "vacations": vacations,
+            "vacation_summary": vacation_summary,
+            "pending_vacations": pending_vacations,
         },
     )
 
@@ -799,6 +967,7 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "holidays": _ensure_admin(user),
         "approvals_manual": _can_approve_manual_entries(user),
         "approvals_vacations": _can_manage_vacations(user),
+        "updates": _ensure_admin(user),
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
     permissions["create_companies"] = _can_create_companies(user)
@@ -1608,28 +1777,40 @@ def create_holiday_admin(
     name: str = Form(...),
     holiday_date: date = Form(...),
     state: str = Form(...),
+    region: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     state = state.upper()
-    region = state if state in HOLIDAY_STATE_CODES else "DE"
+    selected_state = state if state in HOLIDAY_STATE_CODES else "DE"
+    custom_region = (region or "").strip()
+    target_region = custom_region if custom_region else selected_state
     try:
-        crud.upsert_holidays(db, [schemas.HolidayCreate(name=name.strip(), date=holiday_date, region=region)])
+        crud.upsert_holidays(
+            db,
+            [
+                schemas.HolidayCreate(
+                    name=name.strip(),
+                    date=holiday_date,
+                    region=target_region,
+                )
+            ],
+        )
     except IntegrityError:
         db.rollback()
         redirect = _build_redirect(
             "/admin/holidays",
             error="Feiertag konnte nicht gespeichert werden",
-            state=region,
+            state=selected_state,
             holiday_year=str(holiday_date.year),
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
         "/admin/holidays",
         msg="Feiertag+gespeichert",
-        state=region,
+        state=selected_state,
         holiday_year=str(holiday_date.year),
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
@@ -1657,6 +1838,89 @@ def delete_holiday_admin(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
         "/admin/holidays", msg="Feiertag gelöscht", state=state, holiday_year=str(year)
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/admin/system", response_class=HTMLResponse)
+def admin_system_overview(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    repo_url = DEFAULT_UPDATE_REPO
+    branches = _list_remote_branches(repo_url)
+    preferred_branch = f"version-{APP_VERSION}"
+    selected = request.query_params.get("ref")
+    if not selected:
+        if preferred_branch in branches:
+            selected = preferred_branch
+        elif "main" in branches:
+            selected = "main"
+        elif branches:
+            selected = branches[0]
+        else:
+            selected = preferred_branch
+    if selected not in branches:
+        branches = [selected] + [branch for branch in branches if branch != selected]
+    if not branches:
+        branches = [selected]
+    updater_available = UPDATE_SCRIPT_PATH.exists()
+    update_log = _read_update_log()
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/system.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        branches=branches,
+        selected_branch=selected,
+        repo_url=repo_url,
+        updater_available=updater_available,
+        update_log=update_log,
+    )
+
+
+@app.post("/admin/system/update")
+def admin_system_trigger_update(
+    request: Request,
+    ref: str = Form(...),
+    custom_ref: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    preferred_branch = f"version-{APP_VERSION}"
+    if not UPDATE_SCRIPT_PATH.exists():
+        redirect = _build_redirect("/admin/system", error="Updater-Skript wurde nicht gefunden.")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    chosen_ref = (custom_ref or "").strip() or (ref or preferred_branch)
+    repo_url = DEFAULT_UPDATE_REPO
+    try:
+        success = _execute_update(chosen_ref, repo_url)
+    except Exception:
+        redirect = _build_redirect(
+            "/admin/system",
+            error="Update konnte nicht gestartet werden. Bitte Log prüfen.",
+            ref=chosen_ref,
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    if success:
+        redirect = _build_redirect(
+            "/dashboard",
+            msg="Update erfolgreich abgeschlossen.",
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    redirect = _build_redirect(
+        "/admin/system",
+        error="Update fehlgeschlagen. Details im Update-Protokoll.",
+        ref=chosen_ref,
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
