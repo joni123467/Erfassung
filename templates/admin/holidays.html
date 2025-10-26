@@ -7,38 +7,53 @@
     <div class="card-header">
         <h1>Feiertage verwalten</h1>
     </div>
-    <form method="get" action="/admin/holidays" class="filter-bar">
-        <label>
-            Bundesland
-            <select name="state">
-                {% for code, label in holiday_states %}
-                    <option value="{{ code }}" {% if selected_state == code %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>
-            Jahr
-            <input type="number" name="holiday_year" value="{{ selected_year }}" min="2000" max="2100">
-        </label>
-        <button type="submit" class="button small">Anzeigen</button>
-    </form>
-    <div class="holiday-actions">
-        <form method="post" action="/admin/holidays/sync" class="inline-form">
-            <input type="hidden" name="state" value="{{ selected_state }}">
+    <div class="card-body card-body--form card-body--separated">
+        <form method="get" action="/admin/holidays" class="filter-bar">
             <label>
-                Jahr synchronisieren
-                <input type="number" name="year" value="{{ selected_year }}" min="2000" max="2100" required>
+                Bundesland
+                <select name="state">
+                    {% for code, label in holiday_states %}
+                        <option value="{{ code }}" {% if selected_state == code %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
             </label>
-            <button type="submit" class="button small">Feiertage laden</button>
+            <label>
+                Jahr
+                <input type="number" name="holiday_year" value="{{ selected_year }}" min="2000" max="2100">
+            </label>
+            <button type="submit" class="button small">Anzeigen</button>
         </form>
-        <form method="post" action="/admin/holidays/create" class="user-form">
-            <input type="hidden" name="state" value="{{ selected_state }}">
-            <input type="date" name="holiday_date" required>
-            <input type="text" name="name" placeholder="Feiertagsbezeichnung" required>
-            <button type="submit" class="button small">Feiertag hinzufügen</button>
-        </form>
-    </div>
-    <div class="table-scroll">
+        <div class="holiday-actions">
+            <form method="post" action="/admin/holidays/sync" class="inline-form">
+                <input type="hidden" name="state" value="{{ selected_state }}">
+                <label>
+                    Jahr synchronisieren
+                    <input type="number" name="year" value="{{ selected_year }}" min="2000" max="2100" required>
+                </label>
+                <button type="submit" class="button small">Feiertage laden</button>
+            </form>
+            <form method="post" action="/admin/holidays/create" class="holiday-form">
+                <input type="hidden" name="state" value="{{ selected_state }}">
+                <div class="holiday-form__grid">
+                    <label>
+                        Datum
+                        <input type="date" name="holiday_date" required>
+                    </label>
+                    <label>
+                        Feiertagstitel
+                        <input type="text" name="name" placeholder="z. B. Stadtfest" required>
+                    </label>
+                    <label>
+                        Region (optional)
+                        <input type="text" name="region" placeholder="z. B. Stadt oder Landkreis">
+                    </label>
+                </div>
+                <div class="holiday-form__actions">
+                    <button type="submit" class="button small">Feiertag hinzufügen</button>
+                </div>
+            </form>
+        </div>
+        <div class="table-scroll">
         <table class="striped-table">
             <thead>
             <tr>
@@ -67,6 +82,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
 </section>
 {% endblock %}

@@ -7,6 +7,8 @@ DEFAULT_INSTALL_DIR="/opt/erfassung"
 SOURCE_URL=""
 INSTALL_DIR=""
 MARKER_FILE=".${APP_SLUG}_installed"
+SERVICE_NAME="${APP_SLUG}.service"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 
 print_help() {
     cat <<USAGE
@@ -194,6 +196,16 @@ pip install --no-cache-dir -r "$PROJECT_DIR/requirements.txt"
 
 deactivate
 
+SERVICE_STATUS_MSG="Systemd wurde nicht gefunden. Starten Sie den Dienst manuell mit 'cd $PROJECT_DIR && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000'."
+if command -v systemctl >/dev/null 2>&1; then
+    echo "🛠️  Richte systemd-Dienst ${SERVICE_NAME} ein..."
+    UNIT_CONTENT="[Unit]\\nDescription=${APP_NAME} API\\nAfter=network.target\\n\\n[Service]\\nType=simple\\nWorkingDirectory=${PROJECT_DIR}\\nUser=${OWNER_USER}\\nGroup=${OWNER_GROUP}\\nEnvironment=PATH=${PROJECT_DIR}/.venv/bin\\nExecStart=${PROJECT_DIR}/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000\\nRestart=on-failure\\n\\n[Install]\\nWantedBy=multi-user.target"
+    printf '%b' "$UNIT_CONTENT" | run_as_root tee "$SERVICE_FILE" >/dev/null
+    run_as_root systemctl daemon-reload
+    run_as_root systemctl enable --now "$SERVICE_NAME"
+    SERVICE_STATUS_MSG="Dienst ${SERVICE_NAME} wurde installiert und gestartet."
+fi
+
 touch "$PROJECT_DIR/$MARKER_FILE"
 
 echo "✅ Installation abgeschlossen."
@@ -205,5 +217,6 @@ Nächste Schritte:
   3. uvicorn app.main:app --reload
 
 Die Anwendung liegt unter $PROJECT_DIR (Standard: /opt/erfassung).
+${SERVICE_STATUS_MSG}
 Standardzugang: Benutzer "admin" mit PIN 0000.
 INFO
