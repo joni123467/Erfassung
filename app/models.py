@@ -64,7 +64,7 @@ class User(Base):
     vacation_carryover_enabled = Column(Boolean, default=False)
     vacation_carryover_days = Column(Integer, default=0)
     rfid_tag = Column(String, unique=True, nullable=True)
-    monthly_overtime_limit_minutes = Column(Integer, default=1200)
+    monthly_overtime_limit_minutes = Column(Integer, nullable=True)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
