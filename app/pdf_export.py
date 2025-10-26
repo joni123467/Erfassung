@@ -2,16 +2,37 @@ from __future__ import annotations
 
 from datetime import date
 from io import BytesIO
-from typing import Iterable, List
-
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from typing import Iterable, List, Sequence
 
 from .models import TimeEntry, TimeEntryStatus, User
 from .schemas import VacationSummary
+
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+except ImportError as exc:  # pragma: no cover - handled at runtime when dependency missing
+    colors = None  # type: ignore[assignment]
+    A4 = None  # type: ignore[assignment]
+    getSampleStyleSheet = None  # type: ignore[assignment]
+    mm = None  # type: ignore[assignment]
+    Paragraph = None  # type: ignore[assignment]
+    SimpleDocTemplate = None  # type: ignore[assignment]
+    Spacer = None  # type: ignore[assignment]
+    Table = None  # type: ignore[assignment]
+    TableStyle = None  # type: ignore[assignment]
+    _REPORTLAB_IMPORT_ERROR: Exception | None = exc
+else:
+    _REPORTLAB_IMPORT_ERROR = None
+
+
+def _ensure_reportlab() -> None:
+    if _REPORTLAB_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "Für den PDF-Export wird die Python-Bibliothek 'reportlab' benötigt."
+        ) from _REPORTLAB_IMPORT_ERROR
 
 
 def _format_minutes(value: int) -> str:
@@ -46,6 +67,8 @@ def export_time_overview_pdf(
     overtime_limit_excess_minutes: int,
     overtime_limit_remaining_minutes: int,
 ) -> BytesIO:
+    _ensure_reportlab()
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -220,7 +243,7 @@ def export_time_overview_pdf(
     story.append(Paragraph("Zeitbuchungen (Monat)", styles["Heading2"]))
     story.append(entry_table)
 
-    def _add_footer(canvas, document):
+    def _add_footer(canvas, document):  # type: ignore[override]
         canvas.saveState()
         canvas.setFont("Helvetica", 9)
         y_position = 12 * mm
@@ -243,11 +266,13 @@ def export_team_overview_pdf(
     total_minutes: int,
     total_entries: int,
     unique_users: int,
-    status_summary: List[dict[str, object]],
-    company_totals: List[dict[str, object]],
-    user_totals: List[dict[str, object]],
+    status_summary: Sequence[dict[str, object]],
+    company_totals: Sequence[dict[str, object]],
+    user_totals: Sequence[dict[str, object]],
     entries: Iterable[TimeEntry],
 ) -> BytesIO:
+    _ensure_reportlab()
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -401,8 +426,8 @@ def export_team_overview_pdf(
             "",
             "",
             "",
-            "",
             f"{_format_minutes(total_entry_minutes)} Std",
+            "",
             "",
             "",
             "",
@@ -421,6 +446,7 @@ def export_team_overview_pdf(
             doc.width * 0.08,
             doc.width * 0.17,
         ],
+        repeatRows=1,
     )
     entry_table.setStyle(
         TableStyle(

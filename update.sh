@@ -6,7 +6,15 @@ fi
 
 DEFAULT_APP_DIR="/opt/erfassung"
 DEFAULT_REPO_URL="https://github.com/joni123467/Erfassung"
-DEFAULT_REPO_REF="version-0.0.4"
+DEFAULT_REPO_REF="main"
+
+VERSION_FILE="$DEFAULT_APP_DIR/VERSION"
+if [ -f "$VERSION_FILE" ]; then
+    CURRENT_VERSION=$(tr -d '\r\n' < "$VERSION_FILE")
+    if [ -n "$CURRENT_VERSION" ]; then
+        DEFAULT_REPO_REF="version-$CURRENT_VERSION"
+    fi
+fi
 
 APP_DIR="$DEFAULT_APP_DIR"
 REPO_URL="$DEFAULT_REPO_URL"

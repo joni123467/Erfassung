@@ -44,11 +44,6 @@ DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/j
 UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
 UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
 
-APP_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
-UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
-UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
-
 
 def _format_minutes(value: object) -> str:
     if value is None:
@@ -1241,22 +1236,33 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         if overtime_limit_minutes and not overtime_limit_exceeded
         else 0
     )
-    buffer = export_time_overview_pdf(
-        user=user,
-        selected_month=selected_month,
-        entries=month_entries,
-        total_work_minutes=total_work_minutes,
-        target_minutes=target_minutes,
-        overtime_taken_minutes=overtime_taken_minutes,
-        total_overtime_minutes=total_overtime_minutes,
-        total_undertime_minutes=total_undertime_minutes,
-        vacation_summary=vacation_summary,
-        company_totals=company_totals_all,
-        overtime_limit_minutes=overtime_limit_minutes,
-        overtime_limit_exceeded=overtime_limit_exceeded,
-        overtime_limit_excess_minutes=overtime_limit_excess_minutes,
-        overtime_limit_remaining_minutes=overtime_limit_remaining_minutes,
-    )
+    try:
+        buffer = export_time_overview_pdf(
+            user=user,
+            selected_month=selected_month,
+            entries=month_entries,
+            total_work_minutes=total_work_minutes,
+            target_minutes=target_minutes,
+            overtime_taken_minutes=overtime_taken_minutes,
+            total_overtime_minutes=total_overtime_minutes,
+            total_undertime_minutes=total_undertime_minutes,
+            vacation_summary=vacation_summary,
+            company_totals=company_totals_all,
+            overtime_limit_minutes=overtime_limit_minutes,
+            overtime_limit_exceeded=overtime_limit_exceeded,
+            overtime_limit_excess_minutes=overtime_limit_excess_minutes,
+            overtime_limit_remaining_minutes=overtime_limit_remaining_minutes,
+        )
+    except RuntimeError as exc:
+        redirect_params = []
+        if month:
+            redirect_params.append(("month", month))
+        redirect_params.append(("error", str(exc)))
+        query = urlencode(redirect_params)
+        url = "/records"
+        if query:
+            url = f"{url}?{query}"
+        return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
     filename = f"arbeitszeit_{user.username}_{selected_month.strftime('%Y_%m')}.pdf"
     return StreamingResponse(
         buffer,
@@ -1642,19 +1648,28 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_time_report_data(request.query_params, db)
-    buffer = export_team_overview_pdf(
-        period_label=report_data["period_label"],
-        period_range=report_data["period_range"],
-        start_date=report_data["start_date"],
-        end_date=report_data["end_date"],
-        total_minutes=report_data["total_minutes"],
-        total_entries=report_data["total_entries"],
-        unique_users=report_data["unique_users"],
-        status_summary=report_data["status_summary"],
-        company_totals=report_data["company_totals"],
-        user_totals=report_data["user_totals"],
-        entries=report_data["entries_sorted"],
-    )
+    try:
+        buffer = export_team_overview_pdf(
+            period_label=report_data["period_label"],
+            period_range=report_data["period_range"],
+            start_date=report_data["start_date"],
+            end_date=report_data["end_date"],
+            total_minutes=report_data["total_minutes"],
+            total_entries=report_data["total_entries"],
+            unique_users=report_data["unique_users"],
+            status_summary=report_data["status_summary"],
+            company_totals=report_data["company_totals"],
+            user_totals=report_data["user_totals"],
+            entries=report_data["entries_sorted"],
+        )
+    except RuntimeError as exc:
+        params = list(request.query_params.multi_items())
+        params.append(("error", str(exc)))
+        query = urlencode(params)
+        url = "/admin/reports/time"
+        if query:
+            url = f"{url}?{query}"
+        return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
     filename = f"team_zeit_{report_data['period_filename']}.pdf"
     return StreamingResponse(
         buffer,
