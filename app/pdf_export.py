@@ -57,9 +57,8 @@ def export_time_overview_pdf(
     title = f"Arbeitszeitübersicht – {selected_month.strftime('%m/%Y')}"
     story.append(Paragraph(title, styles["Title"]))
     story.append(Spacer(1, 4 * mm))
-    meta = f"Mitarbeiter: {user.full_name} ({user.username})"
-    story.append(Paragraph(meta, styles["Normal"]))
-    story.append(Paragraph(f"Erstellt am: {date.today().strftime('%d.%m.%Y')}", styles["Normal"]))
+    footer_left = f"Mitarbeiter: {user.full_name} ({user.username})"
+    footer_right = f"Erstellt am: {date.today().strftime('%d.%m.%Y')}"
     story.append(Spacer(1, 6 * mm))
 
     summary_data = [
@@ -82,10 +81,6 @@ def export_time_overview_pdf(
             ]
         )
     )
-    story.append(Paragraph("Arbeitszeitkennzahlen", styles["Heading2"]))
-    story.append(summary_table)
-    story.append(Spacer(1, 6 * mm))
-
     vacation_data = [
         ["Gesamturlaub", f"{vacation_summary.total_days:.2f} Tage"],
         ["Verbraucht", f"{vacation_summary.used_days:.2f} Tage"],
@@ -106,8 +101,24 @@ def export_time_overview_pdf(
             ]
         )
     )
-    story.append(Paragraph("Urlaub", styles["Heading2"]))
-    story.append(vacation_table)
+    story.append(Paragraph("Arbeitszeitkennzahlen & Urlaub", styles["Heading2"]))
+    metrics_table = Table(
+        [[summary_table, vacation_table]],
+        colWidths=[doc.width / 2, doc.width / 2],
+        hAlign="LEFT",
+    )
+    metrics_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (0, -1), 0),
+                ("RIGHTPADDING", (0, 0), (0, -1), 12),
+                ("LEFTPADDING", (1, 0), (1, -1), 12),
+                ("RIGHTPADDING", (1, 0), (1, -1), 0),
+            ]
+        )
+    )
+    story.append(metrics_table)
     story.append(Spacer(1, 6 * mm))
 
     if company_totals:
@@ -138,9 +149,11 @@ def export_time_overview_pdf(
 
     entry_data = [["Datum", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Kommentar"]]
     sorted_entries = sorted(entries, key=lambda item: (item.work_date, item.start_time))
+    total_minutes = 0
     for entry in sorted_entries:
         end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
         company_name = entry.company.name if entry.company else "Allgemein"
+        total_minutes += entry.worked_minutes
         entry_data.append(
             [
                 entry.work_date.strftime("%d.%m.%Y"),
@@ -152,22 +165,54 @@ def export_time_overview_pdf(
                 entry.notes or "-",
             ]
         )
-    entry_table = Table(entry_data, repeatRows=1)
+    entry_data.append([
+        "Summe",
+        "",
+        "",
+        "",
+        f"{_format_minutes(total_minutes)} Std",
+        "",
+        "",
+    ])
+    entry_col_widths = [
+        doc.width * 0.12,
+        doc.width * 0.2,
+        doc.width * 0.1,
+        doc.width * 0.1,
+        doc.width * 0.15,
+        doc.width * 0.15,
+        doc.width * 0.18,
+    ]
+    entry_table = Table(entry_data, colWidths=entry_col_widths, repeatRows=1)
     entry_table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.whitesmoke]),
                 ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
                 ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("ALIGN", (2, 1), (4, -1), "CENTER"),
+                ("ALIGN", (2, 1), (4, -2), "CENTER"),
+                ("SPAN", (0, -1), (3, -1)),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eef2ff")),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("ALIGN", (4, -1), (4, -1), "CENTER"),
+                ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.grey),
             ]
         )
     )
     story.append(Paragraph("Zeitbuchungen (Monat)", styles["Heading2"]))
     story.append(entry_table)
 
-    doc.build(story)
+    def _add_footer(canvas, document):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 9)
+        y_position = 12 * mm
+        canvas.drawString(document.leftMargin, y_position, footer_left)
+        right_width = canvas.stringWidth(footer_right, "Helvetica", 9)
+        canvas.drawString(document.pagesize[0] - document.rightMargin - right_width, y_position, footer_right)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_add_footer, onLaterPages=_add_footer)
     buffer.seek(0)
     return buffer
