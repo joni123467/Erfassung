@@ -7,20 +7,34 @@
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-<header class="topbar">
-    <div class="topbar__brand">Erfassung</div>
+<header class="timetac-header">
+    <div class="timetac-header__brand">
+        <span class="timetac-header__logo" aria-hidden="true">⌚</span>
+        <span class="timetac-header__title">Erfassung</span>
+    </div>
     {% if user %}
-    <nav class="topbar__nav">
-        <a href="/dashboard" class="nav-link {% if request.url.path == '/dashboard' %}active{% endif %}">Dashboard</a>
-        <a href="/records" class="nav-link {% if request.url.path == '/records' %}active{% endif %}">Buchungen &amp; Urlaub</a>
+    <nav class="timetac-header__nav" aria-label="Hauptnavigation">
+        <a href="/dashboard" class="timetac-nav-link {% if request.url.path == '/dashboard' %}is-active{% endif %}">
+            <span class="timetac-nav-link__icon" aria-hidden="true">🏠</span>
+            <span>Dashboard</span>
+        </a>
+        <a href="/records" class="timetac-nav-link {% if request.url.path == '/records' %}is-active{% endif %}">
+            <span class="timetac-nav-link__icon" aria-hidden="true">🗂️</span>
+            <span>Buchungen &amp; Urlaub</span>
+        </a>
         {% if user.group and user.group.is_admin %}
-        <a href="/admin" class="nav-link {% if request.url.path.startswith('/admin') %}active{% endif %}">Administration</a>
+        <a href="/admin" class="timetac-nav-link {% if request.url.path.startswith('/admin') %}is-active{% endif %}">
+            <span class="timetac-nav-link__icon" aria-hidden="true">⚙️</span>
+            <span>Administration</span>
+        </a>
         {% endif %}
     </nav>
-    <div class="topbar__profile">
-        <span>{{ user.full_name }}</span>
-        <small>{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
-        <a class="logout" href="/logout">Abmelden</a>
+    <div class="timetac-header__profile">
+        <div class="timetac-header__user">
+            <span class="timetac-header__name">{{ user.full_name }}</span>
+            <small class="timetac-header__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
+        </div>
+        <a class="timetac-header__logout" href="/logout">Abmelden</a>
     </div>
     {% endif %}
 </header>
