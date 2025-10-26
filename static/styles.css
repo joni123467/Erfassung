@@ -234,6 +234,44 @@ li {
     padding: 1.5rem;
 }
 
+.dashboard-top {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.dashboard-top__summary {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.dashboard-top__punch {
+    width: 100%;
+}
+
+.dashboard-summary__card--vacation {
+    flex: 1 1 auto;
+    width: 100%;
+}
+
+@media (min-width: 960px) {
+    .dashboard-top {
+        display: grid;
+        grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.2fr);
+        gap: 1.5rem;
+        align-items: start;
+    }
+
+    .dashboard-top__punch {
+        grid-column: 1;
+    }
+
+    .dashboard-top__summary {
+        grid-column: 2;
+    }
+}
+
 .dashboard-summary__card h2 {
     margin-top: 0;
     margin-bottom: 1rem;
