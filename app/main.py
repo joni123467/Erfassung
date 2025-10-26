@@ -192,7 +192,13 @@ def _list_remote_branches(repo_url: str) -> List[str]:
 
 def _execute_update(ref: str, repo_url: str) -> bool:
     UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cleanup_error: OSError | None = None
+    try:
+        UPDATE_LOG_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        cleanup_error = exc
     shell = shutil.which("bash") or shutil.which("sh")
     if not shell:
         raise FileNotFoundError("Keine Shell zum Ausführen des Update-Skripts gefunden")
@@ -208,8 +214,18 @@ def _execute_update(ref: str, repo_url: str) -> bool:
     ]
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
-    with UPDATE_LOG_PATH.open("a", encoding="utf-8") as log_file:
-        log_file.write(f"[{timestamp}] Starte Update auf '{ref}'\n")
+    try:
+        log_file_handle = UPDATE_LOG_PATH.open("w", encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError("Update-Protokoll konnte nicht erstellt werden") from exc
+    with log_file_handle as log_file:
+        if cleanup_error is not None:
+            cleanup_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(
+                f"[{cleanup_stamp}] ⚠️ Altes Update-Protokoll konnte nicht entfernt werden: {cleanup_error}\n"
+            )
+        start_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        log_file.write(f"[{start_stamp}] Starte Update auf '{ref}'\n")
         log_file.flush()
         try:
             process = subprocess.Popen(
@@ -1930,8 +1946,6 @@ def create_user_html(
     group_value = int(group_id) if group_id else None
     time_account_value = time_account_enabled == "on"
     overtime_vacation_value = overtime_vacation_enabled == "on"
-    if not time_account_value:
-        overtime_vacation_value = False
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
@@ -1998,8 +2012,6 @@ def update_user_html(
     group_value = int(group_id) if group_id else None
     time_account_value = time_account_enabled == "on"
     overtime_vacation_value = overtime_vacation_enabled == "on"
-    if not time_account_value:
-        overtime_vacation_value = False
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
