@@ -919,6 +919,12 @@ body.modal-open {
     font: inherit;
 }
 
+.form-grid select,
+.user-form select,
+.inline-form select {
+    min-height: 2.75rem;
+}
+
 .form-grid input,
 .form-grid select,
 .form-grid textarea {
@@ -946,6 +952,9 @@ body.modal-open {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    max-width: 880px;
+    margin: 0 auto;
+    width: 100%;
 }
 
 .user-form__columns {
@@ -965,6 +974,7 @@ body.modal-open {
     padding: 1.25rem 1.5rem;
     display: grid;
     gap: 1rem;
+    background: #f8f9ff;
 }
 
 .user-form__option-group {
@@ -1016,6 +1026,12 @@ body.modal-open {
     }
 }
 
+@media (min-width: 1240px) {
+    .user-form {
+        max-width: 960px;
+    }
+}
+
 .full-width {
     grid-column: 1 / -1;
 }
@@ -1040,6 +1056,25 @@ body.modal-open {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+}
+
+.card-body {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.card-body--form {
+    align-items: start;
+}
+
+.card-body--narrow {
+    max-width: 960px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.card-body--separated {
+    gap: 2rem;
 }
 
 .records-hero {
@@ -1101,7 +1136,7 @@ body.modal-open {
 
 .holiday-actions {
     display: grid;
-    gap: 1rem;
+    gap: 1.5rem;
 }
 
 .holiday-actions .inline-form {
@@ -1113,6 +1148,74 @@ body.modal-open {
     flex-direction: column;
     gap: 0.35rem;
     font-weight: 600;
+}
+
+.holiday-form {
+    display: grid;
+    gap: 1rem;
+}
+
+.holiday-form__grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.holiday-form__grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+
+.holiday-form__grid input,
+.holiday-form__grid select {
+    width: 100%;
+}
+
+.holiday-form__actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.update-form {
+    display: grid;
+    gap: 1.25rem;
+}
+
+.update-form__grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.update-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+
+.update-form__actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.update-log {
+    font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 1rem;
+    border-radius: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.update-log__empty {
+    color: #94a3b8;
+    font-style: italic;
 }
 
 .login-card {

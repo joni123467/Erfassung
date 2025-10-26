@@ -146,7 +146,7 @@ if [[ -n "$SOURCE_DIR" ]]; then
     fi
 
     echo "📁 Synchronisiere Programmdateien in ${APP_DIR}..."
-    PRESERVE_ITEMS=(".venv" ".env" "config" "config.yml" "config.yaml" "data" "logs")
+    PRESERVE_ITEMS=(".venv" ".env" "config" "config.yml" "config.yaml" "data" "logs" "erfassung.db")
     shopt -s dotglob
     for item in "$APP_DIR"/* "$APP_DIR"/.*; do
         name="$(basename "$item")"
@@ -232,6 +232,24 @@ source "$VENV_DIR/bin/activate"
 pip install --upgrade pip setuptools wheel
 pip install --no-cache-dir -r "$APP_DIR/requirements.txt"
 
+pushd "$APP_DIR" >/dev/null
+python - <<'PY'
+from app import database, models
+
+models.Base.metadata.create_all(bind=database.engine)
+PY
+python -m app.db_migrations --database "$APP_DIR/erfassung.db"
+popd >/dev/null
+
 deactivate
+
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl list-unit-files | grep -q '^erfassung.service'; then
+        echo "🔁 Starte Dienst erfassung.service neu..."
+        if ! run_as_root systemctl restart erfassung.service; then
+            echo "⚠️  Der Dienst konnte nicht neu gestartet werden." >&2
+        fi
+    fi
+fi
 
 echo "✅ Update abgeschlossen."

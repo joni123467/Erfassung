@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -28,6 +31,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 
+APP_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
+UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
+UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
+
 
 def _format_minutes(value: object) -> str:
     if value is None:
@@ -46,6 +54,75 @@ templates.env.filters["format_minutes"] = _format_minutes
 
 HOLIDAY_STATE_CHOICES = sorted(holiday_calculator.GERMAN_STATES.items(), key=lambda item: item[1])
 HOLIDAY_STATE_CODES = set(holiday_calculator.GERMAN_STATES.keys())
+
+
+def _read_update_log(limit: int = 400) -> str:
+    try:
+        with UPDATE_LOG_PATH.open("r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except FileNotFoundError:
+        return ""
+    if not lines:
+        return ""
+    tail = lines[-limit:]
+    return "".join(tail)
+
+
+def _list_remote_branches(repo_url: str) -> List[str]:
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", repo_url],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return []
+    branches: set[str] = set()
+    for line in result.stdout.splitlines():
+        parts = line.strip().split()
+        if len(parts) != 2:
+            continue
+        ref = parts[1]
+        if ref.startswith("refs/heads/"):
+            branches.add(ref[len("refs/heads/") :])
+    return sorted(branches)
+
+
+def _run_update_in_background(ref: str, repo_url: str) -> None:
+    UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    command = [
+        "bash",
+        str(UPDATE_SCRIPT_PATH),
+        "--app-dir",
+        str(APP_ROOT),
+        "--repo-url",
+        repo_url,
+        "--ref",
+        ref,
+    ]
+    env = os.environ.copy()
+    with UPDATE_LOG_PATH.open("a", encoding="utf-8") as log_file:
+        log_file.write(f"[{timestamp}] Starte Update auf '{ref}'\n")
+        log_file.flush()
+        try:
+            subprocess.run(
+                command,
+                cwd=str(APP_ROOT),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
+            end_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(f"[{end_stamp}] ✅ Update abgeschlossen\n\n")
+        except subprocess.CalledProcessError as exc:
+            end_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(
+                f"[{end_stamp}] ❌ Update fehlgeschlagen (Exit {exc.returncode})\n\n"
+            )
 
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
@@ -869,6 +946,7 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "holidays": _ensure_admin(user),
         "approvals_manual": _can_approve_manual_entries(user),
         "approvals_vacations": _can_manage_vacations(user),
+        "updates": _ensure_admin(user),
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
     permissions["create_companies"] = _can_create_companies(user)
@@ -1678,28 +1756,40 @@ def create_holiday_admin(
     name: str = Form(...),
     holiday_date: date = Form(...),
     state: str = Form(...),
+    region: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     state = state.upper()
-    region = state if state in HOLIDAY_STATE_CODES else "DE"
+    selected_state = state if state in HOLIDAY_STATE_CODES else "DE"
+    custom_region = (region or "").strip()
+    target_region = custom_region if custom_region else selected_state
     try:
-        crud.upsert_holidays(db, [schemas.HolidayCreate(name=name.strip(), date=holiday_date, region=region)])
+        crud.upsert_holidays(
+            db,
+            [
+                schemas.HolidayCreate(
+                    name=name.strip(),
+                    date=holiday_date,
+                    region=target_region,
+                )
+            ],
+        )
     except IntegrityError:
         db.rollback()
         redirect = _build_redirect(
             "/admin/holidays",
             error="Feiertag konnte nicht gespeichert werden",
-            state=region,
+            state=selected_state,
             holiday_year=str(holiday_date.year),
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
         "/admin/holidays",
         msg="Feiertag+gespeichert",
-        state=region,
+        state=selected_state,
         holiday_year=str(holiday_date.year),
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
@@ -1727,6 +1817,65 @@ def delete_holiday_admin(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     redirect = _build_redirect(
         "/admin/holidays", msg="Feiertag gelöscht", state=state, holiday_year=str(year)
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/admin/system", response_class=HTMLResponse)
+def admin_system_overview(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    repo_url = DEFAULT_UPDATE_REPO
+    branches = _list_remote_branches(repo_url)
+    selected = request.query_params.get("ref") or (branches[0] if branches else "main")
+    if selected not in branches:
+        branches = [selected] + [branch for branch in branches if branch != selected]
+    if not branches:
+        branches = [selected]
+    updater_available = UPDATE_SCRIPT_PATH.exists()
+    update_log = _read_update_log()
+    message = request.query_params.get("msg")
+    error = request.query_params.get("error")
+    return _admin_template(
+        "admin/system.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        branches=branches,
+        selected_branch=selected,
+        repo_url=repo_url,
+        updater_available=updater_available,
+        update_log=update_log,
+    )
+
+
+@app.post("/admin/system/update")
+def admin_system_trigger_update(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    ref: str = Form(...),
+    custom_ref: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    if not UPDATE_SCRIPT_PATH.exists():
+        redirect = _build_redirect("/admin/system", error="Updater-Skript wurde nicht gefunden.")
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    chosen_ref = (custom_ref or "").strip() or (ref or "main")
+    repo_url = DEFAULT_UPDATE_REPO
+    background_tasks.add_task(_run_update_in_background, chosen_ref, repo_url)
+    redirect = _build_redirect(
+        "/admin/system",
+        msg=f"Update auf {chosen_ref} gestartet",
+        ref=chosen_ref,
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 

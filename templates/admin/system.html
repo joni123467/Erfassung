@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}System & Updates – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>System &amp; Updates</h1>
+    </div>
+    <div class="card-body card-body--form card-body--narrow">
+        {% if not updater_available %}
+            <p class="alert alert-danger">Das Update-Skript konnte nicht gefunden werden. Bitte prüfen Sie die Installation.</p>
+        {% endif %}
+        <form method="post" action="/admin/system/update" class="update-form">
+            <div class="update-form__grid">
+                <label>
+                    Branch auswählen
+                    <select name="ref">
+                        {% for branch in branches %}
+                            <option value="{{ branch }}" {% if branch == selected_branch %}selected{% endif %}>{{ branch }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    Eigene Referenz
+                    <input type="text" name="custom_ref" placeholder="z. B. hotfix/42">
+                    <span class="form-hint">Leer lassen, um die Auswahl zu verwenden.</span>
+                </label>
+            </div>
+            <p class="form-hint">Aktuelle Update-Quelle: {{ repo_url }}</p>
+            <div class="update-form__actions">
+                <button type="submit" class="button primary" {% if not updater_available %}disabled{% endif %}>Update starten</button>
+            </div>
+        </form>
+        <section>
+            <h2>Update-Protokoll</h2>
+            {% if update_log %}
+                <pre class="update-log">{{ update_log }}</pre>
+            {% else %}
+                <p class="update-log update-log__empty">Es wurden noch keine Updates über die Oberfläche gestartet.</p>
+            {% endif %}
+        </section>
+    </div>
+</section>
+{% endblock %}
