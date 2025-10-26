@@ -14,6 +14,9 @@
     {% if admin_permissions.approvals %}
         <a href="/admin/approvals" class="timetac-subnav__link {% if admin_active == 'approvals' %}is-active{% endif %}">Freigaben</a>
     {% endif %}
+    {% if admin_permissions.reports %}
+        <a href="/admin/reports/time" class="timetac-subnav__link {% if admin_active == 'reports' %}is-active{% endif %}">Zeitübersichten</a>
+    {% endif %}
     {% if admin_permissions.updates %}
         <a href="/admin/system" class="timetac-subnav__link {% if admin_active == 'system' %}is-active{% endif %}">System &amp; Updates</a>
     {% endif %}
