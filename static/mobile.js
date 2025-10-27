@@ -205,29 +205,74 @@ function serializeFormData(form) {
 }
 
 async function handleOfflineSubmission(event) {
-  if (navigator.onLine) {
-    return;
-  }
   event.preventDefault();
   const form = event.target;
   const payload = serializeFormData(form);
-  try {
-    await queueStorage.add(payload);
-    const count = await queueStorage.count();
-    updateQueueIndicator(count);
-    const queueMessage = count === 1
-      ? 'Offline – 1 Buchung wird nachgereicht.'
-      : `Offline – ${count} Buchungen werden nachgereicht.`;
-    dispatchSyncStatus(queueMessage, 'queue');
-    showFeedback('Buchung offline gespeichert. Wird synchronisiert, sobald eine Verbindung besteht.', 'info');
-  } catch (error) {
-    console.error('Konnte Buchung nicht offline speichern', error);
-    showFeedback('Fehler beim Zwischenspeichern. Bitte erneut versuchen.', 'error');
-    return;
+  const action = form?.getAttribute('action') || '/punch';
+  const body = new URLSearchParams(payload);
+
+  async function storeOffline(reason) {
+    try {
+      await queueStorage.add(payload);
+      const count = await queueStorage.count();
+      updateQueueIndicator(count);
+      const offlineMessage = count === 1
+        ? 'Offline – 1 Buchung wird nachgereicht.'
+        : `Offline – ${count} Buchungen werden nachgereicht.`;
+      const serverMessage = count === 1
+        ? 'Server nicht erreichbar – 1 Buchung wird nachgereicht.'
+        : `Server nicht erreichbar – ${count} Buchungen werden nachgereicht.`;
+      if (reason === 'server') {
+        dispatchSyncStatus(serverMessage, 'error');
+        showFeedback('Server nicht erreichbar. Buchung wird zwischengespeichert.', 'error');
+      } else {
+        dispatchSyncStatus(offlineMessage, 'queue');
+        showFeedback('Buchung offline gespeichert. Wird synchronisiert, sobald eine Verbindung besteht.', 'info');
+      }
+      if (form instanceof HTMLFormElement) {
+        form.reset();
+      }
+    } catch (error) {
+      console.error('Konnte Buchung nicht offline speichern', error);
+      showFeedback('Fehler beim Zwischenspeichern. Bitte erneut versuchen.', 'error');
+    }
   }
-  if (form instanceof HTMLFormElement) {
-    form.reset();
+
+  if (navigator.onLine) {
+    try {
+      const response = await fetch(action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: body.toString(),
+        credentials: 'same-origin',
+        redirect: 'follow',
+      });
+      if (!response.ok) {
+        throw new Error(`Serverfehler ${response.status}`);
+      }
+      if (response.redirected) {
+        window.location.href = response.url;
+        return;
+      }
+      const nextUrl = payload.next_url;
+      if (typeof nextUrl === 'string' && nextUrl) {
+        window.location.href = nextUrl;
+        return;
+      }
+      dispatchSyncStatus('Buchung erfolgreich übertragen.', 'synced');
+      showFeedback('Buchung erfolgreich übertragen.', 'success');
+      if (form instanceof HTMLFormElement) {
+        form.reset();
+      }
+      return;
+    } catch (error) {
+      console.warn('Direkte Übertragung fehlgeschlagen, speichere offline', error);
+      await storeOffline('server');
+      return;
+    }
   }
+
+  await storeOffline('offline');
 }
 
 function registerTabHandling() {
