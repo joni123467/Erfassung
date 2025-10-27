@@ -15,7 +15,12 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+
+try:  # FastAPI <=0.75 did not re-export BackgroundTasks
+    from fastapi import BackgroundTasks
+except ImportError:  # pragma: no cover - fallback for older FastAPI releases
+    from starlette.background import BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
