@@ -11,6 +11,19 @@ const STORE_NAME = 'pendingPunches';
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 
+function setElementHidden(element, hidden) {
+  if (!element) {
+    return;
+  }
+  if (hidden) {
+    element.hidden = true;
+    element.setAttribute('hidden', 'hidden');
+  } else {
+    element.hidden = false;
+    element.removeAttribute('hidden');
+  }
+}
+
 function dispatchSyncStatus(message, state = 'default') {
   document.dispatchEvent(
     new CustomEvent('offline-sync-status', {
@@ -26,7 +39,7 @@ function showFeedback(message, type = 'info') {
   }
   element.textContent = message;
   element.dataset.state = type;
-  element.toggleAttribute('hidden', !message);
+  setElementHidden(element, !message);
   if (message) {
     const existingTimeout = Number(element.dataset.timeoutId || 0);
     if (existingTimeout) {
@@ -35,7 +48,7 @@ function showFeedback(message, type = 'info') {
     const timeoutId = window.setTimeout(() => {
       element.textContent = '';
       element.dataset.state = '';
-      element.setAttribute('hidden', 'hidden');
+      setElementHidden(element, true);
     }, 3500);
     element.dataset.timeoutId = String(timeoutId);
   }
@@ -128,9 +141,7 @@ function updateQueueIndicator(count) {
       ? 'Eine Buchung wartet auf Synchronisation.'
       : `${count} Buchungen warten auf Synchronisation.`;
   }
-  if (info) {
-    info.toggleAttribute('hidden', count === 0);
-  }
+  setElementHidden(info, count === 0);
 }
 
 async function flushQueue() {
@@ -194,29 +205,74 @@ function serializeFormData(form) {
 }
 
 async function handleOfflineSubmission(event) {
-  if (navigator.onLine) {
-    return;
-  }
   event.preventDefault();
   const form = event.target;
   const payload = serializeFormData(form);
-  try {
-    await queueStorage.add(payload);
-    const count = await queueStorage.count();
-    updateQueueIndicator(count);
-    const queueMessage = count === 1
-      ? 'Offline – 1 Buchung wird nachgereicht.'
-      : `Offline – ${count} Buchungen werden nachgereicht.`;
-    dispatchSyncStatus(queueMessage, 'queue');
-    showFeedback('Buchung offline gespeichert. Wird synchronisiert, sobald eine Verbindung besteht.', 'info');
-  } catch (error) {
-    console.error('Konnte Buchung nicht offline speichern', error);
-    showFeedback('Fehler beim Zwischenspeichern. Bitte erneut versuchen.', 'error');
-    return;
+  const action = form?.getAttribute('action') || '/punch';
+  const body = new URLSearchParams(payload);
+
+  async function storeOffline(reason) {
+    try {
+      await queueStorage.add(payload);
+      const count = await queueStorage.count();
+      updateQueueIndicator(count);
+      const offlineMessage = count === 1
+        ? 'Offline – 1 Buchung wird nachgereicht.'
+        : `Offline – ${count} Buchungen werden nachgereicht.`;
+      const serverMessage = count === 1
+        ? 'Server nicht erreichbar – 1 Buchung wird nachgereicht.'
+        : `Server nicht erreichbar – ${count} Buchungen werden nachgereicht.`;
+      if (reason === 'server') {
+        dispatchSyncStatus(serverMessage, 'error');
+        showFeedback('Server nicht erreichbar. Buchung wird zwischengespeichert.', 'error');
+      } else {
+        dispatchSyncStatus(offlineMessage, 'queue');
+        showFeedback('Buchung offline gespeichert. Wird synchronisiert, sobald eine Verbindung besteht.', 'info');
+      }
+      if (form instanceof HTMLFormElement) {
+        form.reset();
+      }
+    } catch (error) {
+      console.error('Konnte Buchung nicht offline speichern', error);
+      showFeedback('Fehler beim Zwischenspeichern. Bitte erneut versuchen.', 'error');
+    }
   }
-  if (form instanceof HTMLFormElement) {
-    form.reset();
+
+  if (navigator.onLine) {
+    try {
+      const response = await fetch(action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: body.toString(),
+        credentials: 'same-origin',
+        redirect: 'follow',
+      });
+      if (!response.ok) {
+        throw new Error(`Serverfehler ${response.status}`);
+      }
+      if (response.redirected) {
+        window.location.href = response.url;
+        return;
+      }
+      const nextUrl = payload.next_url;
+      if (typeof nextUrl === 'string' && nextUrl) {
+        window.location.href = nextUrl;
+        return;
+      }
+      dispatchSyncStatus('Buchung erfolgreich übertragen.', 'synced');
+      showFeedback('Buchung erfolgreich übertragen.', 'success');
+      if (form instanceof HTMLFormElement) {
+        form.reset();
+      }
+      return;
+    } catch (error) {
+      console.warn('Direkte Übertragung fehlgeschlagen, speichere offline', error);
+      await storeOffline('server');
+      return;
+    }
   }
+
+  await storeOffline('offline');
 }
 
 function registerTabHandling() {
@@ -225,7 +281,7 @@ function registerTabHandling() {
   const validTabs = new Set(tabs.map((tab) => tab.dataset.tab));
   const defaultTab = tabs.find((tab) => tab.classList.contains('is-active'))?.dataset.tab || 'buchung';
 
-  function activateTab(tabName, updateHash = true) {
+  function activateTab(tabName, updateHistory = true) {
     if (!validTabs.has(tabName)) {
       tabName = defaultTab;
     }
@@ -237,13 +293,16 @@ function registerTabHandling() {
     panels.forEach((panel) => {
       const isActive = panel.dataset.tabPanel === tabName;
       panel.classList.toggle('is-active', isActive);
-      panel.toggleAttribute('hidden', !isActive);
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+      setElementHidden(panel, !isActive);
     });
-    if (updateHash) {
+    if (updateHistory) {
       const newHash = `#${tabName}`;
       if (history.replaceState) {
-        const { pathname, search } = window.location;
-        history.replaceState(null, '', `${pathname}${search}${newHash}`);
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', tabName);
+        url.hash = newHash;
+        history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
       } else {
         window.location.hash = newHash;
       }
@@ -252,13 +311,26 @@ function registerTabHandling() {
 
   tabs.forEach((tab) =>
     tab.addEventListener('click', (event) => {
-      event.preventDefault();
-      activateTab(tab.dataset.tab);
+      try {
+        activateTab(tab.dataset.tab);
+        event.preventDefault();
+      } catch (error) {
+        console.error('Konnte mobilen Reiter nicht wechseln', error);
+      }
     })
   );
   window.addEventListener('hashchange', () => activateTab(window.location.hash.replace('#', ''), false));
   const initialHash = window.location.hash.replace('#', '');
-  activateTab(initialHash || defaultTab, false);
+  let initialTab = initialHash;
+  if (!initialTab) {
+    try {
+      const url = new URL(window.location.href);
+      initialTab = url.searchParams.get('tab') || '';
+    } catch (error) {
+      initialTab = '';
+    }
+  }
+  activateTab(initialTab || defaultTab, false);
 }
 
 function registerModalHandling() {

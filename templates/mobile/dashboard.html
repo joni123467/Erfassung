@@ -179,20 +179,20 @@
                 <div class="mobile-card__header">
                     <h2 class="mobile-card__title">Übersicht</h2>
                     <div class="mobile-segmented" role="group" aria-label="Darstellung wählen">
-                        <a class="mobile-segmented__button {% if overview_mode == 'day' %}is-active{% endif %}" href="{{ request.url_for('mobile_dashboard') }}?overview=day&amp;date={{ overview_reference_date.isoformat() }}#uebersicht" {% if overview_mode == 'day' %}aria-current="page"{% endif %}>Tag</a>
-                        <a class="mobile-segmented__button {% if overview_mode == 'week' %}is-active{% endif %}" href="{{ request.url_for('mobile_dashboard') }}?overview=week&amp;date={{ overview_reference_date.isoformat() }}#uebersicht" {% if overview_mode == 'week' %}aria-current="page"{% endif %}>Woche</a>
+                        <a class="mobile-segmented__button {% if overview_mode == 'day' %}is-active{% endif %}" href="{{ request.url_for('mobile_dashboard') }}?tab=uebersicht&amp;overview=day&amp;date={{ overview_reference_date.isoformat() }}#uebersicht" {% if overview_mode == 'day' %}aria-current="page"{% endif %}>Tag</a>
+                        <a class="mobile-segmented__button {% if overview_mode == 'week' %}is-active{% endif %}" href="{{ request.url_for('mobile_dashboard') }}?tab=uebersicht&amp;overview=week&amp;date={{ overview_reference_date.isoformat() }}#uebersicht" {% if overview_mode == 'week' %}aria-current="page"{% endif %}>Woche</a>
                     </div>
                 </div>
 
                 {% if overview_mode == 'week' %}
                     <div class="mobile-overview-nav" aria-label="Woche wechseln">
-                        <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=week&amp;date={{ overview_week.prev.isoformat() }}#uebersicht" aria-label="Vorherige Woche">&lsaquo;</a>
+                        <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?tab=uebersicht&amp;overview=week&amp;date={{ overview_week.prev.isoformat() }}#uebersicht" aria-label="Vorherige Woche">&lsaquo;</a>
                         <span class="mobile-overview-nav__label">
                             <strong>KW {{ overview_week.week_number }}</strong>
                             <small>{{ overview_week.week_start.strftime('%d.%m.') }} – {{ overview_week.week_end.strftime('%d.%m.%Y') }}</small>
                         </span>
                         {% if overview_week.can_go_next %}
-                            <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=week&amp;date={{ overview_week.next.isoformat() }}#uebersicht" aria-label="Nächste Woche">&rsaquo;</a>
+                            <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?tab=uebersicht&amp;overview=week&amp;date={{ overview_week.next.isoformat() }}#uebersicht" aria-label="Nächste Woche">&rsaquo;</a>
                         {% else %}
                             <span class="mobile-nav-button is-disabled" aria-hidden="true">&rsaquo;</span>
                         {% endif %}
@@ -227,7 +227,7 @@
                     </ul>
                 {% else %}
                     <div class="mobile-overview-nav" aria-label="Tag wechseln">
-                        <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=day&amp;date={{ overview_day.prev.isoformat() }}#uebersicht" aria-label="Vorheriger Tag">&lsaquo;</a>
+                        <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?tab=uebersicht&amp;overview=day&amp;date={{ overview_day.prev.isoformat() }}#uebersicht" aria-label="Vorheriger Tag">&lsaquo;</a>
                         <span class="mobile-overview-nav__label">
                             <strong>{{ overview_day.date.strftime('%A, %d.%m.%Y') }}</strong>
                             {% if overview_day.is_today %}
@@ -235,7 +235,7 @@
                             {% endif %}
                         </span>
                         {% if overview_day.can_go_next %}
-                            <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=day&amp;date={{ overview_day.next.isoformat() }}#uebersicht" aria-label="Nächster Tag">&rsaquo;</a>
+                            <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?tab=uebersicht&amp;overview=day&amp;date={{ overview_day.next.isoformat() }}#uebersicht" aria-label="Nächster Tag">&rsaquo;</a>
                         {% else %}
                             <span class="mobile-nav-button is-disabled" aria-hidden="true">&rsaquo;</span>
                         {% endif %}
