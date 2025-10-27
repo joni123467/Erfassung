@@ -225,7 +225,7 @@ function registerTabHandling() {
   const validTabs = new Set(tabs.map((tab) => tab.dataset.tab));
   const defaultTab = tabs.find((tab) => tab.classList.contains('is-active'))?.dataset.tab || 'buchung';
 
-  function activateTab(tabName, updateHash = true) {
+  function activateTab(tabName, updateHistory = true) {
     if (!validTabs.has(tabName)) {
       tabName = defaultTab;
     }
@@ -239,11 +239,13 @@ function registerTabHandling() {
       panel.classList.toggle('is-active', isActive);
       panel.toggleAttribute('hidden', !isActive);
     });
-    if (updateHash) {
+    if (updateHistory) {
       const newHash = `#${tabName}`;
       if (history.replaceState) {
-        const { pathname, search } = window.location;
-        history.replaceState(null, '', `${pathname}${search}${newHash}`);
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', tabName);
+        url.hash = newHash;
+        history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
       } else {
         window.location.hash = newHash;
       }
@@ -258,7 +260,16 @@ function registerTabHandling() {
   );
   window.addEventListener('hashchange', () => activateTab(window.location.hash.replace('#', ''), false));
   const initialHash = window.location.hash.replace('#', '');
-  activateTab(initialHash || defaultTab, false);
+  let initialTab = initialHash;
+  if (!initialTab) {
+    try {
+      const url = new URL(window.location.href);
+      initialTab = url.searchParams.get('tab') || '';
+    } catch (error) {
+      initialTab = '';
+    }
+  }
+  activateTab(initialTab || defaultTab, false);
 }
 
 function registerModalHandling() {
