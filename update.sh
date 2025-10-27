@@ -263,11 +263,15 @@ cd "$CURRENT_DIR"
 
 deactivate
 
-if command -v systemctl >/dev/null 2>&1; then
-    if systemctl list-unit-files | grep -q '^erfassung\.service'; then
-        echo "🔁 Starte Dienst erfassung.service neu..."
-        if ! run_as_root systemctl restart erfassung.service; then
-            echo "⚠️  Der Dienst konnte nicht neu gestartet werden." >&2
+if [ "${ERFASSUNG_SKIP_SERVICE_RESTART:-0}" = "1" ]; then
+    echo "ℹ️  Neustart des Dienstes wurde übersprungen (ERFASSUNG_SKIP_SERVICE_RESTART=1)."
+else
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl list-unit-files | grep -q '^erfassung\.service'; then
+            echo "🔁 Starte Dienst erfassung.service neu..."
+            if ! run_as_root systemctl restart erfassung.service; then
+                echo "⚠️  Der Dienst konnte nicht neu gestartet werden." >&2
+            fi
         fi
     fi
 fi

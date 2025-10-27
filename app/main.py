@@ -190,7 +190,7 @@ def _list_remote_branches(repo_url: str) -> List[str]:
     return sorted(refs, key=_update_ref_sort_key)
 
 
-def _execute_update(ref: str, repo_url: str) -> bool:
+def _execute_update(ref: str, repo_url: str, skip_service_restart: bool = False) -> bool:
     UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     cleanup_error: OSError | None = None
     try:
@@ -214,6 +214,8 @@ def _execute_update(ref: str, repo_url: str) -> bool:
     ]
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    if skip_service_restart:
+        env["ERFASSUNG_SKIP_SERVICE_RESTART"] = "1"
     try:
         log_file_handle = UPDATE_LOG_PATH.open("w", encoding="utf-8")
     except OSError as exc:
@@ -257,6 +259,39 @@ def _execute_update(ref: str, repo_url: str) -> bool:
         log_file.write(f"[{end_stamp}] ❌ Update fehlgeschlagen (Exit {return_code})\n\n")
         log_file.flush()
         return False
+
+
+def _running_under_systemd_service() -> bool:
+    return bool(os.environ.get("INVOCATION_ID"))
+
+
+def _schedule_service_restart(delay_seconds: int = 5) -> bool:
+    systemd_run = shutil.which("systemd-run")
+    systemctl_path = shutil.which("systemctl")
+    if not systemd_run or not systemctl_path:
+        return False
+    try:
+        delay = max(int(delay_seconds), 0)
+    except (TypeError, ValueError):
+        delay = 0
+    command = [
+        systemd_run,
+        "--quiet",
+        f"--on-active={delay}",
+        systemctl_path,
+        "restart",
+        "erfassung.service",
+    ]
+    try:
+        subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError:
+        return False
+    return True
 
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
@@ -1843,6 +1878,7 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
     if selected_state_param:
         selected_state_param = selected_state_param.upper()
     selected_year_param = request.query_params.get("holiday_year")
+    refresh_requested = request.query_params.get("refresh") == "1"
     default_region = crud.get_default_holiday_region(db)
     selected_state = selected_state_param if selected_state_param in HOLIDAY_STATE_CODES else None
     if not selected_state:
@@ -1851,7 +1887,30 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
         selected_year = int(selected_year_param) if selected_year_param else date.today().year
     except ValueError:
         selected_year = date.today().year
-    holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
+    current_year = date.today().year
+    min_year = 2000
+    max_year = 2100
+    year_options = list(
+        range(
+            max(min_year, current_year - 5),
+            min(max_year, current_year + 6),
+        )
+    )
+    if selected_year not in year_options:
+        year_options.append(selected_year)
+        year_options.sort()
+    holidays = []
+    auto_synced = False
+    if refresh_requested:
+        holidays = holiday_calculator.ensure_holidays(db, selected_year, selected_state)
+        auto_synced = True
+    else:
+        holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
+        if not holidays:
+            holidays = holiday_calculator.ensure_holidays(db, selected_year, selected_state)
+            auto_synced = True
+    if auto_synced and not message:
+        message = f"{len(holidays)} Feiertage aktualisiert"
     return _admin_template(
         "admin/holidays.html",
         request,
@@ -1862,6 +1921,7 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
         holiday_states=HOLIDAY_STATE_CHOICES,
         selected_state=selected_state,
         selected_year=selected_year,
+        holiday_year_options=year_options,
     )
 
 
@@ -2704,8 +2764,13 @@ def admin_system_trigger_update(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     chosen_ref = (custom_ref or "").strip() or (ref or preferred_branch)
     repo_url = DEFAULT_UPDATE_REPO
+    skip_restart = _running_under_systemd_service()
     try:
-        success = _execute_update(chosen_ref, repo_url)
+        success = _execute_update(
+            chosen_ref,
+            repo_url,
+            skip_service_restart=skip_restart,
+        )
     except Exception:
         redirect = _build_redirect(
             "/admin/system",
@@ -2714,9 +2779,19 @@ def admin_system_trigger_update(
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if success:
+        message = "Update erfolgreich abgeschlossen."
+        if skip_restart:
+            if _schedule_service_restart():
+                message = (
+                    "Update erfolgreich abgeschlossen. Dienst wird in Kürze neu gestartet."
+                )
+            else:
+                message = (
+                    "Update erfolgreich abgeschlossen. Bitte Dienst manuell neu starten."
+                )
         redirect = _build_redirect(
             "/admin/system",
-            msg="Update erfolgreich abgeschlossen.",
+            msg=message,
             ref=chosen_ref,
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
