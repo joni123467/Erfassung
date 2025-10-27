@@ -19,7 +19,11 @@
             </label>
             <label>
                 Jahr
-                <input type="number" name="holiday_year" value="{{ selected_year }}" min="2000" max="2100">
+                <select name="holiday_year">
+                    {% for year_option in holiday_year_options %}
+                        <option value="{{ year_option }}" {% if selected_year == year_option %}selected{% endif %}>{{ year_option }}</option>
+                    {% endfor %}
+                </select>
             </label>
             <button type="submit" class="button small">Anzeigen</button>
         </form>
@@ -28,7 +32,11 @@
                 <input type="hidden" name="state" value="{{ selected_state }}">
                 <label>
                     Jahr synchronisieren
-                    <input type="number" name="year" value="{{ selected_year }}" min="2000" max="2100" required>
+                    <select name="year" required>
+                        {% for year_option in holiday_year_options %}
+                            <option value="{{ year_option }}" {% if selected_year == year_option %}selected{% endif %}>{{ year_option }}</option>
+                        {% endfor %}
+                    </select>
                 </label>
                 <button type="submit" class="button small">Feiertage laden</button>
             </form>

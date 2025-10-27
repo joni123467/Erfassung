@@ -1886,6 +1886,18 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
         selected_year = int(selected_year_param) if selected_year_param else date.today().year
     except ValueError:
         selected_year = date.today().year
+    current_year = date.today().year
+    min_year = 2000
+    max_year = 2100
+    year_options = list(
+        range(
+            max(min_year, current_year - 5),
+            min(max_year, current_year + 6),
+        )
+    )
+    if selected_year not in year_options:
+        year_options.append(selected_year)
+        year_options.sort()
     holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
     return _admin_template(
         "admin/holidays.html",
@@ -1897,6 +1909,7 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
         holiday_states=HOLIDAY_STATE_CHOICES,
         selected_state=selected_state,
         selected_year=selected_year,
+        holiday_year_options=year_options,
     )
 
 
