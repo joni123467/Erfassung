@@ -15,7 +15,12 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+
+try:  # FastAPI <=0.75 did not re-export BackgroundTasks
+    from fastapi import BackgroundTasks
+except ImportError:  # pragma: no cover - fallback for older FastAPI releases
+    from starlette.background import BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -986,19 +991,25 @@ def logout(request: Request):
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
-def _build_dashboard_context(db: Session, user: models.User):
-    today = date.today()
-    reference_month = today
-    metrics = services.calculate_dashboard_metrics(db, user.id, reference_month)
-    active_entry = crud.get_open_time_entry(db, user.id)
-    holiday_region = crud.get_default_holiday_region(db)
-    holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
-    holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
-    companies = crud.get_companies(db)
-    daily_entries = crud.get_time_entries_for_user(db, user.id, start=today, end=today)
-    daily_entries = sorted(daily_entries, key=lambda entry: (entry.start_time, entry.id))
-    daily_total_minutes = sum(entry.worked_minutes for entry in daily_entries)
-    week_start = today - timedelta(days=today.weekday())
+def _build_daily_overview(db: Session, user_id: int, target_date: date) -> dict[str, object]:
+    entries = crud.get_time_entries_for_user(db, user_id, start=target_date, end=target_date)
+    entries = sorted(entries, key=lambda entry: (entry.start_time, entry.id))
+    total_minutes = sum(entry.worked_minutes for entry in entries)
+    return {
+        "date": target_date,
+        "entries": entries,
+        "total_minutes": total_minutes,
+    }
+
+
+def _build_weekly_overview(
+    db: Session,
+    user: models.User,
+    reference_date: date,
+    today: Optional[date] = None,
+) -> dict[str, object]:
+    reference_today = today or date.today()
+    week_start = reference_date - timedelta(days=reference_date.weekday())
     week_end = week_start + timedelta(days=6)
     weekly_entries = crud.get_time_entries_for_user(db, user.id, start=week_start, end=week_end)
     weekly_vacations = crud.get_vacations_in_range(
@@ -1018,12 +1029,20 @@ def _build_dashboard_context(db: Session, user: models.User):
     weekly_total_minutes = sum(entry.worked_minutes for entry in weekly_entries) + weekly_vacation_minutes
     weekly_target_minutes = int(round(user.weekly_target_minutes or 0)) if user else 0
     daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
-    elapsed_workdays = sum(
-        1
-        for offset in range((today - week_start).days + 1)
-        if (week_start + timedelta(days=offset)).weekday() < 5 and (week_start + timedelta(days=offset)) <= today
-    )
-    expected_minutes_to_date = elapsed_workdays * daily_target_minutes
+
+    if week_end < reference_today:
+        expected_minutes_to_date = weekly_target_minutes
+    elif week_start > reference_today:
+        expected_minutes_to_date = 0
+    else:
+        days_delta = (min(reference_today, week_end) - week_start).days + 1
+        elapsed_workdays = sum(
+            1
+            for offset in range(days_delta)
+            if (week_start + timedelta(days=offset)).weekday() < 5
+        )
+        expected_minutes_to_date = elapsed_workdays * daily_target_minutes
+
     remaining_week_minutes = max(weekly_target_minutes - weekly_total_minutes, 0)
     progress_percent = (
         min(int(round((weekly_total_minutes / weekly_target_minutes) * 100)), 100)
@@ -1035,6 +1054,7 @@ def _build_dashboard_context(db: Session, user: models.User):
         if expected_minutes_to_date
         else 0
     )
+
     week_days = []
     current_day = week_start
     while current_day <= week_end:
@@ -1051,11 +1071,12 @@ def _build_dashboard_context(db: Session, user: models.User):
                 "worked_minutes": work_minutes,
                 "vacation_minutes": vacation_minutes,
                 "target_minutes": target_for_day,
-                "is_today": current_day == today,
+                "is_today": current_day == reference_today,
             }
         )
         current_day += timedelta(days=1)
-    weekly_summary = {
+
+    return {
         "week_start": week_start,
         "week_end": week_end,
         "total_minutes": weekly_total_minutes,
@@ -1067,6 +1088,22 @@ def _build_dashboard_context(db: Session, user: models.User):
         "days": week_days,
         "vacation_minutes": weekly_vacation_minutes,
     }
+
+
+def _build_dashboard_context(db: Session, user: models.User):
+    today = date.today()
+    reference_month = today
+    metrics = services.calculate_dashboard_metrics(db, user.id, reference_month)
+    active_entry = crud.get_open_time_entry(db, user.id)
+    holiday_region = crud.get_default_holiday_region(db)
+    holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
+    holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
+    companies = crud.get_companies(db)
+    daily_overview = _build_daily_overview(db, user.id, today)
+    weekly_summary = _build_weekly_overview(db, user, today, today=today)
+    daily_entries = daily_overview["entries"]
+    daily_total_minutes = daily_overview["total_minutes"]
+    daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
     return {
         "metrics": metrics,
         "holidays": holidays,
@@ -1080,7 +1117,28 @@ def _build_dashboard_context(db: Session, user: models.User):
         "daily_total_minutes": daily_total_minutes,
         "today": today,
         "weekly_summary": weekly_summary,
+        "daily_target_minutes": daily_target_minutes,
     }
+
+
+def _build_mobile_tab_urls(request: Request, tab_names: tuple[str, ...]) -> dict[str, str]:
+    try:
+        base_items = [item for item in request.query_params.multi_items() if item[0] != "tab"]
+    except AttributeError:  # pragma: no cover - older Starlette versions
+        base_items = [(key, value) for key, value in request.query_params.items() if key != "tab"]
+
+    base_path = request.url.path
+    base_prefix = ""
+    if request.scope.get("root_path"):
+        base_prefix = request.scope["root_path"].rstrip("/")
+
+    def build_url(tab_name: str) -> str:
+        params = base_items + [("tab", tab_name)]
+        query = urlencode(params, doseq=True)
+        path = f"{base_prefix}{base_path}" or base_path
+        return f"{path}?{query}" if query else path
+
+    return {tab: build_url(tab) for tab in tab_names}
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -1106,6 +1164,55 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     context = _build_dashboard_context(db, user)
+    tab_param = request.query_params.get("tab", "buchung").lower()
+    if tab_param not in {"buchung", "uebersicht", "salden"}:
+        tab_param = "buchung"
+
+    overview_mode = request.query_params.get("overview", "day").lower()
+    if overview_mode not in {"day", "week"}:
+        overview_mode = "day"
+    reference_param = request.query_params.get("date")
+    reference_date: Optional[date] = None
+    if reference_param:
+        try:
+            reference_date = date.fromisoformat(reference_param)
+        except ValueError:
+            reference_date = None
+    if reference_date is None:
+        reference_date = context["today"]
+
+    overview_context: dict[str, object] = {
+        "overview_mode": overview_mode,
+        "overview_reference_date": reference_date,
+    }
+    if overview_mode == "week":
+        week_overview = _build_weekly_overview(db, user, reference_date, today=context["today"])
+        week_overview.update(
+            {
+                "reference_date": reference_date,
+                "prev": week_overview["week_start"] - timedelta(days=7),
+                "next": week_overview["week_start"] + timedelta(days=7),
+                "can_go_next": week_overview["week_end"] < context["today"],
+                "week_number": week_overview["week_start"].isocalendar()[1],
+                "balance_minutes": week_overview["total_minutes"] - week_overview["target_minutes"],
+                "is_current_week": week_overview["week_start"] <= context["today"] <= week_overview["week_end"],
+            }
+        )
+        overview_context["overview_week"] = week_overview
+    else:
+        day_overview = _build_daily_overview(db, user.id, reference_date)
+        target_minutes = int(context.get("daily_target_minutes", 0))
+        day_overview.update(
+            {
+                "prev": day_overview["date"] - timedelta(days=1),
+                "next": day_overview["date"] + timedelta(days=1),
+                "can_go_next": day_overview["date"] < context["today"],
+                "is_today": day_overview["date"] == context["today"],
+                "target_minutes": target_minutes,
+                "balance_minutes": day_overview["total_minutes"] - target_minutes,
+            }
+        )
+        overview_context["overview_day"] = day_overview
     context.update(
         {
             "request": request,
@@ -1113,8 +1220,12 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
             "message": request.query_params.get("msg"),
             "error": request.query_params.get("error"),
             "mobile": True,
+            "active_tab": tab_param,
+            "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden")),
+            "hide_navigation": True,
         }
     )
+    context.update(overview_context)
     return templates.TemplateResponse("mobile/dashboard.html", context)
 
 
