@@ -25,6 +25,11 @@ body {
     min-height: 100vh;
 }
 
+body.is-mobile .page {
+    padding-bottom: 5rem;
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+}
+
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]),
 select,
 textarea {
@@ -1916,9 +1921,17 @@ tr.status-rejected td {
 }
 
 .mobile-panel {
+    display: none;
+}
+
+.mobile-panel.is-active {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+}
+
+.mobile-panel[hidden] {
+    display: none !important;
 }
 
 .mobile-card {
@@ -1957,6 +1970,52 @@ tr.status-rejected td {
 
 .mobile-card__header .mobile-card__title {
     margin: 0;
+}
+
+.mobile-account-footer {
+    margin-top: 2rem;
+    padding: 1.25rem 1rem;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -10px 25px rgba(18, 46, 108, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.mobile-account-footer__user {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.mobile-account-footer__name {
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.mobile-account-footer__group {
+    color: var(--text-muted);
+}
+
+.mobile-account-footer__logout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 999px;
+    background: var(--brand);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    box-shadow: 0 12px 24px rgba(29, 126, 208, 0.25);
+}
+
+.mobile-account-footer__logout:hover,
+.mobile-account-footer__logout:focus-visible {
+    background: var(--brand-dark);
 }
 
 .mobile-card--overview {
