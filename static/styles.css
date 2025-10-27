@@ -121,6 +121,16 @@ textarea:focus {
     font-size: 1rem;
 }
 
+.timetac-nav-link--mobile {
+    display: none;
+}
+
+@media (max-width: 900px) {
+    .timetac-nav-link--mobile {
+        display: inline-flex;
+    }
+}
+
 .timetac-header__profile {
     display: flex;
     align-items: center;
@@ -1697,4 +1707,341 @@ tr.status-rejected td {
     .login-card {
         margin: 2rem 1rem;
     }
+}
+
+/* Mobile dashboard */
+.mobile-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+}
+
+@media (min-width: 768px) {
+    .mobile-dashboard {
+        max-width: 480px;
+        margin: 0 auto;
+    }
+}
+
+.mobile-dashboard__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 1rem 1.25rem;
+    box-shadow: 0 10px 30px rgba(18, 46, 108, 0.08);
+}
+
+.mobile-dashboard__title {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.mobile-dashboard__date {
+    margin: 0.25rem 0 0;
+    font-size: 0.95rem;
+    color: var(--text-muted);
+}
+
+.mobile-dashboard__status {
+    margin: 0;
+    font-size: 0.9rem;
+    text-align: right;
+}
+
+.mobile-dashboard__status--idle {
+    color: var(--text-muted);
+}
+
+.mobile-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--brand);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.mobile-badge--running {
+    background: rgba(46, 125, 50, 0.15);
+    color: var(--success);
+}
+
+.mobile-badge--break {
+    background: rgba(255, 193, 7, 0.2);
+    color: #b57a00;
+}
+
+.mobile-tabs {
+    display: flex;
+    gap: 0.5rem;
+    background: transparent;
+}
+
+.mobile-tab {
+    flex: 1;
+    padding: 0.75rem 0.5rem;
+    border: none;
+    border-radius: 999px;
+    background: rgba(29, 126, 208, 0.1);
+    color: var(--brand);
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mobile-tab:focus-visible {
+    outline: 3px solid rgba(29, 126, 208, 0.35);
+    outline-offset: 2px;
+}
+
+.mobile-tab.is-active {
+    background: var(--brand);
+    color: #fff;
+    box-shadow: 0 10px 25px rgba(29, 126, 208, 0.35);
+}
+
+.mobile-panels {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.mobile-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.mobile-card {
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 1.25rem;
+    box-shadow: 0 12px 35px rgba(18, 46, 108, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.mobile-card--hint {
+    background: rgba(255, 193, 7, 0.12);
+    box-shadow: none;
+}
+
+.mobile-card__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+
+.mobile-card__text {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.mobile-card__section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.mobile-action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+}
+
+.mobile-action-grid form,
+.mobile-action-grid button {
+    width: 100%;
+}
+
+.mobile-button {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    border: none;
+    background: rgba(29, 126, 208, 0.12);
+    color: var(--brand);
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.mobile-button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 20px rgba(29, 126, 208, 0.2);
+}
+
+.mobile-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.mobile-button.primary {
+    background: var(--brand);
+    color: #fff;
+}
+
+.mobile-button.danger {
+    background: var(--danger);
+    color: #fff;
+}
+
+.mobile-button.ghost {
+    background: rgba(29, 126, 208, 0.08);
+}
+
+.mobile-entry-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.mobile-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.85rem;
+    border-radius: 12px;
+    background: rgba(29, 126, 208, 0.08);
+}
+
+.mobile-entry.is-active {
+    border: 1px solid var(--brand);
+    box-shadow: inset 0 0 0 1px rgba(29, 126, 208, 0.35);
+}
+
+.mobile-entry__times {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.mobile-entry__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.mobile-entry__notes {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(42, 52, 68, 0.08);
+    color: var(--text);
+}
+
+.mobile-empty-state {
+    margin: 0;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.mobile-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+    margin: 0;
+}
+
+.mobile-stats-grid div {
+    background: rgba(29, 126, 208, 0.06);
+    border-radius: 12px;
+    padding: 0.75rem;
+}
+
+.mobile-stats-grid dt {
+    margin: 0;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.mobile-stats-grid dd {
+    margin: 0.35rem 0 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.mobile-week-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.mobile-week-day {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    border-radius: 12px;
+    background: rgba(42, 52, 68, 0.06);
+}
+
+.mobile-week-day.is-today {
+    background: rgba(29, 126, 208, 0.18);
+    font-weight: 600;
+}
+
+.mobile-week-day__label {
+    color: var(--text-muted);
+}
+
+.mobile-week-day__minutes {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.mobile-holiday-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.mobile-holiday-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    border-radius: 12px;
+    background: rgba(29, 126, 208, 0.08);
+}
+
+.mobile-holiday-list span {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.mobile-holiday-list strong {
+    font-size: 0.95rem;
 }

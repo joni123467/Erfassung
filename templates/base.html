@@ -19,6 +19,10 @@
             <span class="timetac-nav-link__icon" aria-hidden="true">🏠</span>
             <span>Dashboard</span>
         </a>
+        <a href="/mobile" class="timetac-nav-link timetac-nav-link--mobile {% if request.url.path == '/mobile' %}is-active{% endif %}">
+            <span class="timetac-nav-link__icon" aria-hidden="true">📱</span>
+            <span>Mobile</span>
+        </a>
         <a href="/records" class="timetac-nav-link {% if request.url.path.startswith('/records') %}is-active{% endif %}">
             <span class="timetac-nav-link__icon" aria-hidden="true">🗂️</span>
             <span>Buchungen &amp; Urlaub</span>
