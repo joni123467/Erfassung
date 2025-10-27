@@ -8,11 +8,25 @@ DEFAULT_APP_DIR="/opt/erfassung"
 DEFAULT_REPO_URL="https://github.com/joni123467/Erfassung"
 DEFAULT_REPO_REF="main"
 
-VERSION_FILE="$DEFAULT_APP_DIR/VERSION"
-if [ -f "$VERSION_FILE" ]; then
-    CURRENT_VERSION=$(tr -d '\r\n' < "$VERSION_FILE")
-    if [ -n "$CURRENT_VERSION" ]; then
-        DEFAULT_REPO_REF="version-$CURRENT_VERSION"
+SCRIPT_VERSION=""
+if [ -n "${ERFASSUNG_SOURCE_DIR:-}" ] && [ -f "${ERFASSUNG_SOURCE_DIR}/VERSION" ]; then
+    SCRIPT_VERSION=$(tr -d '\r\n' < "${ERFASSUNG_SOURCE_DIR}/VERSION")
+else
+    SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+    if [ -f "$SCRIPT_DIR/VERSION" ]; then
+        SCRIPT_VERSION=$(tr -d '\r\n' < "$SCRIPT_DIR/VERSION")
+    fi
+fi
+
+if [ -n "$SCRIPT_VERSION" ]; then
+    DEFAULT_REPO_REF="version-$SCRIPT_VERSION"
+else
+    VERSION_FILE="$DEFAULT_APP_DIR/VERSION"
+    if [ -f "$VERSION_FILE" ]; then
+        CURRENT_VERSION=$(tr -d '\r\n' < "$VERSION_FILE")
+        if [ -n "$CURRENT_VERSION" ]; then
+            DEFAULT_REPO_REF="version-$CURRENT_VERSION"
+        fi
     fi
 fi
 
