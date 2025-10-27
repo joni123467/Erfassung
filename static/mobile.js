@@ -94,7 +94,13 @@ const queueStorage = (() => {
       const transaction = db.transaction(STORE_NAME, mode);
       const store = transaction.objectStore(STORE_NAME);
       const request = callback(store);
-      transaction.oncomplete = () => resolve(request?.result);
+      transaction.oncomplete = () => {
+        if (request && typeof request.result !== 'undefined') {
+          resolve(request.result);
+        } else {
+          resolve(undefined);
+        }
+      };
       transaction.onerror = () => reject(transaction.error);
     });
   }
@@ -223,10 +229,18 @@ function registerTabHandling() {
   const tabs = Array.from(document.querySelectorAll(TAB_SELECTOR));
   const panels = Array.from(document.querySelectorAll(PANEL_SELECTOR));
   const validTabs = new Set(tabs.map((tab) => tab.dataset.tab));
+  let defaultTab = 'buchung';
+  for (let index = 0; index < tabs.length; index += 1) {
+    const currentTab = tabs[index];
+    if (currentTab.classList.contains('is-active')) {
+      defaultTab = currentTab.dataset.tab || defaultTab;
+      break;
+    }
+  }
 
   function activateTab(tabName, updateHash = true) {
     if (!validTabs.has(tabName)) {
-      tabName = 'buchung';
+      tabName = defaultTab;
     }
     tabs.forEach((tab) => {
       const isActive = tab.dataset.tab === tabName;
@@ -241,16 +255,23 @@ function registerTabHandling() {
     if (updateHash) {
       const newHash = `#${tabName}`;
       if (history.replaceState) {
-        history.replaceState(null, '', newHash);
+        const { pathname, search } = window.location;
+        history.replaceState(null, '', `${pathname}${search}${newHash}`);
       } else {
         window.location.hash = newHash;
       }
     }
   }
 
-  tabs.forEach((tab) => tab.addEventListener('click', () => activateTab(tab.dataset.tab)));
+  tabs.forEach((tab) =>
+    tab.addEventListener('click', (event) => {
+      event.preventDefault();
+      activateTab(tab.dataset.tab);
+    })
+  );
   window.addEventListener('hashchange', () => activateTab(window.location.hash.replace('#', ''), false));
-  activateTab(window.location.hash.replace('#', '') || 'buchung', false);
+  const initialHash = window.location.hash.replace('#', '');
+  activateTab(initialHash || defaultTab, false);
 }
 
 function registerModalHandling() {

@@ -12,7 +12,8 @@
     <meta name="theme-color" content="#1d7ed0">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
+<body{% if mobile %} class="mobile-shell"{% endif %}>
+{% if not mobile %}
 <header class="timetac-header">
     <div class="timetac-header__brand">
         <span class="timetac-header__logo" aria-hidden="true">⌚</span>
@@ -20,6 +21,7 @@
         <span class="timetac-header__version">v{{ app_version }}</span>
     </div>
     {% if user %}
+    {% if not hide_navigation %}
     <nav class="timetac-header__nav" aria-label="Hauptnavigation">
         <a href="/dashboard" class="timetac-nav-link {% if request.url.path == '/dashboard' %}is-active{% endif %}">
             <span class="timetac-nav-link__icon" aria-hidden="true">🏠</span>
@@ -40,6 +42,7 @@
         </a>
         {% endif %}
     </nav>
+    {% endif %}
     <div class="timetac-header__profile">
         <div class="timetac-header__user">
             <span class="timetac-header__name">{{ user.full_name }}</span>
@@ -49,7 +52,9 @@
     </div>
     {% endif %}
 </header>
-<main class="page">
+{% endif %}
+<main class="page{% if mobile %} page--mobile{% endif %}">
+    {% if not mobile %}
     <div class="offline-banner" id="offline-banner" role="status" aria-live="polite" hidden>
         <span class="offline-banner__icon" aria-hidden="true">📡</span>
         <span class="offline-banner__text">
@@ -57,6 +62,7 @@
             <span id="offline-sync-status">Offline – Buchungen werden zwischengespeichert.</span>
         </span>
     </div>
+    {% endif %}
     {% if message %}
         <div class="alert alert-success">{{ message }}</div>
     {% endif %}
@@ -65,9 +71,11 @@
     {% endif %}
     {% block content %}{% endblock %}
 </main>
+{% if not mobile %}
 <footer class="page-footer">
     <p>Erfassung v{{ app_version }} &copy; {{ now().year }}</p>
 </footer>
+{% endif %}
 <script type="module" src="/static/app.js"></script>
 {% block scripts %}{% endblock %}
 </body>
