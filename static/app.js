@@ -35,7 +35,7 @@ function handleOnlineStatusChange() {
     updateBannerText('Verbindung wiederhergestellt.');
     setBannerVisibility(true, true);
   } else {
-    updateBannerText('Offline – Buchungen werden zwischengespeichert.');
+    updateBannerText('Offline – Aktionen werden zwischengespeichert.');
     setBannerVisibility(true);
   }
 }
