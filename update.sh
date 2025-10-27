@@ -18,9 +18,32 @@ else
     fi
 fi
 
+ARCHIVE_REF='$Format:%(describe:tags=true)$'
+ARCHIVE_REF_RESOLVED=""
+if [ "$ARCHIVE_REF" != '$Format:%(describe:tags=true)$' ]; then
+    ARCHIVE_REF_RESOLVED=${ARCHIVE_REF%%-g*}
+    case "$ARCHIVE_REF_RESOLVED" in
+        refs/tags/*)
+            ARCHIVE_REF_RESOLVED=${ARCHIVE_REF_RESOLVED#refs/tags/}
+            ;;
+        refs/heads/*)
+            ARCHIVE_REF_RESOLVED=${ARCHIVE_REF_RESOLVED#refs/heads/}
+            ;;
+    esac
+    if [ -z "$SCRIPT_VERSION" ]; then
+        case "$ARCHIVE_REF_RESOLVED" in
+            version-*)
+                SCRIPT_VERSION=${ARCHIVE_REF_RESOLVED#version-}
+                ;;
+        esac
+    fi
+fi
+
 if [ -n "$SCRIPT_VERSION" ]; then
     DEFAULT_REPO_REF="version-$SCRIPT_VERSION"
-else
+elif [ -n "$ARCHIVE_REF_RESOLVED" ]; then
+    DEFAULT_REPO_REF="$ARCHIVE_REF_RESOLVED"
+elif [ "${ERFASSUNG_NO_BOOTSTRAP:-0}" = "1" ]; then
     VERSION_FILE="$DEFAULT_APP_DIR/VERSION"
     if [ -f "$VERSION_FILE" ]; then
         CURRENT_VERSION=$(tr -d '\r\n' < "$VERSION_FILE")
@@ -33,6 +56,7 @@ fi
 APP_DIR="$DEFAULT_APP_DIR"
 REPO_URL="$DEFAULT_REPO_URL"
 REPO_REF="$DEFAULT_REPO_REF"
+REPO_REF_WAS_EXPLICIT=0
 
 print_help() {
     cat <<USAGE
@@ -70,6 +94,7 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             fi
             REPO_REF="$2"
+            REPO_REF_WAS_EXPLICIT=1
             shift 2
             ;;
         -h|--help)
@@ -101,7 +126,57 @@ download_file() {
     return 1
 }
 
+fetch_latest_release_ref() {
+    repo_url="$1"
+
+    case "$repo_url" in
+        https://github.com/*/*)
+            api_url="https://api.github.com/repos/${repo_url#https://github.com/}/releases/latest"
+            ;;
+        https://api.github.com/repos/*)
+            api_url="${repo_url%/}/releases/latest"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    if command -v curl >/dev/null 2>&1; then
+        response=$(curl -fsSL "$api_url" 2>/dev/null || true)
+    elif command -v wget >/dev/null 2>&1; then
+        response=$(wget -q -O - "$api_url" 2>/dev/null || true)
+    else
+        return 1
+    fi
+
+    if [ -z "$response" ]; then
+        return 1
+    fi
+
+    latest_tag=$(printf '%s' "$response" |
+        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"[:cntrl:]]*\)".*/\1/p' |
+        head -n 1)
+
+    if [ -n "$latest_tag" ]; then
+        printf '%s\n' "$latest_tag"
+        return 0
+    fi
+
+    return 1
+}
+
 if [ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]; then
+    if [ "$REPO_REF_WAS_EXPLICIT" -eq 0 ]; then
+        if LATEST_REF=$(fetch_latest_release_ref "$REPO_URL") && [ -n "$LATEST_REF" ]; then
+            if [ "$REPO_REF" != "$LATEST_REF" ]; then
+                echo "ℹ️  Verwende neueste Release-Version ${LATEST_REF}."
+            fi
+            REPO_REF="$LATEST_REF"
+        else
+            echo "⚠️  Neueste Release-Version konnte nicht ermittelt werden, verwende ${REPO_REF}." >&2
+        fi
+    fi
+
     TMP_DIR=$(mktemp -d)
     cleanup_bootstrap() {
         rm -rf "$TMP_DIR"
@@ -110,16 +185,33 @@ if [ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]; then
     ARCHIVE_PATH="$TMP_DIR/source.tar.gz"
 
     REPO_URL=${REPO_URL%/}
-    ARCHIVE_URL="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz"
 
-    echo "⬇️  Lade aktuelle Update-Routine von ${ARCHIVE_URL}..."
-    if ! download_file "$ARCHIVE_URL" "$ARCHIVE_PATH"; then
-        ALT_ARCHIVE_URL="${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz"
-        echo "⚠️  Branch-Download fehlgeschlagen, versuche Tag ${ALT_ARCHIVE_URL}..."
-        if ! download_file "$ALT_ARCHIVE_URL" "$ARCHIVE_PATH"; then
-            echo "Fehler: Update-Paket konnte nicht geladen werden." >&2
-            exit 1
+    CANDIDATE_URLS="${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz"
+    case "$REPO_REF" in
+        */*)
+            CANDIDATE_URLS="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz $CANDIDATE_URLS"
+            ;;
+        version-*|v*)
+            CANDIDATE_URLS="${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz ${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz"
+            ;;
+        *)
+            CANDIDATE_URLS="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz ${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz"
+            ;;
+    esac
+
+    DOWNLOAD_SUCCESS=0
+    for ARCHIVE_URL in $CANDIDATE_URLS; do
+        echo "⬇️  Lade aktuelle Update-Routine von ${ARCHIVE_URL}..."
+        if download_file "$ARCHIVE_URL" "$ARCHIVE_PATH"; then
+            DOWNLOAD_SUCCESS=1
+            break
         fi
+        echo "⚠️  Konnte ${ARCHIVE_URL} nicht laden, versuche alternative Quelle..."
+    done
+
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ]; then
+        echo "Fehler: Update-Paket konnte nicht geladen werden." >&2
+        exit 1
     fi
 
     echo "📦 Entpacke Update-Paket..."
