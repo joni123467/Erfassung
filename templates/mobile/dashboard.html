@@ -1,28 +1,40 @@
 {% extends "base.html" %}
 {% block title %}Mobile Erfassung – Erfassung{% endblock %}
 {% block content %}
-<section class="mobile-dashboard" aria-label="Mobile Zeiterfassung">
+<section
+    class="mobile-dashboard"
+    aria-label="Mobile Zeiterfassung"
+    data-mobile-state="true"
+    data-state-running="{{ 'true' if active_entry else 'false' }}"
+    data-state-break="{{ 'true' if active_entry and active_entry.break_started_at else 'false' }}"
+    data-state-company="{{ 'true' if active_entry and active_entry.company_id is not none else 'false' }}"
+    data-start-timestamp="{{ (active_entry.work_date.isoformat() ~ 'T' ~ active_entry.start_time.strftime('%H:%M:%S')) if active_entry else '' }}"
+    data-start-label="{{ active_entry.start_time.strftime('%H:%M') if active_entry else '' }}"
+    data-worked-label="{{ active_entry.worked_minutes|format_minutes if active_entry else '0:00' }}"
+    data-total-break-minutes="{{ active_entry.total_break_minutes if active_entry else 0 }}"
+    data-break-timestamp="{{ (active_entry.work_date.isoformat() ~ 'T' ~ active_entry.break_started_at.strftime('%H:%M:%S')) if active_entry and active_entry.break_started_at else '' }}"
+    data-break-label="{{ active_entry.break_started_at.strftime('%H:%M') if active_entry and active_entry.break_started_at else '' }}"
+    data-break-total-label="{{ active_entry.total_break_minutes|format_minutes if active_entry else '0:00' }}"
+    data-company-name="{{ active_entry.company.name if active_entry and active_entry.company else '' }}"
+>
     <header class="mobile-dashboard__header">
         <div>
             <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
             <p class="mobile-dashboard__date">{{ today.strftime('%A, %d.%m.%Y') }}</p>
         </div>
-        {% if active_entry %}
-            <p class="mobile-dashboard__status">
-                <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
-                seit {{ active_entry.start_time.strftime('%H:%M') }} Uhr
-            </p>
-        {% else %}
-            <p class="mobile-dashboard__status mobile-dashboard__status--idle">
-                <span class="mobile-badge">Bereit</span>
-                Du kannst deine Arbeitszeit jetzt starten.
-            </p>
-        {% endif %}
+        <p class="mobile-dashboard__status" data-state="active" {% if not active_entry %}hidden{% endif %}>
+            <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
+            seit <span data-field="header-start">{{ active_entry.start_time.strftime('%H:%M') if active_entry else '' }}</span> Uhr
+        </p>
+        <p class="mobile-dashboard__status mobile-dashboard__status--idle" data-state="idle" {% if active_entry %}hidden{% endif %}>
+            <span class="mobile-badge">Bereit</span>
+            Du kannst deine Arbeitszeit jetzt starten.
+        </p>
     </header>
 
     <aside class="mobile-queue" id="mobile-queue-info" aria-live="polite" hidden>
         <span class="mobile-badge mobile-badge--queued" aria-hidden="true">⏳</span>
-        <span id="mobile-sync-text">Offline-Buchungen werden synchronisiert.</span>
+        <span id="mobile-sync-text">Offline-Aktionen werden synchronisiert.</span>
         <strong class="mobile-queue__count"><span id="mobile-pending-count">0</span>x</strong>
     </aside>
 
@@ -57,69 +69,72 @@
             aria-selected="{{ 'true' if tab == 'salden' else 'false' }}"
             role="tab"
         >Salden</a>
+        <a
+            href="{{ tab_urls.urlaub }}#urlaub"
+            class="mobile-tab {% if tab == 'urlaub' %}is-active{% endif %}"
+            data-tab="urlaub"
+            id="mobile-tab-urlaub"
+            aria-controls="mobile-panel-urlaub"
+            aria-selected="{{ 'true' if tab == 'urlaub' else 'false' }}"
+            role="tab"
+        >Urlaub</a>
     </nav>
 
     <div class="mobile-panels">
         <section class="mobile-panel {% if tab == 'buchung' %}is-active{% endif %}" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung" {% if tab != 'buchung' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Schnell stempeln</h2>
-                {% if active_entry %}
-                    <div class="mobile-card__section">
-                        <p class="mobile-card__text">
-                            Gestartet um {{ active_entry.start_time.strftime('%H:%M') }} Uhr.
-                            {% if active_entry.company %}
-                                Auftrag: <strong>{{ active_entry.company.name }}</strong>.
-                            {% endif %}
-                        </p>
-                        <p class="mobile-card__text">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Std</p>
-                        {% if active_entry.break_started_at %}
-                            <p class="mobile-card__text">
-                                <span class="mobile-badge mobile-badge--break">Pause läuft</span>
-                                seit {{ active_entry.break_started_at.strftime('%H:%M') }} Uhr
-                            </p>
-                        {% else %}
-                            <p class="mobile-card__text">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
-                        {% endif %}
-                    </div>
-                    <div class="mobile-action-grid">
-                        <form method="post" action="/punch" data-offline="punch">
-                            <input type="hidden" name="next_url" value="/mobile">
-                            <input type="hidden" name="action" value="start_break">
-                            <button type="submit" class="mobile-button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
-                        </form>
-                        <form method="post" action="/punch" data-offline="punch">
-                            <input type="hidden" name="next_url" value="/mobile">
-                            <input type="hidden" name="action" value="end_break">
-                            <button type="submit" class="mobile-button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
-                        </form>
-                        {% if active_entry.company_id is not none %}
-                            <form method="post" action="/punch" data-offline="punch">
-                                <input type="hidden" name="next_url" value="/mobile">
-                                <input type="hidden" name="action" value="end_company">
-                                <button type="submit" class="mobile-button">Auftrag beenden</button>
-                            </form>
-                        {% endif %}
-                        <form method="post" action="/punch" data-offline="punch">
-                            <input type="hidden" name="next_url" value="/mobile">
-                            <input type="hidden" name="action" value="end_work">
-                            <button type="submit" class="mobile-button danger">Arbeitszeit beenden</button>
-                        </form>
-                    </div>
-                {% else %}
-                    <div class="mobile-card__section">
-                        <p class="mobile-card__text">Beginne deine Arbeitszeit mit einem Tipp.</p>
-                    </div>
-                    <div class="mobile-action-grid">
-                        <form method="post" action="/punch" data-offline="punch">
-                            <input type="hidden" name="next_url" value="/mobile">
-                            <input type="hidden" name="action" value="start_work">
-                            <button type="submit" class="mobile-button primary">Arbeitszeit starten</button>
-                        </form>
-                        {% if companies or can_create_companies %}
-                            <button type="button" class="mobile-button" data-open="mobile-order-modal">Auftrag starten</button>
-                        {% endif %}
-                    </div>
-                {% endif %}
+                <div class="mobile-card__section" data-state="active" {% if not active_entry %}hidden{% endif %}>
+                    <p class="mobile-card__text">
+                        Gestartet um <span data-field="work-start">{{ active_entry.start_time.strftime('%H:%M') if active_entry else '' }}</span> Uhr.
+                        <span data-state="company-active" {% if not (active_entry and active_entry.company) %}hidden{% endif %}>
+                            Auftrag: <strong data-field="company-name">{{ active_entry.company.name if active_entry and active_entry.company else '' }}</strong>.
+                        </span>
+                    </p>
+                    <p class="mobile-card__text">Aktuelle Arbeitszeit: <span data-field="worked-duration">{{ active_entry.worked_minutes|format_minutes if active_entry else '0:00' }}</span> Std</p>
+                    <p class="mobile-card__text" data-state="break-active" {% if not (active_entry and active_entry.break_started_at) %}hidden{% endif %}>
+                        <span class="mobile-badge mobile-badge--break">Pause läuft</span>
+                        seit <span data-field="break-start">{{ active_entry.break_started_at.strftime('%H:%M') if active_entry and active_entry.break_started_at else '' }}</span> Uhr
+                    </p>
+                    <p class="mobile-card__text" data-state="break-idle" {% if active_entry and active_entry.break_started_at %}hidden{% endif %}>
+                        Erfasste Pausen: <span data-field="break-total">{{ active_entry.total_break_minutes|format_minutes if active_entry else '0:00' }}</span> Std
+                    </p>
+                </div>
+                <div class="mobile-card__section" data-state="idle" {% if active_entry %}hidden{% endif %}>
+                    <p class="mobile-card__text">Beginne deine Arbeitszeit mit einem Tipp.</p>
+                </div>
+                <div class="mobile-action-grid" data-state="idle" {% if active_entry %}hidden{% endif %}>
+                    <form method="post" action="/punch" data-offline="punch">
+                        <input type="hidden" name="next_url" value="/mobile">
+                        <input type="hidden" name="action" value="start_work">
+                        <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
+                    </form>
+                    {% if companies or can_create_companies %}
+                        <button type="button" class="mobile-button" data-open="mobile-order-modal" data-toggle-disabled="true">Auftrag starten</button>
+                    {% endif %}
+                </div>
+                <div class="mobile-action-grid" data-state="active" {% if not active_entry %}hidden{% endif %}>
+                    <form method="post" action="/punch" data-offline="punch" data-state="break-idle">
+                        <input type="hidden" name="next_url" value="/mobile">
+                        <input type="hidden" name="action" value="start_break">
+                        <button type="submit" class="mobile-button ghost" data-toggle-disabled="true" {% if active_entry and active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
+                    </form>
+                    <form method="post" action="/punch" data-offline="punch" data-state="break-active">
+                        <input type="hidden" name="next_url" value="/mobile">
+                        <input type="hidden" name="action" value="end_break">
+                        <button type="submit" class="mobile-button ghost" data-toggle-disabled="true" {% if not (active_entry and active_entry.break_started_at) %}disabled{% endif %}>Pause beenden</button>
+                    </form>
+                    <form method="post" action="/punch" data-offline="punch" data-state="company-active" {% if not (active_entry and active_entry.company_id is not none) %}hidden{% endif %}>
+                        <input type="hidden" name="next_url" value="/mobile">
+                        <input type="hidden" name="action" value="end_company">
+                        <button type="submit" class="mobile-button" data-toggle-disabled="true">Auftrag beenden</button>
+                    </form>
+                    <form method="post" action="/punch" data-offline="punch">
+                        <input type="hidden" name="next_url" value="/mobile">
+                        <input type="hidden" name="action" value="end_work">
+                        <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
+                    </form>
+                </div>
             </div>
 
             {% if companies or can_create_companies %}
@@ -361,6 +376,108 @@
                         <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
                     </div>
                 </dl>
+            </div>
+        </section>
+        <section class="mobile-panel {% if tab == 'urlaub' %}is-active{% endif %}" id="mobile-panel-urlaub" data-tab-panel="urlaub" role="tabpanel" aria-labelledby="mobile-tab-urlaub" {% if tab != 'urlaub' %}hidden{% endif %}>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Urlaub beantragen</h2>
+                <form method="post" action="/vacations" class="mobile-form" data-offline="vacation">
+                    <label>
+                        Startdatum
+                        <input type="date" name="start_date" required>
+                    </label>
+                    <label>
+                        Enddatum
+                        <input type="date" name="end_date" required>
+                    </label>
+                    <label class="full-width">
+                        Kommentar
+                        <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
+                    </label>
+                    {% if user.overtime_vacation_enabled %}
+                        <label class="mobile-checkbox full-width">
+                            <input type="checkbox" name="use_overtime">
+                            Überstunden für diesen Antrag einsetzen ({{ user.daily_target_minutes|format_minutes }} Std pro Arbeitstag)
+                        </label>
+                    {% endif %}
+                    <div class="mobile-form__actions">
+                        <button type="submit" class="mobile-button primary">Urlaubsantrag senden</button>
+                    </div>
+                </form>
+                {% if pending_vacations %}
+                    <p class="mobile-card__hint">{{ pending_vacations }} offene Urlaubsanträge warten auf Freigabe.</p>
+                {% endif %}
+            </div>
+            <div class="mobile-card mobile-card--summary">
+                <h2 class="mobile-card__title">Urlaubsübersicht</h2>
+                <dl class="mobile-summary-list">
+                    <div>
+                        <dt>Jahresurlaub</dt>
+                        <dd>{{ metrics.vacation_summary.total_days|round(2) }} Tage</dd>
+                    </div>
+                    {% if metrics.vacation_summary.carryover_days > 0 %}
+                        <div>
+                            <dt>Übertrag</dt>
+                            <dd>{{ metrics.vacation_summary.carryover_days|round(2) }} Tage</dd>
+                        </div>
+                    {% endif %}
+                    <div>
+                        <dt>Genommen</dt>
+                        <dd>{{ metrics.vacation_summary.used_days|round(2) }} Tage</dd>
+                    </div>
+                    <div>
+                        <dt>Geplant</dt>
+                        <dd>{{ metrics.vacation_summary.planned_days|round(2) }} Tage</dd>
+                    </div>
+                    <div>
+                        <dt>Rest</dt>
+                        <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
+                    </div>
+                </dl>
+            </div>
+            <div class="mobile-card mobile-card--list">
+                <h2 class="mobile-card__title">Meine Anträge</h2>
+                {% set vacation_items = vacations|sort(attribute='start_date') %}
+                <ul class="mobile-vacation-list" data-vacation-list {% if not vacation_items %}hidden{% endif %}>
+                    {% for vacation in vacation_items[:8] %}
+                        {% if vacation.status == 'approved' %}
+                            {% set status_label = 'Genehmigt' %}
+                            {% set status_class = 'approved' %}
+                        {% elif vacation.status == 'pending' %}
+                            {% set status_label = 'Wartet auf Freigabe' %}
+                            {% set status_class = 'pending' %}
+                        {% elif vacation.status == 'withdraw_requested' %}
+                            {% set status_label = 'Rücknahme angefragt' %}
+                            {% set status_class = 'withdraw' %}
+                        {% elif vacation.status == 'cancelled' %}
+                            {% set status_label = 'Zurückgezogen' %}
+                            {% set status_class = 'cancelled' %}
+                        {% else %}
+                            {% set status_label = 'Abgelehnt' %}
+                            {% set status_class = 'rejected' %}
+                        {% endif %}
+                        <li class="mobile-vacation" data-status="{{ status_class }}">
+                            <header class="mobile-vacation__header">
+                                <strong>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</strong>
+                                <span class="mobile-vacation__status mobile-vacation__status--{{ status_class }}">{{ status_label }}</span>
+                            </header>
+                            <div class="mobile-vacation__meta">
+                                <span>{% if vacation.use_overtime %}Überstundenabbau{% else %}Urlaub{% endif %}</span>
+                                {% if vacation.comment %}
+                                    <span class="mobile-vacation__comment">{{ vacation.comment }}</span>
+                                {% endif %}
+                            </div>
+                            {% if vacation.status in ['pending', 'approved'] %}
+                                <form method="post" action="/vacations/{{ vacation.id }}/withdraw" class="mobile-vacation__action">
+                                    <button type="submit" class="mobile-link-button">Zurückziehen</button>
+                                </form>
+                            {% elif vacation.status == 'withdraw_requested' %}
+                                <span class="mobile-vacation__badge">In Prüfung</span>
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                </ul>
+                <p class="mobile-empty-state" data-vacation-empty {% if vacation_items %}hidden{% endif %}>Bisher keine Urlaubsanträge erstellt.</p>
             </div>
         </section>
     </div>
