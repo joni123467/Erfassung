@@ -28,14 +28,39 @@
 
     <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite" hidden></div>
 
+    {% set tab = active_tab or 'buchung' %}
     <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
-        <button type="button" class="mobile-tab is-active" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="true">Buchung</button>
-        <button type="button" class="mobile-tab" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="false">Übersicht</button>
-        <button type="button" class="mobile-tab" data-tab="salden" id="mobile-tab-salden" aria-controls="mobile-panel-salden" aria-selected="false">Salden</button>
+        <a
+            href="{{ tab_urls.buchung }}#buchung"
+            class="mobile-tab {% if tab == 'buchung' %}is-active{% endif %}"
+            data-tab="buchung"
+            id="mobile-tab-buchung"
+            aria-controls="mobile-panel-buchung"
+            aria-selected="{{ 'true' if tab == 'buchung' else 'false' }}"
+            role="tab"
+        >Buchung</a>
+        <a
+            href="{{ tab_urls.uebersicht }}#uebersicht"
+            class="mobile-tab {% if tab == 'uebersicht' %}is-active{% endif %}"
+            data-tab="uebersicht"
+            id="mobile-tab-uebersicht"
+            aria-controls="mobile-panel-uebersicht"
+            aria-selected="{{ 'true' if tab == 'uebersicht' else 'false' }}"
+            role="tab"
+        >Übersicht</a>
+        <a
+            href="{{ tab_urls.salden }}#salden"
+            class="mobile-tab {% if tab == 'salden' %}is-active{% endif %}"
+            data-tab="salden"
+            id="mobile-tab-salden"
+            aria-controls="mobile-panel-salden"
+            aria-selected="{{ 'true' if tab == 'salden' else 'false' }}"
+            role="tab"
+        >Salden</a>
     </nav>
 
     <div class="mobile-panels">
-        <section class="mobile-panel is-active" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung">
+        <section class="mobile-panel {% if tab == 'buchung' %}is-active{% endif %}" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung" {% if tab != 'buchung' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Schnell stempeln</h2>
                 {% if active_entry %}
@@ -149,77 +174,126 @@
             </div>
         </section>
 
-        <section class="mobile-panel" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" hidden>
-            <div class="mobile-card">
-                <h2 class="mobile-card__title">Heutige Buchungen</h2>
-                {% if daily_entries %}
-                    <ul class="mobile-entry-list">
-                        {% for entry in daily_entries %}
-                            <li class="mobile-entry {% if entry.is_open %}is-active{% endif %}">
-                                <div class="mobile-entry__times">
-                                    <strong>{{ entry.start_time.strftime('%H:%M') }}</strong>
-                                    <span>–</span>
-                                    <strong>
-                                        {% if entry.is_open %}
-                                            läuft
-                                        {% elif entry.end_time %}
-                                            {{ entry.end_time.strftime('%H:%M') }}
-                                        {% else %}
-                                            –
-                                        {% endif %}
-                                    </strong>
-                                </div>
-                                <div class="mobile-entry__meta">
-                                    <span>Arbeitszeit {{ entry.worked_minutes|format_minutes }} Std</span>
-                                    {% if entry.total_break_minutes %}
-                                        <span>Pausen {{ entry.total_break_minutes|format_minutes }} Std</span>
-                                    {% endif %}
-                                    {% if entry.company %}
-                                        <span>{{ entry.company.name }}</span>
-                                    {% endif %}
-                                    {% if entry.notes %}
-                                        <span class="mobile-entry__notes">{{ entry.notes }}</span>
-                                    {% endif %}
-                                </div>
+        <section class="mobile-panel {% if tab == 'uebersicht' %}is-active{% endif %}" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" {% if tab != 'uebersicht' %}hidden{% endif %}>
+            <div class="mobile-card mobile-card--overview">
+                <div class="mobile-card__header">
+                    <h2 class="mobile-card__title">Übersicht</h2>
+                    <div class="mobile-segmented" role="group" aria-label="Darstellung wählen">
+                        <a class="mobile-segmented__button {% if overview_mode == 'day' %}is-active{% endif %}" href="{{ request.url_for('mobile_dashboard') }}?overview=day&amp;date={{ overview_reference_date.isoformat() }}#uebersicht" {% if overview_mode == 'day' %}aria-current="page"{% endif %}>Tag</a>
+                        <a class="mobile-segmented__button {% if overview_mode == 'week' %}is-active{% endif %}" href="{{ request.url_for('mobile_dashboard') }}?overview=week&amp;date={{ overview_reference_date.isoformat() }}#uebersicht" {% if overview_mode == 'week' %}aria-current="page"{% endif %}>Woche</a>
+                    </div>
+                </div>
+
+                {% if overview_mode == 'week' %}
+                    <div class="mobile-overview-nav" aria-label="Woche wechseln">
+                        <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=week&amp;date={{ overview_week.prev.isoformat() }}#uebersicht" aria-label="Vorherige Woche">&lsaquo;</a>
+                        <span class="mobile-overview-nav__label">
+                            <strong>KW {{ overview_week.week_number }}</strong>
+                            <small>{{ overview_week.week_start.strftime('%d.%m.') }} – {{ overview_week.week_end.strftime('%d.%m.%Y') }}</small>
+                        </span>
+                        {% if overview_week.can_go_next %}
+                            <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=week&amp;date={{ overview_week.next.isoformat() }}#uebersicht" aria-label="Nächste Woche">&rsaquo;</a>
+                        {% else %}
+                            <span class="mobile-nav-button is-disabled" aria-hidden="true">&rsaquo;</span>
+                        {% endif %}
+                    </div>
+                    <dl class="mobile-overview-summary">
+                        <div>
+                            <dt>Arbeitszeit</dt>
+                            <dd>{{ overview_week.total_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Soll</dt>
+                            <dd>{{ overview_week.target_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Saldo</dt>
+                            <dd class="{% if overview_week.balance_minutes < 0 %}is-negative{% endif %}">{{ overview_week.balance_minutes|format_minutes }} Std</dd>
+                        </div>
+                        {% if overview_week.vacation_minutes %}
+                            <div>
+                                <dt>Urlaub</dt>
+                                <dd>{{ overview_week.vacation_minutes|format_minutes }} Std</dd>
+                            </div>
+                        {% endif %}
+                    </dl>
+                    <ul class="mobile-week-list mobile-week-list--grid">
+                        {% for day in overview_week.days %}
+                            <li class="mobile-week-day {% if day.is_today %}is-today{% endif %}">
+                                <span class="mobile-week-day__label">{{ day.date.strftime('%a %d.%m.') }}</span>
+                                <span class="mobile-week-day__minutes">{{ day.minutes|format_minutes }} Std</span>
                             </li>
                         {% endfor %}
                     </ul>
                 {% else %}
-                    <p class="mobile-empty-state">Für heute wurden noch keine Buchungen erfasst.</p>
+                    <div class="mobile-overview-nav" aria-label="Tag wechseln">
+                        <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=day&amp;date={{ overview_day.prev.isoformat() }}#uebersicht" aria-label="Vorheriger Tag">&lsaquo;</a>
+                        <span class="mobile-overview-nav__label">
+                            <strong>{{ overview_day.date.strftime('%A, %d.%m.%Y') }}</strong>
+                            {% if overview_day.is_today %}
+                                <small>(Heute)</small>
+                            {% endif %}
+                        </span>
+                        {% if overview_day.can_go_next %}
+                            <a class="mobile-nav-button" href="{{ request.url_for('mobile_dashboard') }}?overview=day&amp;date={{ overview_day.next.isoformat() }}#uebersicht" aria-label="Nächster Tag">&rsaquo;</a>
+                        {% else %}
+                            <span class="mobile-nav-button is-disabled" aria-hidden="true">&rsaquo;</span>
+                        {% endif %}
+                    </div>
+                    <dl class="mobile-overview-summary">
+                        <div>
+                            <dt>Arbeitszeit</dt>
+                            <dd>{{ overview_day.total_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Soll</dt>
+                            <dd>{{ overview_day.target_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Saldo</dt>
+                            <dd class="{% if overview_day.balance_minutes < 0 %}is-negative{% endif %}">{{ overview_day.balance_minutes|format_minutes }} Std</dd>
+                        </div>
+                    </dl>
+                    {% if overview_day.entries %}
+                        <ul class="mobile-entry-list mobile-entry-list--compact">
+                            {% for entry in overview_day.entries %}
+                                <li class="mobile-entry {% if entry.is_open %}is-active{% endif %}">
+                                    <div class="mobile-entry__times">
+                                        <strong>{{ entry.start_time.strftime('%H:%M') }}</strong>
+                                        <span>–</span>
+                                        <strong>
+                                            {% if entry.is_open %}
+                                                läuft
+                                            {% elif entry.end_time %}
+                                                {{ entry.end_time.strftime('%H:%M') }}
+                                            {% else %}
+                                                –
+                                            {% endif %}
+                                        </strong>
+                                    </div>
+                                    <div class="mobile-entry__meta">
+                                        <span>Arbeitszeit {{ entry.worked_minutes|format_minutes }} Std</span>
+                                        {% if entry.total_break_minutes %}
+                                            <span>Pausen {{ entry.total_break_minutes|format_minutes }} Std</span>
+                                        {% endif %}
+                                        {% if entry.company %}
+                                            <span>{{ entry.company.name }}</span>
+                                        {% endif %}
+                                        {% if entry.notes %}
+                                            <span class="mobile-entry__notes">{{ entry.notes }}</span>
+                                        {% endif %}
+                                    </div>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="mobile-empty-state">Für diesen Tag wurden noch keine Buchungen erfasst.</p>
+                    {% endif %}
                 {% endif %}
-            </div>
-            <div class="mobile-card">
-                <h2 class="mobile-card__title">Wochenübersicht</h2>
-                <dl class="mobile-stats-grid">
-                    <div>
-                        <dt>Arbeitszeit</dt>
-                        <dd>{{ weekly_summary.total_minutes|format_minutes }} Std</dd>
-                    </div>
-                    <div>
-                        <dt>Soll</dt>
-                        <dd>{{ weekly_summary.target_minutes|format_minutes }} Std</dd>
-                    </div>
-                    <div>
-                        <dt>Erwartet bis heute</dt>
-                        <dd>{{ weekly_summary.expected_minutes_to_date|format_minutes }} Std</dd>
-                    </div>
-                    <div>
-                        <dt>Verbleibend</dt>
-                        <dd>{{ weekly_summary.remaining_minutes|format_minutes }} Std</dd>
-                    </div>
-                </dl>
-                <ul class="mobile-week-list">
-                    {% for day in weekly_summary.days %}
-                        <li class="mobile-week-day {% if day.is_today %}is-today{% endif %}">
-                            <span class="mobile-week-day__label">{{ day.date.strftime('%a %d.%m.') }}</span>
-                            <span class="mobile-week-day__minutes">{{ day.minutes|format_minutes }} Std</span>
-                        </li>
-                    {% endfor %}
-                </ul>
             </div>
         </section>
 
-        <section class="mobile-panel" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" hidden>
+        <section class="mobile-panel {% if tab == 'salden' %}is-active{% endif %}" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" {% if tab != 'salden' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Monatswerte</h2>
                 <dl class="mobile-stats-grid">
@@ -287,21 +361,6 @@
                         <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
                     </div>
                 </dl>
-            </div>
-            <div class="mobile-card">
-                <h2 class="mobile-card__title">Feiertage ({{ holiday_region_label }})</h2>
-                {% if holidays %}
-                    <ul class="mobile-holiday-list">
-                        {% for holiday in holidays[:5] %}
-                            <li>
-                                <span>{{ holiday.date.strftime('%d.%m.%Y') }}</span>
-                                <strong>{{ holiday.name }}</strong>
-                            </li>
-                        {% endfor %}
-                    </ul>
-                {% else %}
-                    <p class="mobile-empty-state">Keine kommenden Feiertage vorhanden.</p>
-                {% endif %}
             </div>
         </section>
     </div>

@@ -223,10 +223,11 @@ function registerTabHandling() {
   const tabs = Array.from(document.querySelectorAll(TAB_SELECTOR));
   const panels = Array.from(document.querySelectorAll(PANEL_SELECTOR));
   const validTabs = new Set(tabs.map((tab) => tab.dataset.tab));
+  const defaultTab = tabs.find((tab) => tab.classList.contains('is-active'))?.dataset.tab || 'buchung';
 
   function activateTab(tabName, updateHash = true) {
     if (!validTabs.has(tabName)) {
-      tabName = 'buchung';
+      tabName = defaultTab;
     }
     tabs.forEach((tab) => {
       const isActive = tab.dataset.tab === tabName;
@@ -241,16 +242,23 @@ function registerTabHandling() {
     if (updateHash) {
       const newHash = `#${tabName}`;
       if (history.replaceState) {
-        history.replaceState(null, '', newHash);
+        const { pathname, search } = window.location;
+        history.replaceState(null, '', `${pathname}${search}${newHash}`);
       } else {
         window.location.hash = newHash;
       }
     }
   }
 
-  tabs.forEach((tab) => tab.addEventListener('click', () => activateTab(tab.dataset.tab)));
+  tabs.forEach((tab) =>
+    tab.addEventListener('click', (event) => {
+      event.preventDefault();
+      activateTab(tab.dataset.tab);
+    })
+  );
   window.addEventListener('hashchange', () => activateTab(window.location.hash.replace('#', ''), false));
-  activateTab(window.location.hash.replace('#', '') || 'buchung', false);
+  const initialHash = window.location.hash.replace('#', '');
+  activateTab(initialHash || defaultTab, false);
 }
 
 function registerModalHandling() {
