@@ -11,6 +11,19 @@ const STORE_NAME = 'pendingPunches';
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 
+function setElementHidden(element, hidden) {
+  if (!element) {
+    return;
+  }
+  if (hidden) {
+    element.hidden = true;
+    element.setAttribute('hidden', 'hidden');
+  } else {
+    element.hidden = false;
+    element.removeAttribute('hidden');
+  }
+}
+
 function dispatchSyncStatus(message, state = 'default') {
   document.dispatchEvent(
     new CustomEvent('offline-sync-status', {
@@ -26,7 +39,7 @@ function showFeedback(message, type = 'info') {
   }
   element.textContent = message;
   element.dataset.state = type;
-  element.toggleAttribute('hidden', !message);
+  setElementHidden(element, !message);
   if (message) {
     const existingTimeout = Number(element.dataset.timeoutId || 0);
     if (existingTimeout) {
@@ -35,7 +48,7 @@ function showFeedback(message, type = 'info') {
     const timeoutId = window.setTimeout(() => {
       element.textContent = '';
       element.dataset.state = '';
-      element.setAttribute('hidden', 'hidden');
+      setElementHidden(element, true);
     }, 3500);
     element.dataset.timeoutId = String(timeoutId);
   }
@@ -128,9 +141,7 @@ function updateQueueIndicator(count) {
       ? 'Eine Buchung wartet auf Synchronisation.'
       : `${count} Buchungen warten auf Synchronisation.`;
   }
-  if (info) {
-    info.toggleAttribute('hidden', count === 0);
-  }
+  setElementHidden(info, count === 0);
 }
 
 async function flushQueue() {
@@ -237,7 +248,8 @@ function registerTabHandling() {
     panels.forEach((panel) => {
       const isActive = panel.dataset.tabPanel === tabName;
       panel.classList.toggle('is-active', isActive);
-      panel.toggleAttribute('hidden', !isActive);
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+      setElementHidden(panel, !isActive);
     });
     if (updateHistory) {
       const newHash = `#${tabName}`;
@@ -254,8 +266,12 @@ function registerTabHandling() {
 
   tabs.forEach((tab) =>
     tab.addEventListener('click', (event) => {
-      event.preventDefault();
-      activateTab(tab.dataset.tab);
+      try {
+        activateTab(tab.dataset.tab);
+        event.preventDefault();
+      } catch (error) {
+        console.error('Konnte mobilen Reiter nicht wechseln', error);
+      }
     })
   );
   window.addEventListener('hashchange', () => activateTab(window.location.hash.replace('#', ''), false));
