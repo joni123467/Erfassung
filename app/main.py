@@ -1099,6 +1099,7 @@ def _build_dashboard_context(db: Session, user: models.User):
     holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
     holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
     companies = crud.get_companies(db)
+    vacations = crud.get_vacations_for_user(db, user.id)
     daily_overview = _build_daily_overview(db, user.id, today)
     weekly_summary = _build_weekly_overview(db, user, today, today=today)
     daily_entries = daily_overview["entries"]
@@ -1113,6 +1114,13 @@ def _build_dashboard_context(db: Session, user: models.User):
         "active_entry": active_entry,
         "metrics_month": reference_month.replace(day=1),
         "can_create_companies": _can_create_companies(user),
+        "vacations": vacations,
+        "pending_vacations": sum(
+            1
+            for vacation in vacations
+            if vacation.status
+            in (models.VacationStatus.PENDING, models.VacationStatus.WITHDRAW_REQUESTED)
+        ),
         "daily_entries": daily_entries,
         "daily_total_minutes": daily_total_minutes,
         "today": today,
@@ -1165,7 +1173,7 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     context = _build_dashboard_context(db, user)
     tab_param = request.query_params.get("tab", "buchung").lower()
-    if tab_param not in {"buchung", "uebersicht", "salden"}:
+    if tab_param not in {"buchung", "uebersicht", "salden", "urlaub"}:
         tab_param = "buchung"
 
     overview_mode = request.query_params.get("overview", "day").lower()
@@ -1221,7 +1229,7 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
             "error": request.query_params.get("error"),
             "mobile": True,
             "active_tab": tab_param,
-            "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden")),
+            "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden", "urlaub")),
             "hide_navigation": True,
         }
     )

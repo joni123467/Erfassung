@@ -25,6 +25,11 @@ body {
     min-height: 100vh;
 }
 
+body.is-mobile .page {
+    padding-bottom: 5rem;
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+}
+
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]),
 select,
 textarea {
@@ -1886,6 +1891,10 @@ tr.status-rejected td {
 }
 
 .mobile-tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
     flex: 1;
     padding: 0.75rem 0.5rem;
     border: none;
@@ -1916,9 +1925,17 @@ tr.status-rejected td {
 }
 
 .mobile-panel {
+    display: none;
+}
+
+.mobile-panel.is-active {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+}
+
+.mobile-panel[hidden] {
+    display: none !important;
 }
 
 .mobile-card {
@@ -1957,6 +1974,52 @@ tr.status-rejected td {
 
 .mobile-card__header .mobile-card__title {
     margin: 0;
+}
+
+.mobile-account-footer {
+    margin-top: 2rem;
+    padding: 1.25rem 1rem;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -10px 25px rgba(18, 46, 108, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.mobile-account-footer__user {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.mobile-account-footer__name {
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.mobile-account-footer__group {
+    color: var(--text-muted);
+}
+
+.mobile-account-footer__logout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 999px;
+    background: var(--brand);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    box-shadow: 0 12px 24px rgba(29, 126, 208, 0.25);
+}
+
+.mobile-account-footer__logout:hover,
+.mobile-account-footer__logout:focus-visible {
+    background: var(--brand-dark);
 }
 
 .mobile-card--overview {
@@ -2084,6 +2147,201 @@ tr.status-rejected td {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
+}
+
+.mobile-card__hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.mobile-card--summary {
+    gap: 0.5rem;
+}
+
+.mobile-summary-list {
+    margin: 0;
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.mobile-summary-list div {
+    background: rgba(29, 126, 208, 0.06);
+    border-radius: 12px;
+    padding: 0.6rem;
+}
+
+.mobile-summary-list dt {
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.mobile-summary-list dd {
+    margin: 0.35rem 0 0;
+    font-weight: 700;
+    font-size: 0.95rem;
+}
+
+.mobile-form {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.mobile-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.mobile-form input,
+.mobile-form textarea {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    padding: 0.65rem;
+    font: inherit;
+    color: var(--text);
+    background: #fff;
+}
+
+.mobile-form textarea {
+    resize: vertical;
+}
+
+.mobile-form__actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 0.5rem;
+}
+
+.mobile-checkbox {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.mobile-checkbox input {
+    margin-top: 0.2rem;
+}
+
+.mobile-card--list {
+    gap: 0.75rem;
+}
+
+.mobile-vacation-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.mobile-vacation {
+    padding: 0.75rem;
+    border-radius: 14px;
+    background: rgba(29, 126, 208, 0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.mobile-vacation__header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.mobile-vacation__status {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    text-transform: none;
+}
+
+.mobile-vacation__status--approved {
+    background: rgba(34, 197, 94, 0.16);
+    color: #157347;
+}
+
+.mobile-vacation__status--pending {
+    background: rgba(29, 126, 208, 0.18);
+    color: var(--brand);
+}
+
+.mobile-vacation__status--offline {
+    background: rgba(108, 117, 125, 0.18);
+    color: #495057;
+}
+
+.mobile-vacation__status--withdraw {
+    background: rgba(255, 193, 7, 0.18);
+    color: #9c6b00;
+}
+
+.mobile-vacation__status--cancelled,
+.mobile-vacation__status--rejected {
+    background: rgba(220, 53, 69, 0.18);
+    color: var(--danger);
+}
+
+.mobile-vacation__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.mobile-vacation__comment {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(42, 52, 68, 0.08);
+    color: var(--text);
+}
+
+.mobile-vacation__action {
+    margin: 0;
+}
+
+.mobile-link-button {
+    background: none;
+    border: none;
+    color: var(--brand);
+    font-weight: 600;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.mobile-link-button:hover,
+.mobile-link-button:focus-visible {
+    color: var(--brand-dark);
+}
+
+.mobile-vacation__badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(255, 193, 7, 0.18);
+    color: #9c6b00;
+    font-weight: 600;
+    font-size: 0.85rem;
 }
 
 .mobile-action-grid {

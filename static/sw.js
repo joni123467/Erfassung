@@ -36,9 +36,17 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(
         fetch(request)
           .then((response) => {
-            const copy = response.clone();
-            caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-            return response;
+            if (response && response.ok) {
+              const copy = response.clone();
+              caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
+              return response;
+            }
+            return caches.match(request).then((cached) => {
+              if (cached) {
+                return cached;
+              }
+              return caches.match('/mobile');
+            });
           })
           .catch(() => caches.match(request).then((cached) => cached || caches.match('/mobile')))
       );
@@ -46,11 +54,20 @@ self.addEventListener('fetch', (event) => {
     }
     if (CORE_ASSETS.includes(url.pathname)) {
       event.respondWith(
-        caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-          return response;
-        }))
+        caches.match(request).then((cached) => {
+          if (cached) {
+            return cached;
+          }
+          return fetch(request)
+            .then((response) => {
+              if (response && response.ok) {
+                const copy = response.clone();
+                caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
+              }
+              return response;
+            })
+            .catch(() => caches.match(request));
+        })
       );
       return;
     }
