@@ -12,7 +12,8 @@
     <meta name="theme-color" content="#1d7ed0">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
+<body{% if mobile %} class="is-mobile"{% endif %}>
+{% if not mobile %}
 <header class="timetac-header">
     <div class="timetac-header__brand">
         <span class="timetac-header__logo" aria-hidden="true">⌚</span>
@@ -51,7 +52,9 @@
     </div>
     {% endif %}
 </header>
+{% endif %}
 <main class="page">
+    {% if not mobile %}
     <div class="offline-banner" id="offline-banner" role="status" aria-live="polite" hidden>
         <span class="offline-banner__icon" aria-hidden="true">📡</span>
         <span class="offline-banner__text">
@@ -59,6 +62,7 @@
             <span id="offline-sync-status">Offline – Buchungen werden zwischengespeichert.</span>
         </span>
     </div>
+    {% endif %}
     {% if message %}
         <div class="alert alert-success">{{ message }}</div>
     {% endif %}
@@ -67,9 +71,19 @@
     {% endif %}
     {% block content %}{% endblock %}
 </main>
+{% if mobile and user %}
+<footer class="mobile-account-footer" aria-label="Konto">
+    <div class="mobile-account-footer__user">
+        <span class="mobile-account-footer__name">{{ user.full_name }}</span>
+        <small class="mobile-account-footer__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
+    </div>
+    <a class="mobile-account-footer__logout" href="/logout">Abmelden</a>
+</footer>
+{% elif not mobile %}
 <footer class="page-footer">
     <p>Erfassung v{{ app_version }} &copy; {{ now().year }}</p>
 </footer>
+{% endif %}
 <script type="module" src="/static/app.js"></script>
 {% block scripts %}{% endblock %}
 </body>
