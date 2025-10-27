@@ -1121,6 +1121,26 @@ def _build_dashboard_context(db: Session, user: models.User):
     }
 
 
+def _build_mobile_tab_urls(request: Request, tab_names: tuple[str, ...]) -> dict[str, str]:
+    try:
+        base_items = [item for item in request.query_params.multi_items() if item[0] != "tab"]
+    except AttributeError:  # pragma: no cover - older Starlette versions
+        base_items = [(key, value) for key, value in request.query_params.items() if key != "tab"]
+
+    base_path = request.url.path
+    base_prefix = ""
+    if request.scope.get("root_path"):
+        base_prefix = request.scope["root_path"].rstrip("/")
+
+    def build_url(tab_name: str) -> str:
+        params = base_items + [("tab", tab_name)]
+        query = urlencode(params, doseq=True)
+        path = f"{base_prefix}{base_path}" or base_path
+        return f"{path}?{query}" if query else path
+
+    return {tab: build_url(tab) for tab in tab_names}
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
@@ -1201,10 +1221,7 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
             "error": request.query_params.get("error"),
             "mobile": True,
             "active_tab": tab_param,
-            "tab_urls": {
-                name: str(request.url.include_query_params(tab=name))
-                for name in ("buchung", "uebersicht", "salden")
-            },
+            "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden")),
             "hide_navigation": True,
         }
     )
