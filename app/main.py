@@ -1144,6 +1144,10 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     context = _build_dashboard_context(db, user)
+    tab_param = request.query_params.get("tab", "buchung").lower()
+    if tab_param not in {"buchung", "uebersicht", "salden"}:
+        tab_param = "buchung"
+
     overview_mode = request.query_params.get("overview", "day").lower()
     if overview_mode not in {"day", "week"}:
         overview_mode = "day"
@@ -1196,6 +1200,12 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
             "message": request.query_params.get("msg"),
             "error": request.query_params.get("error"),
             "mobile": True,
+            "active_tab": tab_param,
+            "tab_urls": {
+                name: str(request.url.include_query_params(tab=name))
+                for name in ("buchung", "uebersicht", "salden")
+            },
+            "hide_navigation": True,
         }
     )
     context.update(overview_context)

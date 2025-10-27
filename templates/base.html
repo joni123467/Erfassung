@@ -20,6 +20,7 @@
         <span class="timetac-header__version">v{{ app_version }}</span>
     </div>
     {% if user %}
+    {% if not hide_navigation %}
     <nav class="timetac-header__nav" aria-label="Hauptnavigation">
         <a href="/dashboard" class="timetac-nav-link {% if request.url.path == '/dashboard' %}is-active{% endif %}">
             <span class="timetac-nav-link__icon" aria-hidden="true">🏠</span>
@@ -40,6 +41,7 @@
         </a>
         {% endif %}
     </nav>
+    {% endif %}
     <div class="timetac-header__profile">
         <div class="timetac-header__user">
             <span class="timetac-header__name">{{ user.full_name }}</span>

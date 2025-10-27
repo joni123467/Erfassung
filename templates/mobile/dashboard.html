@@ -28,14 +28,39 @@
 
     <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite" hidden></div>
 
+    {% set tab = active_tab or 'buchung' %}
     <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
-        <button type="button" class="mobile-tab is-active" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="true">Buchung</button>
-        <button type="button" class="mobile-tab" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="false">Übersicht</button>
-        <button type="button" class="mobile-tab" data-tab="salden" id="mobile-tab-salden" aria-controls="mobile-panel-salden" aria-selected="false">Salden</button>
+        <a
+            href="{{ tab_urls.buchung }}#buchung"
+            class="mobile-tab {% if tab == 'buchung' %}is-active{% endif %}"
+            data-tab="buchung"
+            id="mobile-tab-buchung"
+            aria-controls="mobile-panel-buchung"
+            aria-selected="{{ 'true' if tab == 'buchung' else 'false' }}"
+            role="tab"
+        >Buchung</a>
+        <a
+            href="{{ tab_urls.uebersicht }}#uebersicht"
+            class="mobile-tab {% if tab == 'uebersicht' %}is-active{% endif %}"
+            data-tab="uebersicht"
+            id="mobile-tab-uebersicht"
+            aria-controls="mobile-panel-uebersicht"
+            aria-selected="{{ 'true' if tab == 'uebersicht' else 'false' }}"
+            role="tab"
+        >Übersicht</a>
+        <a
+            href="{{ tab_urls.salden }}#salden"
+            class="mobile-tab {% if tab == 'salden' %}is-active{% endif %}"
+            data-tab="salden"
+            id="mobile-tab-salden"
+            aria-controls="mobile-panel-salden"
+            aria-selected="{{ 'true' if tab == 'salden' else 'false' }}"
+            role="tab"
+        >Salden</a>
     </nav>
 
     <div class="mobile-panels">
-        <section class="mobile-panel is-active" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung">
+        <section class="mobile-panel {% if tab == 'buchung' %}is-active{% endif %}" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung" {% if tab != 'buchung' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Schnell stempeln</h2>
                 {% if active_entry %}
@@ -149,7 +174,7 @@
             </div>
         </section>
 
-        <section class="mobile-panel" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" hidden>
+        <section class="mobile-panel {% if tab == 'uebersicht' %}is-active{% endif %}" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" {% if tab != 'uebersicht' %}hidden{% endif %}>
             <div class="mobile-card mobile-card--overview">
                 <div class="mobile-card__header">
                     <h2 class="mobile-card__title">Übersicht</h2>
@@ -268,7 +293,7 @@
             </div>
         </section>
 
-        <section class="mobile-panel" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" hidden>
+        <section class="mobile-panel {% if tab == 'salden' %}is-active{% endif %}" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" {% if tab != 'salden' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Monatswerte</h2>
                 <dl class="mobile-stats-grid">
