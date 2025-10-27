@@ -251,6 +251,11 @@ fi
 pip install --upgrade pip setuptools wheel
 pip install --no-cache-dir -r "$APP_DIR/requirements.txt"
 
+if ! pip check; then
+    echo "Fehler: Python-Abhängigkeiten konnten nicht vollständig installiert werden." >&2
+    exit 1
+fi
+
 CURRENT_DIR=$(pwd)
 cd "$APP_DIR"
 python - <<'PY'

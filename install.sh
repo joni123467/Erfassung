@@ -194,6 +194,11 @@ source "$VENV_DIR/bin/activate"
 pip install --upgrade pip setuptools wheel
 pip install --no-cache-dir -r "$PROJECT_DIR/requirements.txt"
 
+if ! pip check; then
+    echo "Fehler: Python-Abhängigkeiten konnten nicht vollständig installiert werden." >&2
+    exit 1
+fi
+
 deactivate
 
 SERVICE_STATUS_MSG="Systemd wurde nicht gefunden. Starten Sie den Dienst manuell mit 'cd $PROJECT_DIR && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000'."
