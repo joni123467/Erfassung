@@ -3046,3 +3046,11 @@ def export_user_time_entries(user_id: int, db: Session = Depends(database.get_db
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    default_host = os.environ.get("UVICORN_HOST", "0.0.0.0")
+    default_port = int(os.environ.get("UVICORN_PORT", "8000"))
+    uvicorn.run(app, host=default_host, port=default_port)
