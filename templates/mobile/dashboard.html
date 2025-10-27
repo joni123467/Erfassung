@@ -20,6 +20,14 @@
         {% endif %}
     </header>
 
+    <aside class="mobile-queue" id="mobile-queue-info" aria-live="polite" hidden>
+        <span class="mobile-badge mobile-badge--queued" aria-hidden="true">⏳</span>
+        <span id="mobile-sync-text">Offline-Buchungen werden synchronisiert.</span>
+        <strong class="mobile-queue__count"><span id="mobile-pending-count">0</span>x</strong>
+    </aside>
+
+    <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite" hidden></div>
+
     <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
         <button type="button" class="mobile-tab is-active" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="true">Buchung</button>
         <button type="button" class="mobile-tab" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="false">Übersicht</button>
@@ -49,24 +57,24 @@
                         {% endif %}
                     </div>
                     <div class="mobile-action-grid">
-                        <form method="post" action="/punch">
+                        <form method="post" action="/punch" data-offline="punch">
                             <input type="hidden" name="next_url" value="/mobile">
                             <input type="hidden" name="action" value="start_break">
                             <button type="submit" class="mobile-button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
                         </form>
-                        <form method="post" action="/punch">
+                        <form method="post" action="/punch" data-offline="punch">
                             <input type="hidden" name="next_url" value="/mobile">
                             <input type="hidden" name="action" value="end_break">
                             <button type="submit" class="mobile-button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
                         </form>
                         {% if active_entry.company_id is not none %}
-                            <form method="post" action="/punch">
+                            <form method="post" action="/punch" data-offline="punch">
                                 <input type="hidden" name="next_url" value="/mobile">
                                 <input type="hidden" name="action" value="end_company">
                                 <button type="submit" class="mobile-button">Auftrag beenden</button>
                             </form>
                         {% endif %}
-                        <form method="post" action="/punch">
+                        <form method="post" action="/punch" data-offline="punch">
                             <input type="hidden" name="next_url" value="/mobile">
                             <input type="hidden" name="action" value="end_work">
                             <button type="submit" class="mobile-button danger">Arbeitszeit beenden</button>
@@ -77,7 +85,7 @@
                         <p class="mobile-card__text">Beginne deine Arbeitszeit mit einem Tipp.</p>
                     </div>
                     <div class="mobile-action-grid">
-                        <form method="post" action="/punch">
+                        <form method="post" action="/punch" data-offline="punch">
                             <input type="hidden" name="next_url" value="/mobile">
                             <input type="hidden" name="action" value="start_work">
                             <button type="submit" class="mobile-button primary">Arbeitszeit starten</button>
@@ -96,7 +104,7 @@
                         <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
                         <h3>Auftrag starten</h3>
                         <p class="modal__hint">Wähle eine Firma oder lege einen neuen Auftrag an.</p>
-                        <form method="post" action="/punch" class="modal__form">
+                        <form method="post" action="/punch" class="modal__form" data-offline="punch">
                             <input type="hidden" name="next_url" value="/mobile">
                             <input type="hidden" name="action" value="start_company">
                             {% if companies %}
@@ -299,77 +307,8 @@
     </div>
 </section>
 
-<script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const tabs = Array.from(document.querySelectorAll('.mobile-tab'));
-        const panels = Array.from(document.querySelectorAll('[data-tab-panel]'));
-        const validTabs = new Set(tabs.map(tab => tab.dataset.tab));
-
-        function activateTab(tabName, updateHash = true) {
-            if (!validTabs.has(tabName)) {
-                tabName = 'buchung';
-            }
-            tabs.forEach(tab => {
-                const isActive = tab.dataset.tab === tabName;
-                tab.classList.toggle('is-active', isActive);
-                tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
-            });
-            panels.forEach(panel => {
-                const isActive = panel.dataset.tabPanel === tabName;
-                panel.classList.toggle('is-active', isActive);
-                panel.toggleAttribute('hidden', !isActive);
-            });
-            if (updateHash) {
-                const newHash = '#' + tabName;
-                if (history.replaceState) {
-                    history.replaceState(null, '', newHash);
-                } else {
-                    window.location.hash = newHash;
-                }
-            }
-        }
-
-        tabs.forEach(tab => {
-            tab.addEventListener('click', () => activateTab(tab.dataset.tab));
-        });
-
-        window.addEventListener('hashchange', () => {
-            const target = window.location.hash.replace('#', '');
-            activateTab(target, false);
-        });
-
-        const initialHash = window.location.hash.replace('#', '');
-        activateTab(initialHash || 'buchung', false);
-
-        const modal = document.getElementById('mobile-order-modal');
-        if (modal) {
-            const openers = document.querySelectorAll('[data-open="mobile-order-modal"]');
-            const closers = modal.querySelectorAll('[data-close]');
-
-            const setVisibility = (visible) => {
-                if (visible) {
-                    modal.classList.add('is-visible');
-                    modal.setAttribute('aria-hidden', 'false');
-                    document.body.classList.add('modal-open');
-                    const firstInput = modal.querySelector('select, input, button');
-                    if (firstInput) {
-                        firstInput.focus();
-                    }
-                } else {
-                    modal.classList.remove('is-visible');
-                    modal.setAttribute('aria-hidden', 'true');
-                    document.body.classList.remove('modal-open');
-                }
-            };
-
-            openers.forEach((button) => button.addEventListener('click', () => setVisibility(true)));
-            closers.forEach((element) => element.addEventListener('click', () => setVisibility(false)));
-            document.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape' && modal.classList.contains('is-visible')) {
-                    setVisibility(false);
-                }
-            });
-        }
-    });
-</script>
+{% block scripts %}
+{{ super() }}
+<script type="module" src="/static/mobile.js"></script>
+{% endblock %}
 {% endblock %}

@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Erfassung{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+    <link rel="apple-touch-icon" href="/static/icons/icon.svg">
+    <link rel="manifest" href="/static/manifest.webmanifest">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#1d7ed0">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -44,6 +50,13 @@
     {% endif %}
 </header>
 <main class="page">
+    <div class="offline-banner" id="offline-banner" role="status" aria-live="polite" hidden>
+        <span class="offline-banner__icon" aria-hidden="true">📡</span>
+        <span class="offline-banner__text">
+            <strong>Verbindungsstatus</strong>
+            <span id="offline-sync-status">Offline – Buchungen werden zwischengespeichert.</span>
+        </span>
+    </div>
     {% if message %}
         <div class="alert alert-success">{{ message }}</div>
     {% endif %}
@@ -55,5 +68,7 @@
 <footer class="page-footer">
     <p>Erfassung v{{ app_version }} &copy; {{ now().year }}</p>
 </footer>
+<script type="module" src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>
