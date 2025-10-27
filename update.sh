@@ -56,6 +56,7 @@ fi
 APP_DIR="$DEFAULT_APP_DIR"
 REPO_URL="$DEFAULT_REPO_URL"
 REPO_REF="$DEFAULT_REPO_REF"
+REPO_REF_KIND=""
 REPO_REF_WAS_EXPLICIT=0
 
 print_help() {
@@ -165,6 +166,49 @@ fetch_latest_release_ref() {
     return 1
 }
 
+fetch_latest_version_branch_ref() {
+    repo_url="$1"
+
+    case "$repo_url" in
+        https://github.com/*/*)
+            api_base="https://api.github.com/repos/${repo_url#https://github.com/}"
+            ;;
+        https://api.github.com/repos/*)
+            api_base="${repo_url%/}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    branches_url="${api_base}/branches?per_page=100"
+
+    if command -v curl >/dev/null 2>&1; then
+        response=$(curl -fsSL "$branches_url" 2>/dev/null || true)
+    elif command -v wget >/dev/null 2>&1; then
+        response=$(wget -q -O - "$branches_url" 2>/dev/null || true)
+    else
+        return 1
+    fi
+
+    if [ -z "$response" ]; then
+        return 1
+    fi
+
+    latest_branch=$(printf '%s' "$response" |
+        sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"[:cntrl:]]*\)".*/\1/p' |
+        grep '^version-' |
+        sort -Vu |
+        tail -n 1)
+
+    if [ -n "$latest_branch" ]; then
+        printf '%s\n' "$latest_branch"
+        return 0
+    fi
+
+    return 1
+}
+
 if [ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]; then
     if [ "$REPO_REF_WAS_EXPLICIT" -eq 0 ]; then
         if LATEST_REF=$(fetch_latest_release_ref "$REPO_URL") && [ -n "$LATEST_REF" ]; then
@@ -172,6 +216,13 @@ if [ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]; then
                 echo "ℹ️  Verwende neueste Release-Version ${LATEST_REF}."
             fi
             REPO_REF="$LATEST_REF"
+            REPO_REF_KIND="tag"
+        elif LATEST_REF=$(fetch_latest_version_branch_ref "$REPO_URL") && [ -n "$LATEST_REF" ]; then
+            if [ "$REPO_REF" != "$LATEST_REF" ]; then
+                echo "ℹ️  Verwende neuesten Versions-Branch ${LATEST_REF}."
+            fi
+            REPO_REF="$LATEST_REF"
+            REPO_REF_KIND="branch"
         else
             echo "⚠️  Neueste Release-Version konnte nicht ermittelt werden, verwende ${REPO_REF}." >&2
         fi
@@ -187,15 +238,25 @@ if [ "${ERFASSUNG_NO_BOOTSTRAP:-0}" != "1" ]; then
     REPO_URL=${REPO_URL%/}
 
     CANDIDATE_URLS="${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz"
-    case "$REPO_REF" in
-        */*)
-            CANDIDATE_URLS="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz $CANDIDATE_URLS"
-            ;;
-        version-*|v*)
+    case "$REPO_REF_KIND" in
+        tag)
             CANDIDATE_URLS="${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz ${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz"
             ;;
-        *)
+        branch)
             CANDIDATE_URLS="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz ${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz"
+            ;;
+        *)
+            case "$REPO_REF" in
+                */*)
+                    CANDIDATE_URLS="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz $CANDIDATE_URLS"
+                    ;;
+                version-*|v*)
+                    CANDIDATE_URLS="${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz ${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz"
+                    ;;
+                *)
+                    CANDIDATE_URLS="${REPO_URL}/archive/refs/heads/${REPO_REF}.tar.gz ${REPO_URL}/archive/refs/tags/${REPO_REF}.tar.gz"
+                    ;;
+            esac
             ;;
     esac
 
