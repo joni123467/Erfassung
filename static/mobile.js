@@ -13,8 +13,82 @@ const DB_NAME = 'erfassung-mobile';
 const DB_VERSION = 2;
 const PUNCH_STORE = 'pendingPunches';
 const VACATION_STORE = 'pendingVacations';
+const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
+let localStorageUnavailable = false;
+
+function setElementHidden(element, hidden) {
+  if (!element) {
+    return;
+  }
+  if (hidden) {
+    element.hidden = true;
+    element.setAttribute('hidden', 'hidden');
+  } else {
+    element.hidden = false;
+    element.removeAttribute('hidden');
+  }
+}
+
+function setButtonDisabled(element, disabled) {
+  if (!element) {
+    return;
+  }
+  if (disabled) {
+    element.setAttribute('disabled', 'disabled');
+  } else {
+    element.removeAttribute('disabled');
+  }
+}
+
+function withLocalStorage(callback) {
+  if (localStorageUnavailable) {
+    return null;
+  }
+  try {
+    const storage = window.localStorage;
+    if (!storage) {
+      localStorageUnavailable = true;
+      return null;
+    }
+    return callback(storage);
+  } catch (error) {
+    localStorageUnavailable = true;
+    console.warn('Lokaler Speicher nicht verfügbar', error);
+    return null;
+  }
+}
+
+function loadStoredMobileState() {
+  return withLocalStorage((storage) => {
+    try {
+      const raw = storage.getItem(MOBILE_STATE_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        return null;
+      }
+      return parsed;
+    } catch (error) {
+      console.warn('Konnte gespeicherten Arbeitsstatus nicht laden', error);
+      return null;
+    }
+  });
+}
+
+function clearStoredMobileState() {
+  withLocalStorage((storage) => {
+    try {
+      storage.removeItem(MOBILE_STATE_STORAGE_KEY);
+    } catch (error) {
+      console.warn('Konnte gespeicherten Arbeitsstatus nicht entfernen', error);
+    }
+    return null;
+  });
+}
 
 function setElementHidden(element, hidden) {
   if (!element) {
@@ -224,6 +298,10 @@ async function flushPunchQueue() {
     }
   }
   const counts = await refreshQueueIndicator();
+  if (counts.total === 0 && mobileState?.pendingPunchSync) {
+    mobileState.pendingPunchSync = false;
+    persistMobileState();
+  }
   if (processed > 0 && counts.total === 0) {
     dispatchSyncStatus('Alle zwischengespeicherten Aktionen wurden übertragen.', 'synced');
     showFeedback('Offline-Buchungen erfolgreich übertragen.', 'success');
@@ -354,6 +432,111 @@ let mobileState = null;
 let workDurationTimerId = null;
 let modalController = null;
 
+function persistMobileState() {
+  if (!mobileState) {
+    clearStoredMobileState();
+    return;
+  }
+  if (!mobileState.isWorking && !mobileState.onBreak && !mobileState.hasCompany) {
+    clearStoredMobileState();
+    return;
+  }
+  const snapshot = {
+    version: 1,
+    isWorking: !!mobileState.isWorking,
+    onBreak: !!mobileState.onBreak,
+    hasCompany: !!mobileState.hasCompany,
+    startedAtMs: typeof mobileState.startedAtMs === 'number' ? mobileState.startedAtMs : null,
+    breakStartedAtMs: typeof mobileState.breakStartedAtMs === 'number' ? mobileState.breakStartedAtMs : null,
+    totalBreakMs: typeof mobileState.totalBreakMs === 'number' ? mobileState.totalBreakMs : 0,
+    startLabel: mobileState.startLabel || '',
+    breakLabel: mobileState.breakLabel || '',
+    breakTotalLabel: mobileState.breakTotalLabel || '0:00',
+    companyName: mobileState.companyName || '',
+    workedLabel: mobileState.workedLabel || '0:00',
+    pendingPunch: !!mobileState.pendingPunchSync,
+    updatedAt: Date.now(),
+  };
+  withLocalStorage((storage) => {
+    try {
+      storage.setItem(MOBILE_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (error) {
+      console.warn('Konnte Arbeitsstatus nicht zwischenspeichern', error);
+    }
+    return null;
+  });
+}
+
+function restoreMobileStateFromStorage() {
+  if (!mobileState) {
+    return;
+  }
+  const stored = loadStoredMobileState();
+  if (!stored) {
+    return;
+  }
+  if (stored.version && stored.version !== 1) {
+    return;
+  }
+  const storedWorking = stored.isWorking === undefined ? !!stored.startedAtMs : !!stored.isWorking;
+  const datasetWorking = !!mobileState.isWorking;
+  const storedPendingPunch = stored.pendingPunch === undefined ? false : !!stored.pendingPunch;
+
+  mobileState.pendingPunchSync = storedPendingPunch;
+
+  const offlineLike = !navigator.onLine || storedPendingPunch;
+
+  if (storedWorking && !datasetWorking && offlineLike) {
+    mobileState.isWorking = true;
+  }
+
+  if (storedWorking && (mobileState.isWorking || (!datasetWorking && offlineLike))) {
+    if (typeof stored.startedAtMs === 'number' && !Number.isNaN(stored.startedAtMs)) {
+      if (!mobileState.startedAtMs || mobileState.startedAtMs < stored.startedAtMs) {
+        mobileState.startedAtMs = stored.startedAtMs;
+      }
+    }
+    if (!mobileState.startLabel) {
+      if (stored.startLabel) {
+        mobileState.startLabel = stored.startLabel;
+      } else if (mobileState.startedAtMs) {
+        mobileState.startLabel = formatTime(mobileState.startedAtMs);
+      }
+    }
+    if (!mobileState.hasCompany && stored.hasCompany) {
+      mobileState.hasCompany = true;
+    }
+    if (!mobileState.companyName && typeof stored.companyName === 'string' && stored.companyName) {
+      mobileState.companyName = stored.companyName;
+    }
+  }
+
+  const storedBreakMs = typeof stored.totalBreakMs === 'number' ? stored.totalBreakMs : Number(stored.totalBreakMs);
+  const currentBreakMs = typeof mobileState.totalBreakMs === 'number' ? mobileState.totalBreakMs : Number(mobileState.totalBreakMs);
+  if (!Number.isNaN(storedBreakMs) && (mobileState.isWorking || (!datasetWorking && offlineLike))) {
+    if (Number.isNaN(currentBreakMs) || storedBreakMs > currentBreakMs) {
+      mobileState.totalBreakMs = Math.max(0, storedBreakMs);
+      mobileState.breakTotalLabel = stored.breakTotalLabel || formatDuration(mobileState.totalBreakMs);
+    }
+  }
+
+  if (stored.onBreak && (mobileState.isWorking || (!datasetWorking && offlineLike))) {
+    mobileState.onBreak = true;
+    if (typeof stored.breakStartedAtMs === 'number' && !Number.isNaN(stored.breakStartedAtMs)) {
+      mobileState.breakStartedAtMs = stored.breakStartedAtMs;
+    }
+    if (stored.breakLabel) {
+      mobileState.breakLabel = stored.breakLabel;
+    } else if (mobileState.breakStartedAtMs) {
+      mobileState.breakLabel = formatTime(mobileState.breakStartedAtMs);
+    }
+  }
+
+  if (typeof stored.workedLabel === 'string' && stored.workedLabel && !mobileState.workedLabel) {
+    mobileState.workedLabel = stored.workedLabel;
+  }
+}
+
 function refreshControlStates() {
   document.querySelectorAll('[data-toggle-disabled]').forEach((element) => {
     const isHidden = !!element.closest('[hidden]');
@@ -434,6 +617,7 @@ function updateUiState() {
   refreshControlStates();
   updateWorkDuration();
   startWorkTimer();
+  persistMobileState();
 }
 
 function initializeMobileState() {
@@ -454,11 +638,13 @@ function initializeMobileState() {
     breakTotalLabel: data.breakTotalLabel || (data.totalBreakMinutes ? formatDuration(Number(data.totalBreakMinutes) * 60000) : '0:00'),
     companyName: data.companyName || '',
     workedLabel: data.workedLabel || '0:00',
+    pendingPunchSync: false,
   };
   if (mobileState.isWorking && !mobileState.startedAtMs) {
     mobileState.startedAtMs = Date.now();
     mobileState.startLabel = formatTime(mobileState.startedAtMs);
   }
+  restoreMobileStateFromStorage();
   updateUiState();
 }
 
@@ -581,6 +767,7 @@ function applyOfflinePunchAction(action, payload, form) {
   if (!mobileState) {
     return;
   }
+  mobileState.pendingPunchSync = true;
   const now = Date.now();
   switch (action) {
     case 'start_work':
