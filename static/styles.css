@@ -1921,9 +1921,17 @@ tr.status-rejected td {
 }
 
 .mobile-panel {
+    display: none;
+}
+
+.mobile-panel.is-active {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+}
+
+.mobile-panel[hidden] {
+    display: none !important;
 }
 
 .mobile-card {
