@@ -756,6 +756,8 @@ function handleOfflineSubmission(event) {
   } else {
     processPunchSubmission(form, payload);
   }
+
+  await storeOffline('offline');
 }
 
 function registerTabHandling() {
