@@ -986,11 +986,7 @@ def logout(request: Request):
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(database.get_db)):
-    user = get_logged_in_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+def _build_dashboard_context(db: Session, user: models.User):
     today = date.today()
     reference_month = today
     metrics = services.calculate_dashboard_metrics(db, user.id, reference_month)
@@ -998,8 +994,6 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     holiday_region = crud.get_default_holiday_region(db)
     holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
     holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
-    message = request.query_params.get("msg")
-    error = request.query_params.get("error")
     companies = crud.get_companies(db)
     daily_entries = crud.get_time_entries_for_user(db, user.id, start=today, end=today)
     daily_entries = sorted(daily_entries, key=lambda entry: (entry.start_time, entry.id))
@@ -1073,27 +1067,55 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
         "days": week_days,
         "vacation_minutes": weekly_vacation_minutes,
     }
-    return templates.TemplateResponse(
-        "dashboard.html",
+    return {
+        "metrics": metrics,
+        "holidays": holidays,
+        "holiday_region": holiday_region,
+        "holiday_region_label": holiday_region_label,
+        "companies": companies,
+        "active_entry": active_entry,
+        "metrics_month": reference_month.replace(day=1),
+        "can_create_companies": _can_create_companies(user),
+        "daily_entries": daily_entries,
+        "daily_total_minutes": daily_total_minutes,
+        "today": today,
+        "weekly_summary": weekly_summary,
+    }
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    context = _build_dashboard_context(db, user)
+    context.update(
         {
             "request": request,
             "user": user,
-            "metrics": metrics,
-            "holidays": holidays,
-            "holiday_region": holiday_region,
-            "holiday_region_label": holiday_region_label,
-            "companies": companies,
-            "message": message,
-            "error": error,
-            "active_entry": active_entry,
-            "metrics_month": reference_month.replace(day=1),
-            "can_create_companies": _can_create_companies(user),
-            "daily_entries": daily_entries,
-            "daily_total_minutes": daily_total_minutes,
-            "today": today,
-            "weekly_summary": weekly_summary,
-        },
+            "message": request.query_params.get("msg"),
+            "error": request.query_params.get("error"),
+        }
     )
+    return templates.TemplateResponse("dashboard.html", context)
+
+
+@app.get("/mobile", response_class=HTMLResponse)
+def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    context = _build_dashboard_context(db, user)
+    context.update(
+        {
+            "request": request,
+            "user": user,
+            "message": request.query_params.get("msg"),
+            "error": request.query_params.get("error"),
+            "mobile": True,
+        }
+    )
+    return templates.TemplateResponse("mobile/dashboard.html", context)
 
 
 @app.post("/time")

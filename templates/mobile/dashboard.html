@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+{% block title %}Mobile Erfassung – Erfassung{% endblock %}
+{% block content %}
+<section class="mobile-dashboard" aria-label="Mobile Zeiterfassung">
+    <header class="mobile-dashboard__header">
+        <div>
+            <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
+            <p class="mobile-dashboard__date">{{ today.strftime('%A, %d.%m.%Y') }}</p>
+        </div>
+        {% if active_entry %}
+            <p class="mobile-dashboard__status">
+                <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
+                seit {{ active_entry.start_time.strftime('%H:%M') }} Uhr
+            </p>
+        {% else %}
+            <p class="mobile-dashboard__status mobile-dashboard__status--idle">
+                <span class="mobile-badge">Bereit</span>
+                Du kannst deine Arbeitszeit jetzt starten.
+            </p>
+        {% endif %}
+    </header>
+
+    <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
+        <button type="button" class="mobile-tab is-active" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="true">Buchung</button>
+        <button type="button" class="mobile-tab" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="false">Übersicht</button>
+        <button type="button" class="mobile-tab" data-tab="salden" id="mobile-tab-salden" aria-controls="mobile-panel-salden" aria-selected="false">Salden</button>
+    </nav>
+
+    <div class="mobile-panels">
+        <section class="mobile-panel is-active" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung">
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Schnell stempeln</h2>
+                {% if active_entry %}
+                    <div class="mobile-card__section">
+                        <p class="mobile-card__text">
+                            Gestartet um {{ active_entry.start_time.strftime('%H:%M') }} Uhr.
+                            {% if active_entry.company %}
+                                Auftrag: <strong>{{ active_entry.company.name }}</strong>.
+                            {% endif %}
+                        </p>
+                        <p class="mobile-card__text">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Std</p>
+                        {% if active_entry.break_started_at %}
+                            <p class="mobile-card__text">
+                                <span class="mobile-badge mobile-badge--break">Pause läuft</span>
+                                seit {{ active_entry.break_started_at.strftime('%H:%M') }} Uhr
+                            </p>
+                        {% else %}
+                            <p class="mobile-card__text">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
+                        {% endif %}
+                    </div>
+                    <div class="mobile-action-grid">
+                        <form method="post" action="/punch">
+                            <input type="hidden" name="next_url" value="/mobile">
+                            <input type="hidden" name="action" value="start_break">
+                            <button type="submit" class="mobile-button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
+                        </form>
+                        <form method="post" action="/punch">
+                            <input type="hidden" name="next_url" value="/mobile">
+                            <input type="hidden" name="action" value="end_break">
+                            <button type="submit" class="mobile-button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
+                        </form>
+                        {% if active_entry.company_id is not none %}
+                            <form method="post" action="/punch">
+                                <input type="hidden" name="next_url" value="/mobile">
+                                <input type="hidden" name="action" value="end_company">
+                                <button type="submit" class="mobile-button">Auftrag beenden</button>
+                            </form>
+                        {% endif %}
+                        <form method="post" action="/punch">
+                            <input type="hidden" name="next_url" value="/mobile">
+                            <input type="hidden" name="action" value="end_work">
+                            <button type="submit" class="mobile-button danger">Arbeitszeit beenden</button>
+                        </form>
+                    </div>
+                {% else %}
+                    <div class="mobile-card__section">
+                        <p class="mobile-card__text">Beginne deine Arbeitszeit mit einem Tipp.</p>
+                    </div>
+                    <div class="mobile-action-grid">
+                        <form method="post" action="/punch">
+                            <input type="hidden" name="next_url" value="/mobile">
+                            <input type="hidden" name="action" value="start_work">
+                            <button type="submit" class="mobile-button primary">Arbeitszeit starten</button>
+                        </form>
+                        {% if companies or can_create_companies %}
+                            <button type="button" class="mobile-button" data-open="mobile-order-modal">Auftrag starten</button>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </div>
+
+            {% if companies or can_create_companies %}
+                <div class="modal" id="mobile-order-modal" aria-hidden="true" role="dialog" aria-modal="true">
+                    <div class="modal__backdrop" data-close></div>
+                    <div class="modal__dialog">
+                        <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+                        <h3>Auftrag starten</h3>
+                        <p class="modal__hint">Wähle eine Firma oder lege einen neuen Auftrag an.</p>
+                        <form method="post" action="/punch" class="modal__form">
+                            <input type="hidden" name="next_url" value="/mobile">
+                            <input type="hidden" name="action" value="start_company">
+                            {% if companies %}
+                                <label>
+                                    Firma auswählen
+                                    <select name="company_id">
+                                        <option value="">Firma wählen</option>
+                                        {% for company in companies %}
+                                            <option value="{{ company.id }}">{{ company.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                            {% endif %}
+                            {% if can_create_companies %}
+                                <label>
+                                    Neue Firma anlegen
+                                    <input type="text" name="new_company_name" placeholder="Name der neuen Firma">
+                                </label>
+                            {% endif %}
+                            <label>
+                                Kommentar (optional)
+                                <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
+                            </label>
+                            <div class="modal__actions modal-action-bar">
+                                <button type="button" class="button ghost modal-action" data-close>
+                                    <span class="modal-action__icon" aria-hidden="true">✕</span>
+                                    <span>Abbrechen</span>
+                                </button>
+                                <button type="submit" class="button modal-action">
+                                    <span class="modal-action__icon" aria-hidden="true">▶</span>
+                                    <span>Auftrag starten</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            {% endif %}
+
+            <div class="mobile-card mobile-card--hint">
+                <h2 class="mobile-card__title">Hinweis</h2>
+                <p class="mobile-card__text">Nach 6 Stunden Arbeit mindestens 30 Minuten Pause einlegen, nach 9 Stunden mindestens 45 Minuten (ArbZG).</p>
+            </div>
+        </section>
+
+        <section class="mobile-panel" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" hidden>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Heutige Buchungen</h2>
+                {% if daily_entries %}
+                    <ul class="mobile-entry-list">
+                        {% for entry in daily_entries %}
+                            <li class="mobile-entry {% if entry.is_open %}is-active{% endif %}">
+                                <div class="mobile-entry__times">
+                                    <strong>{{ entry.start_time.strftime('%H:%M') }}</strong>
+                                    <span>–</span>
+                                    <strong>
+                                        {% if entry.is_open %}
+                                            läuft
+                                        {% elif entry.end_time %}
+                                            {{ entry.end_time.strftime('%H:%M') }}
+                                        {% else %}
+                                            –
+                                        {% endif %}
+                                    </strong>
+                                </div>
+                                <div class="mobile-entry__meta">
+                                    <span>Arbeitszeit {{ entry.worked_minutes|format_minutes }} Std</span>
+                                    {% if entry.total_break_minutes %}
+                                        <span>Pausen {{ entry.total_break_minutes|format_minutes }} Std</span>
+                                    {% endif %}
+                                    {% if entry.company %}
+                                        <span>{{ entry.company.name }}</span>
+                                    {% endif %}
+                                    {% if entry.notes %}
+                                        <span class="mobile-entry__notes">{{ entry.notes }}</span>
+                                    {% endif %}
+                                </div>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="mobile-empty-state">Für heute wurden noch keine Buchungen erfasst.</p>
+                {% endif %}
+            </div>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Wochenübersicht</h2>
+                <dl class="mobile-stats-grid">
+                    <div>
+                        <dt>Arbeitszeit</dt>
+                        <dd>{{ weekly_summary.total_minutes|format_minutes }} Std</dd>
+                    </div>
+                    <div>
+                        <dt>Soll</dt>
+                        <dd>{{ weekly_summary.target_minutes|format_minutes }} Std</dd>
+                    </div>
+                    <div>
+                        <dt>Erwartet bis heute</dt>
+                        <dd>{{ weekly_summary.expected_minutes_to_date|format_minutes }} Std</dd>
+                    </div>
+                    <div>
+                        <dt>Verbleibend</dt>
+                        <dd>{{ weekly_summary.remaining_minutes|format_minutes }} Std</dd>
+                    </div>
+                </dl>
+                <ul class="mobile-week-list">
+                    {% for day in weekly_summary.days %}
+                        <li class="mobile-week-day {% if day.is_today %}is-today{% endif %}">
+                            <span class="mobile-week-day__label">{{ day.date.strftime('%a %d.%m.') }}</span>
+                            <span class="mobile-week-day__minutes">{{ day.minutes|format_minutes }} Std</span>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </section>
+
+        <section class="mobile-panel" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" hidden>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Monatswerte</h2>
+                <dl class="mobile-stats-grid">
+                    <div>
+                        <dt>Ist</dt>
+                        <dd>{{ (metrics.total_work_minutes + metrics.vacation_minutes)|format_minutes }} Std</dd>
+                    </div>
+                    <div>
+                        <dt>Soll</dt>
+                        <dd>{{ metrics.target_minutes|format_minutes }} Std</dd>
+                    </div>
+                    <div>
+                        <dt>Überstunden</dt>
+                        <dd>{{ metrics.total_overtime_minutes|format_minutes }} Std</dd>
+                    </div>
+                    <div>
+                        <dt>Genommene Überstd.</dt>
+                        <dd>{{ metrics.overtime_taken_minutes|format_minutes }} Std</dd>
+                    </div>
+                    <div>
+                        <dt>Urlaub (Monat)</dt>
+                        <dd>{{ metrics.vacation_minutes|format_minutes }} Std</dd>
+                    </div>
+                    {% if metrics.overtime_limit_minutes %}
+                        <div>
+                            <dt>Überstundenlimit</dt>
+                            <dd>{{ metrics.overtime_limit_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Restlimit</dt>
+                            <dd>
+                                {% if metrics.overtime_limit_exceeded %}
+                                    Überschritten um {{ metrics.overtime_limit_excess_minutes|format_minutes }} Std
+                                {% else %}
+                                    {{ metrics.overtime_limit_remaining_minutes|format_minutes }} Std verfügbar
+                                {% endif %}
+                            </dd>
+                        </div>
+                    {% endif %}
+                </dl>
+            </div>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Urlaubskonto</h2>
+                <dl class="mobile-stats-grid">
+                    <div>
+                        <dt>Jahresurlaub</dt>
+                        <dd>{{ metrics.vacation_summary.total_days|round(2) }} Tage</dd>
+                    </div>
+                    {% if metrics.vacation_summary.carryover_days > 0 %}
+                        <div>
+                            <dt>Übertrag</dt>
+                            <dd>{{ metrics.vacation_summary.carryover_days|round(2) }} Tage</dd>
+                        </div>
+                    {% endif %}
+                    <div>
+                        <dt>Genommen</dt>
+                        <dd>{{ metrics.vacation_summary.used_days|round(2) }} Tage</dd>
+                    </div>
+                    <div>
+                        <dt>Geplant</dt>
+                        <dd>{{ metrics.vacation_summary.planned_days|round(2) }} Tage</dd>
+                    </div>
+                    <div>
+                        <dt>Rest</dt>
+                        <dd>{{ metrics.vacation_summary.remaining_days|round(2) }} Tage</dd>
+                    </div>
+                </dl>
+            </div>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Feiertage ({{ holiday_region_label }})</h2>
+                {% if holidays %}
+                    <ul class="mobile-holiday-list">
+                        {% for holiday in holidays[:5] %}
+                            <li>
+                                <span>{{ holiday.date.strftime('%d.%m.%Y') }}</span>
+                                <strong>{{ holiday.name }}</strong>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="mobile-empty-state">Keine kommenden Feiertage vorhanden.</p>
+                {% endif %}
+            </div>
+        </section>
+    </div>
+</section>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const tabs = Array.from(document.querySelectorAll('.mobile-tab'));
+        const panels = Array.from(document.querySelectorAll('[data-tab-panel]'));
+        const validTabs = new Set(tabs.map(tab => tab.dataset.tab));
+
+        function activateTab(tabName, updateHash = true) {
+            if (!validTabs.has(tabName)) {
+                tabName = 'buchung';
+            }
+            tabs.forEach(tab => {
+                const isActive = tab.dataset.tab === tabName;
+                tab.classList.toggle('is-active', isActive);
+                tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            });
+            panels.forEach(panel => {
+                const isActive = panel.dataset.tabPanel === tabName;
+                panel.classList.toggle('is-active', isActive);
+                panel.toggleAttribute('hidden', !isActive);
+            });
+            if (updateHash) {
+                const newHash = '#' + tabName;
+                if (history.replaceState) {
+                    history.replaceState(null, '', newHash);
+                } else {
+                    window.location.hash = newHash;
+                }
+            }
+        }
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+        });
+
+        window.addEventListener('hashchange', () => {
+            const target = window.location.hash.replace('#', '');
+            activateTab(target, false);
+        });
+
+        const initialHash = window.location.hash.replace('#', '');
+        activateTab(initialHash || 'buchung', false);
+
+        const modal = document.getElementById('mobile-order-modal');
+        if (modal) {
+            const openers = document.querySelectorAll('[data-open="mobile-order-modal"]');
+            const closers = modal.querySelectorAll('[data-close]');
+
+            const setVisibility = (visible) => {
+                if (visible) {
+                    modal.classList.add('is-visible');
+                    modal.setAttribute('aria-hidden', 'false');
+                    document.body.classList.add('modal-open');
+                    const firstInput = modal.querySelector('select, input, button');
+                    if (firstInput) {
+                        firstInput.focus();
+                    }
+                } else {
+                    modal.classList.remove('is-visible');
+                    modal.setAttribute('aria-hidden', 'true');
+                    document.body.classList.remove('modal-open');
+                }
+            };
+
+            openers.forEach((button) => button.addEventListener('click', () => setVisibility(true)));
+            closers.forEach((element) => element.addEventListener('click', () => setVisibility(false)));
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && modal.classList.contains('is-visible')) {
+                    setVisibility(false);
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}
