@@ -1878,6 +1878,7 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
     if selected_state_param:
         selected_state_param = selected_state_param.upper()
     selected_year_param = request.query_params.get("holiday_year")
+    refresh_requested = request.query_params.get("refresh") == "1"
     default_region = crud.get_default_holiday_region(db)
     selected_state = selected_state_param if selected_state_param in HOLIDAY_STATE_CODES else None
     if not selected_state:
@@ -1898,7 +1899,18 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
     if selected_year not in year_options:
         year_options.append(selected_year)
         year_options.sort()
-    holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
+    holidays = []
+    auto_synced = False
+    if refresh_requested:
+        holidays = holiday_calculator.ensure_holidays(db, selected_year, selected_state)
+        auto_synced = True
+    else:
+        holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
+        if not holidays:
+            holidays = holiday_calculator.ensure_holidays(db, selected_year, selected_state)
+            auto_synced = True
+    if auto_synced and not message:
+        message = f"{len(holidays)} Feiertage aktualisiert"
     return _admin_template(
         "admin/holidays.html",
         request,
