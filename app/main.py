@@ -1223,6 +1223,9 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
             "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden", "konto")),
             "hide_navigation": True,
             "mobile": True,
+            "active_tab": tab_param,
+            "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden")),
+            "hide_navigation": True,
         }
     )
     context.update(overview_context)
