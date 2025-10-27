@@ -90,6 +90,30 @@ function clearStoredMobileState() {
   });
 }
 
+function setElementHidden(element, hidden) {
+  if (!element) {
+    return;
+  }
+  if (hidden) {
+    element.hidden = true;
+    element.setAttribute('hidden', 'hidden');
+  } else {
+    element.hidden = false;
+    element.removeAttribute('hidden');
+  }
+}
+
+function setButtonDisabled(element, disabled) {
+  if (!element) {
+    return;
+  }
+  if (disabled) {
+    element.setAttribute('disabled', 'disabled');
+  } else {
+    element.removeAttribute('disabled');
+  }
+}
+
 function dispatchSyncStatus(message, state = 'default') {
   document.dispatchEvent(
     new CustomEvent('offline-sync-status', {
@@ -919,6 +943,8 @@ function handleOfflineSubmission(event) {
   } else {
     processPunchSubmission(form, payload);
   }
+
+  await storeOffline('offline');
 }
 
 function registerTabHandling() {

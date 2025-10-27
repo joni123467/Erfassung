@@ -47,10 +47,10 @@ poetry install
 ## Entwicklung starten
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --reload
 ```
 
-Die Anwendung ist dann unter <http://127.0.0.1:8000> erreichbar.
+Die Anwendung lauscht damit auf allen verfügbaren Netzwerk-Interfaces und ist im lokalen Netz unter der jeweiligen IP-Adresse des Hosts erreichbar (z. B. <http://127.0.0.1:8000> auf dem gleichen Rechner).
 
 ## Anmeldung und Rollen
 
