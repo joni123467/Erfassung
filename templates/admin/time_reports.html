@@ -11,31 +11,47 @@
             <a class="button" href="/admin/reports/time/excel{% if export_query %}?{{ export_query }}{% endif %}">Excel-Export</a>
         </div>
     </div>
+    {% set view_base_params = [] %}
+    {% if status_param %}{% set _ = view_base_params.append('status=' ~ status_param) %}{% endif %}
+    {% if sort_param %}{% set _ = view_base_params.append('sort=' ~ sort_param) %}{% endif %}
+    {% if company_param %}{% set _ = view_base_params.append('company=' ~ company_param) %}{% endif %}
+    {% set base_query = '&'.join(view_base_params) %}
+    <nav class="timetac-subnav">
+        {% set month_query = 'view=month&month=' ~ month_value %}
+        {% if base_query %}{% set month_query = month_query ~ '&' ~ base_query %}{% endif %}
+        <a class="timetac-subnav__link {% if view == 'month' %}is-active{% endif %}"
+           href="/admin/reports/time?{{ month_query }}">Monatsübersicht</a>
+        {% set week_query = 'view=week&week=' ~ week_value %}
+        {% if base_query %}{% set week_query = week_query ~ '&' ~ base_query %}{% endif %}
+        <a class="timetac-subnav__link {% if view == 'week' %}is-active{% endif %}"
+           href="/admin/reports/time?{{ week_query }}">KW-Übersicht</a>
+        {% set range_query = 'view=range&start=' ~ range_start_value ~ '&end=' ~ range_end_value %}
+        {% if base_query %}{% set range_query = range_query ~ '&' ~ base_query %}{% endif %}
+        <a class="timetac-subnav__link {% if view == 'range' %}is-active{% endif %}"
+           href="/admin/reports/time?{{ range_query }}">Zeitraum</a>
+    </nav>
     <form method="get" action="/admin/reports/time" class="filter-bar">
-        <label>
-            Ansicht
-            <select name="view">
-                <option value="month" {% if view == 'month' %}selected{% endif %}>Monat</option>
-                <option value="week" {% if view == 'week' %}selected{% endif %}>Kalenderwoche</option>
-                <option value="range" {% if view == 'range' %}selected{% endif %}>Zeitraum</option>
-            </select>
-        </label>
-        <label data-view-filter="month" {% if view != 'month' %}hidden{% endif %}>
-            Monat (Monatsansicht)
-            <input type="month" name="month" value="{{ month_value }}">
-        </label>
-        <label data-view-filter="week" {% if view != 'week' %}hidden{% endif %}>
-            Kalenderwoche (KW-Ansicht)
-            <input type="week" name="week" value="{{ week_value }}">
-        </label>
-        <label data-view-filter="range" {% if view != 'range' %}hidden{% endif %}>
-            Startdatum (Zeitraum)
-            <input type="date" name="start" value="{{ range_start_value }}">
-        </label>
-        <label data-view-filter="range" {% if view != 'range' %}hidden{% endif %}>
-            Enddatum (Zeitraum)
-            <input type="date" name="end" value="{{ range_end_value }}">
-        </label>
+        <input type="hidden" name="view" value="{{ view }}">
+        {% if view == 'month' %}
+            <label>
+                Monat (Monatsansicht)
+                <input type="month" name="month" value="{{ month_value }}">
+            </label>
+        {% elif view == 'week' %}
+            <label>
+                Kalenderwoche (KW-Ansicht)
+                <input type="week" name="week" value="{{ week_value }}">
+            </label>
+        {% else %}
+            <label>
+                Startdatum (Zeitraum)
+                <input type="date" name="start" value="{{ range_start_value }}">
+            </label>
+            <label>
+                Enddatum (Zeitraum)
+                <input type="date" name="end" value="{{ range_end_value }}">
+            </label>
+        {% endif %}
         <label>
             Firma
             <select name="company">
@@ -65,23 +81,6 @@
         <button type="submit" class="button small">Übernehmen</button>
         <a class="button ghost small" href="/admin/reports/time">Zurücksetzen</a>
     </form>
-    <script>
-        (function () {
-            const viewSelect = document.querySelector('.filter-bar select[name="view"]');
-            if (!viewSelect) {
-                return;
-            }
-            const conditionalFilters = document.querySelectorAll('.filter-bar [data-view-filter]');
-            const updateVisibility = () => {
-                const currentView = viewSelect.value;
-                conditionalFilters.forEach((element) => {
-                    element.hidden = element.dataset.viewFilter !== currentView;
-                });
-            };
-            updateVisibility();
-            viewSelect.addEventListener('change', updateVisibility);
-        })();
-    </script>
     <div class="report-summary-grid">
         <div class="report-summary-card">
             <span class="report-summary-card__title">Zeitraum</span>

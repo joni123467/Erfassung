@@ -190,7 +190,7 @@ def _list_remote_branches(repo_url: str) -> List[str]:
     return sorted(refs, key=_update_ref_sort_key)
 
 
-def _execute_update(ref: str, repo_url: str) -> bool:
+def _execute_update(ref: str, repo_url: str, skip_service_restart: bool = False) -> bool:
     UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     cleanup_error: OSError | None = None
     try:
@@ -214,6 +214,8 @@ def _execute_update(ref: str, repo_url: str) -> bool:
     ]
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    if skip_service_restart:
+        env["ERFASSUNG_SKIP_SERVICE_RESTART"] = "1"
     try:
         log_file_handle = UPDATE_LOG_PATH.open("w", encoding="utf-8")
     except OSError as exc:
@@ -257,6 +259,39 @@ def _execute_update(ref: str, repo_url: str) -> bool:
         log_file.write(f"[{end_stamp}] ❌ Update fehlgeschlagen (Exit {return_code})\n\n")
         log_file.flush()
         return False
+
+
+def _running_under_systemd_service() -> bool:
+    return bool(os.environ.get("INVOCATION_ID"))
+
+
+def _schedule_service_restart(delay_seconds: int = 5) -> bool:
+    systemd_run = shutil.which("systemd-run")
+    systemctl_path = shutil.which("systemctl")
+    if not systemd_run or not systemctl_path:
+        return False
+    try:
+        delay = max(int(delay_seconds), 0)
+    except (TypeError, ValueError):
+        delay = 0
+    command = [
+        systemd_run,
+        "--quiet",
+        f"--on-active={delay}",
+        systemctl_path,
+        "restart",
+        "erfassung.service",
+    ]
+    try:
+        subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError:
+        return False
+    return True
 
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
@@ -2704,8 +2739,13 @@ def admin_system_trigger_update(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     chosen_ref = (custom_ref or "").strip() or (ref or preferred_branch)
     repo_url = DEFAULT_UPDATE_REPO
+    skip_restart = _running_under_systemd_service()
     try:
-        success = _execute_update(chosen_ref, repo_url)
+        success = _execute_update(
+            chosen_ref,
+            repo_url,
+            skip_service_restart=skip_restart,
+        )
     except Exception:
         redirect = _build_redirect(
             "/admin/system",
@@ -2714,9 +2754,19 @@ def admin_system_trigger_update(
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if success:
+        message = "Update erfolgreich abgeschlossen."
+        if skip_restart:
+            if _schedule_service_restart():
+                message = (
+                    "Update erfolgreich abgeschlossen. Dienst wird in Kürze neu gestartet."
+                )
+            else:
+                message = (
+                    "Update erfolgreich abgeschlossen. Bitte Dienst manuell neu starten."
+                )
         redirect = _build_redirect(
             "/admin/system",
-            msg="Update erfolgreich abgeschlossen.",
+            msg=message,
             ref=chosen_ref,
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
