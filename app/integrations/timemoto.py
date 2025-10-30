@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,8 +18,26 @@ from .. import crud, models, schemas
 
 LOGGER = logging.getLogger(__name__)
 
-_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+def _discover_project_root() -> Path:
+    """Return the root folder that contains the application package."""
+
+    current = Path(__file__).resolve()
+    for candidate in current.parents:
+        if (candidate / "requirements.txt").exists():
+            return candidate
+    for candidate in current.parents:
+        if (candidate / "app").is_dir():
+            return candidate
+    try:
+        return current.parents[3]
+    except IndexError:  # pragma: no cover - defensive fallback
+        return current.parent
+
+
+_PROJECT_ROOT = _discover_project_root()
+_CONFIG_DIR = _PROJECT_ROOT / "config"
 _CONFIG_PATH = _CONFIG_DIR / "timemoto.json"
+_LEGACY_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "timemoto.json"
 
 
 class TimeMotoError(RuntimeError):
@@ -30,6 +49,22 @@ def _ensure_config_dir() -> None:
         _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise TimeMotoError(f"Konfigurationsordner konnte nicht erstellt werden: {exc}") from exc
+
+
+def _migrate_legacy_config() -> None:
+    if _LEGACY_CONFIG_PATH == _CONFIG_PATH:
+        return
+    if not _LEGACY_CONFIG_PATH.exists() or _CONFIG_PATH.exists():
+        return
+    try:
+        _ensure_config_dir()
+        shutil.move(str(_LEGACY_CONFIG_PATH), str(_CONFIG_PATH))
+        try:
+            _LEGACY_CONFIG_PATH.parent.rmdir()
+        except OSError:
+            pass
+    except OSError as exc:
+        LOGGER.warning("TimeMoto-Altkonfiguration konnte nicht übernommen werden: %s", exc)
 
 
 @dataclass
@@ -143,6 +178,7 @@ class TimeMotoConfig:
     @classmethod
     def load(cls) -> "TimeMotoConfig":
         config = cls()
+        _migrate_legacy_config()
         if not _CONFIG_PATH.exists():
             return config
         try:
