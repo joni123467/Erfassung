@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}TimeMoto TM-616 – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'timemoto' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>TimeMoto TM-616</h1>
+    </div>
+    <div class="card-body card-body--form card-body--narrow">
+        <p class="form-hint">
+            Verbinden Sie Ihr TimeMoto-Terminal direkt im lokalen Netzwerk. Die Anwendung verwendet die hier
+            hinterlegten Endpoints, um Benutzerkarten und Buchungen ohne Cloud-Dienst abzurufen.
+        </p>
+        <form method="post" action="/admin/integrations/timemoto" class="timemoto-config">
+            <div class="form-grid">
+                <label>
+                    Hostname oder IP-Adresse
+                    <input type="text" name="host" value="{{ config.host }}" autocomplete="off" required>
+                </label>
+                <label>
+                    Port
+                    <input type="number" name="port" min="1" max="65535" value="{{ config.port }}">
+                </label>
+                <label>
+                    Benutzername
+                    <input type="text" name="username" value="{{ config.username }}" autocomplete="off">
+                </label>
+                <label>
+                    Passwort
+                    <input type="password" name="password" autocomplete="new-password" placeholder="{% if config.password %}Unverändert lassen, um das gespeicherte Passwort zu behalten{% else %}Passwort des Geräts{% endif %}">
+                    <span class="form-hint">Leer lassen, um das bestehende Passwort beizubehalten.</span>
+                </label>
+                <label>
+                    Zeitzone
+                    <input type="text" name="timezone_value" value="{{ config.timezone }}" placeholder="Europe/Berlin">
+                    <span class="form-hint">Verwendet für die Umrechnung der Terminalzeiten.</span>
+                </label>
+                <label>
+                    Login-Endpoint
+                    <input type="text" name="login_path" value="{{ config.login_path }}">
+                </label>
+                <label>
+                    Benutzer-Endpoint
+                    <input type="text" name="users_path" value="{{ config.users_path }}">
+                </label>
+                <label>
+                    Buchungs-Endpoint
+                    <input type="text" name="events_path" value="{{ config.events_path }}">
+                </label>
+                <label>
+                    Ereignis-Limit
+                    <input type="number" name="events_limit" min="1" value="{{ config.events_limit }}">
+                </label>
+                <label>
+                    Timeout (Sekunden)
+                    <input type="number" name="timeout_value" min="1" step="0.1" value="{{ '%.1f'|format(config.timeout) }}">
+                </label>
+            </div>
+            <div class="inline-form">
+                <label class="checkbox">
+                    <input type="checkbox" name="use_ssl" value="1" {% if config.use_ssl %}checked{% endif %}>
+                    HTTPS (SSL) verwenden
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" name="verify_ssl" value="1" {% if config.verify_ssl %}checked{% endif %}>
+                    Zertifikat prüfen
+                </label>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="button primary">Einstellungen speichern</button>
+            </div>
+        </form>
+    </div>
+</section>
+<section class="card">
+    <div class="card-header">
+        <h2>Synchronisation</h2>
+    </div>
+    <div class="card-body card-body--form card-body--narrow">
+        <p class="form-hint">
+            {% if config.last_sync_at %}
+                Letzte Synchronisierung: {{ config.last_sync_at.replace('T', ' ') }}
+            {% else %}
+                Es wurden noch keine Daten synchronisiert.
+            {% endif %}
+            {% if config.last_event_id %}<br>Letzte verarbeitete Ereignis-ID: {{ config.last_event_id }}{% endif %}
+        </p>
+        <form method="post" action="/admin/integrations/timemoto/sync" class="inline-form">
+            <label class="checkbox">
+                <input type="checkbox" name="full_sync" value="1">
+                Alle Ereignisse erneut laden (ignoriert gespeicherte ID)
+            </label>
+            <div class="form-actions">
+                <button type="submit" class="button">Synchronisierung starten</button>
+            </div>
+        </form>
+        {% if sync_result %}
+            <h3>Ergebnis</h3>
+            <table class="admin-table striped-table">
+                <tbody>
+                    <tr>
+                        <th scope="row">Remote-Benutzer</th>
+                        <td>{{ sync_result.remote_users }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Benutzer mit Zuordnung</th>
+                        <td>{{ sync_result.matched_users }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Aktualisierte RFID-Tags</th>
+                        <td>{{ sync_result.updated_rfids }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Ereignisse vom Terminal</th>
+                        <td>{{ sync_result.remote_events }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Verarbeitete Ereignisse</th>
+                        <td>{{ sync_result.processed_events }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Nicht zuordenbare Ereignisse</th>
+                        <td>{{ sync_result.unmatched_events }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Übersprungene Ereignisse</th>
+                        <td>{{ sync_result.skipped_events }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Übernommene Buchungen</th>
+                        <td>{{ sync_result.created_entries }}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Gespeicherte Ereignis-ID</th>
+                        <td>{% if sync_result.last_event_id is not none %}{{ sync_result.last_event_id }}{% else %}&mdash;{% endif %}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Zeitpunkt der Synchronisierung</th>
+                        <td>{% if sync_result.last_sync_at %}{{ sync_result.last_sync_at.replace('T', ' ') }}{% else %}&mdash;{% endif %}</td>
+                    </tr>
+                </tbody>
+            </table>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

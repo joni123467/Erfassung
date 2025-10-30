@@ -126,6 +126,8 @@ class TimeEntryBase(BaseModel):
     notes: str = ""
     status: str = models.TimeEntryStatus.APPROVED
     is_manual: bool = False
+    source: Optional[str] = None
+    external_id: Optional[str] = None
 
 
 class TimeEntryCreate(TimeEntryBase):
