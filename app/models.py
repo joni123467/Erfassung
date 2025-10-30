@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship
 
@@ -99,6 +100,14 @@ class TimeEntryStatus:
 
 class TimeEntry(Base):
     __tablename__ = "time_entries"
+    __table_args__ = (
+        Index(
+            "ix_time_entries_source_external",
+            "source",
+            "external_id",
+            unique=True,
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -112,6 +121,8 @@ class TimeEntry(Base):
     notes = Column(String, default="")
     status = Column(String, default=TimeEntryStatus.APPROVED)
     is_manual = Column(Boolean, default=False)
+    source = Column(String, nullable=True)
+    external_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

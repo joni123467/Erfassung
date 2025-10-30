@@ -120,6 +120,19 @@ def delete_group(db: Session, group_id: int) -> bool:
 _PREVIOUS_STATUS_SENTINEL = object()
 
 
+def get_time_entry_by_external_reference(
+    db: Session, source: str, external_id: str
+) -> Optional[models.TimeEntry]:
+    if not source or not external_id:
+        return None
+    return (
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.source == source)
+        .filter(models.TimeEntry.external_id == external_id)
+        .first()
+    )
+
+
 def _entry_bounds(work_date: date, start_time: time, end_time: time, is_open: bool) -> tuple[datetime, datetime]:
     start_dt = datetime.combine(work_date, start_time)
     if is_open:
@@ -190,6 +203,14 @@ def create_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> models.Tim
     payload = entry.model_dump()
     if payload.get("break_started_at") and not payload.get("is_open"):
         payload["break_started_at"] = None
+    source = (payload.get("source") or "").strip()
+    external_id = (payload.get("external_id") or "").strip()
+    payload["source"] = source or None
+    payload["external_id"] = external_id or None
+    if source and external_id:
+        existing = get_time_entry_by_external_reference(db, source, external_id)
+        if existing:
+            return existing
     _ensure_no_time_overlap(db, payload)
     db_entry = models.TimeEntry(**payload)
     db.add(db_entry)
@@ -330,6 +351,8 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
     payload = entry.model_dump()
     payload["break_started_at"] = None
     payload["is_open"] = False
+    payload.pop("source", None)
+    payload.pop("external_id", None)
     _ensure_no_time_overlap(db, payload, exclude_id=entry_id)
     for key, value in payload.items():
         setattr(db_entry, key, value)

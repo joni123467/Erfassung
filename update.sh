@@ -332,6 +332,11 @@ if [ -n "$SOURCE_DIR" ]; then
     fi
 
     echo "📁 Synchronisiere Programmdateien in ${APP_DIR}..."
+    LEGACY_TIMEMOTO_CONFIG="$APP_DIR/app/config/timemoto.json"
+    if [ -f "$LEGACY_TIMEMOTO_CONFIG" ] && [ ! -f "$APP_DIR/config/timemoto.json" ]; then
+        mkdir -p "$APP_DIR/config"
+        cp "$LEGACY_TIMEMOTO_CONFIG" "$APP_DIR/config/timemoto.json"
+    fi
     PRESERVE_ITEMS=".venv .env config config.yml config.yaml data logs erfassung.db"
     for item in "$APP_DIR"/* "$APP_DIR"/.[!.]* "$APP_DIR"/..?*; do
         [ -e "$item" ] || continue
