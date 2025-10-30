@@ -38,9 +38,23 @@ def _add_group_time_report_permission(connection: sqlite3.Connection) -> None:
         connection.commit()
 
 
+def _add_time_entry_external_columns(connection: sqlite3.Connection) -> None:
+    cursor = connection.execute("PRAGMA table_info('time_entries')")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "source" not in columns:
+        connection.execute("ALTER TABLE time_entries ADD COLUMN source TEXT")
+    if "external_id" not in columns:
+        connection.execute("ALTER TABLE time_entries ADD COLUMN external_id TEXT")
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_time_entries_source_external ON time_entries(source, external_id)"
+    )
+    connection.commit()
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
+    (3, _add_time_entry_external_columns),
 ]
 
 

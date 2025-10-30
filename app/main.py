@@ -31,6 +31,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
 from . import crud, database, holiday_calculator, models, schemas, services
+from .integrations import timemoto
 from .excel_export import export_time_entries
 from .pdf_export import export_team_overview_pdf, export_time_overview_pdf
 
@@ -1774,6 +1775,7 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "updates": _ensure_admin(user),
         "reports": _can_view_time_reports(user),
         "edit_time_entries": _can_edit_time_entries(user),
+        "integrations": _ensure_admin(user),
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
     permissions["create_companies"] = _can_create_companies(user)
@@ -2942,6 +2944,218 @@ def admin_system_trigger_update(
         ref=chosen_ref,
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _parse_checkbox(value: str | None) -> bool:
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    return normalized in {"1", "true", "on", "yes"}
+
+
+@app.get("/admin/integrations/timemoto", response_class=HTMLResponse)
+def admin_timemoto_overview(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        config = timemoto.TimeMotoConfig.load()
+    except timemoto.TimeMotoError as exc:
+        config = timemoto.TimeMotoConfig()
+        error = str(exc)
+    else:
+        error = request.query_params.get("error")
+    message = request.query_params.get("msg")
+    return _admin_template(
+        "admin/timemoto.html",
+        request,
+        user,
+        message=message,
+        error=error,
+        config=config,
+        sync_result=None,
+    )
+
+
+@app.post("/admin/integrations/timemoto", response_class=HTMLResponse)
+def admin_timemoto_save(
+    request: Request,
+    host: str = Form(""),
+    port: str = Form(""),
+    use_ssl: str | None = Form(None),
+    verify_ssl: str | None = Form(None),
+    username: str = Form(""),
+    password: str = Form(""),
+    timezone_value: str = Form(""),
+    login_path: str = Form(""),
+    users_path: str = Form(""),
+    events_path: str = Form(""),
+    events_limit: str = Form(""),
+    timeout_value: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        config = timemoto.TimeMotoConfig.load()
+    except timemoto.TimeMotoError:
+        config = timemoto.TimeMotoConfig()
+    payload = {
+        "host": host,
+        "port": port or None,
+        "use_ssl": _parse_checkbox(use_ssl),
+        "verify_ssl": _parse_checkbox(verify_ssl),
+        "username": username,
+        "password": password,
+        "timezone": timezone_value,
+        "login_path": login_path,
+        "users_path": users_path,
+        "events_path": events_path,
+        "events_limit": events_limit or None,
+        "timeout": timeout_value or None,
+    }
+    try:
+        config.update_from_dict(payload)
+    except timemoto.TimeMotoError as exc:
+        return _admin_template(
+            "admin/timemoto.html",
+            request,
+            user,
+            error=str(exc),
+            config=config,
+            sync_result=None,
+        )
+    if not config.host:
+        return _admin_template(
+            "admin/timemoto.html",
+            request,
+            user,
+            error="Bitte Hostname oder IP-Adresse des TimeMoto-Geräts angeben.",
+            config=config,
+            sync_result=None,
+        )
+    try:
+        config.save()
+    except timemoto.TimeMotoError as exc:
+        return _admin_template(
+            "admin/timemoto.html",
+            request,
+            user,
+            error=str(exc),
+            config=config,
+            sync_result=None,
+        )
+    redirect = _build_redirect(
+        "/admin/integrations/timemoto",
+        msg="Einstellungen gespeichert.",
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/integrations/timemoto/sync", response_class=HTMLResponse)
+def admin_timemoto_sync(
+    request: Request,
+    full_sync: str | None = Form(None),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        config = timemoto.TimeMotoConfig.load()
+    except timemoto.TimeMotoError as exc:
+        config = timemoto.TimeMotoConfig()
+        return _admin_template(
+            "admin/timemoto.html",
+            request,
+            user,
+            error=str(exc),
+            config=config,
+            sync_result=None,
+        )
+    if not config.host:
+        return _admin_template(
+            "admin/timemoto.html",
+            request,
+            user,
+            error="Bitte konfigurieren Sie das TimeMoto-Gerät, bevor Sie synchronisieren.",
+            config=config,
+            sync_result=None,
+        )
+    full_flag = _parse_checkbox(full_sync)
+    try:
+        result = timemoto.synchronize(db, config, full_sync=full_flag)
+    except timemoto.TimeMotoError as exc:
+        return _admin_template(
+            "admin/timemoto.html",
+            request,
+            user,
+            error=str(exc),
+            config=config,
+            sync_result=None,
+        )
+    try:
+        config.save()
+    except timemoto.TimeMotoError as exc:
+        return _admin_template(
+            "admin/timemoto.html",
+            request,
+            user,
+            error=f"Synchronisierung erfolgreich, aber Konfiguration konnte nicht gespeichert werden: {exc}",
+            config=config,
+            sync_result=result,
+        )
+    if result.created_entries:
+        message = (
+            f"Synchronisierung abgeschlossen – {result.created_entries} neue Buchungen übernommen."
+        )
+    else:
+        message = "Synchronisierung abgeschlossen."
+    return _admin_template(
+        "admin/timemoto.html",
+        request,
+        user,
+        message=message,
+        error=None,
+        config=config,
+        sync_result=result,
+    )
+
+
+@app.post("/api/integrations/timemoto/sync")
+def api_timemoto_sync(
+    request: Request,
+    full: bool = False,
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _ensure_admin(user):
+        raise HTTPException(status_code=403, detail="Nur Administratoren dürfen synchronisieren.")
+    try:
+        config = timemoto.TimeMotoConfig.load()
+    except timemoto.TimeMotoError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not config.host:
+        raise HTTPException(status_code=400, detail="TimeMoto-Gerät ist nicht konfiguriert.")
+    try:
+        result = timemoto.synchronize(db, config, full_sync=bool(full))
+    except timemoto.TimeMotoError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    try:
+        config.save()
+    except timemoto.TimeMotoError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Synchronisierung erfolgreich, aber Konfiguration konnte nicht gespeichert werden: {exc}",
+        )
+    return result.to_dict()
 
 
 @app.post("/api/groups", response_model=schemas.Group)
