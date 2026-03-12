@@ -10,10 +10,11 @@ const MOBILE_STATE_SELECTOR = '[data-mobile-state]';
 const VACATION_LIST_SELECTOR = '[data-vacation-list]';
 const VACATION_EMPTY_SELECTOR = '[data-vacation-empty]';
 const DB_NAME = 'erfassung-mobile';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const PUNCH_STORE = 'pendingPunches';
 const VACATION_STORE = 'pendingVacations';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
+const OFFLINE_PROFILE_KEY = 'erfassungOfflineProfile';
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
@@ -218,7 +219,12 @@ function createQueue(storeName, fallbackKey) {
 
   return {
     async add(record) {
-      return withStore('readwrite', (store) => store.add({ createdAt: Date.now(), data: record }));
+      const enriched = {
+        createdAt: Date.now(),
+        operationId: record.operationId || `op-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        data: record,
+      };
+      return withStore('readwrite', (store) => store.add(enriched));
     },
     async all() {
       return (await withStore('readonly', (store) => store.getAll())) || [];
@@ -277,25 +283,39 @@ async function flushPunchQueue() {
   }
   let processed = 0;
   let errorOccurred = false;
-  for (const record of records) {
-    const body = new URLSearchParams(record.data);
-    try {
-      const response = await fetch('/punch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-      });
-      if (!response.ok) {
-        throw new Error(`Serverfehler ${response.status}`);
-      }
-      await punchQueue.remove(record.id);
-      processed += 1;
-    } catch (error) {
-      console.warn('Synchronisation fehlgeschlagen', error);
-      errorOccurred = true;
-      break;
+  const operations = records.map((record) => ({
+    operation_id: record.operationId || `punch-${record.id}`,
+    type: 'punch',
+    created_at: new Date(record.createdAt || Date.now()).toISOString(),
+    payload: record.data,
+  }));
+  try {
+    const response = await fetch('/api/mobile/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ operations }),
+    });
+    if (!response.ok) {
+      throw new Error(`Serverfehler ${response.status}`);
     }
+    const result = await response.json();
+    const successIds = new Set((result.results || []).filter((item) => item.status === 'synced').map((item) => item.operation_id));
+    const conflictItems = (result.results || []).filter((item) => item.status === 'conflict');
+    for (const record of records) {
+      const opId = record.operationId || `punch-${record.id}`;
+      if (successIds.has(opId)) {
+        await punchQueue.remove(record.id);
+        processed += 1;
+      }
+    }
+    if (conflictItems.length) {
+      showFeedback('Mindestens eine Offline-Buchung konnte wegen Konflikt nicht angewendet werden.', 'error');
+      dispatchSyncStatus('Synchronisation mit Konflikten abgeschlossen. Bitte prüfen.', 'error');
+    }
+  } catch (error) {
+    console.warn('Synchronisation fehlgeschlagen', error);
+    errorOccurred = true;
   }
   const counts = await refreshQueueIndicator();
   if (counts.total === 0 && mobileState?.pendingPunchSync) {
@@ -382,6 +402,27 @@ async function flushVacationQueue() {
 async function flushOfflineQueues() {
   await flushPunchQueue();
   await flushVacationQueue();
+}
+
+
+async function refreshOfflineBootstrap() {
+  if (!navigator.onLine) {
+    return;
+  }
+  try {
+    const response = await fetch('/api/mobile/bootstrap', { credentials: 'same-origin' });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    withLocalStorage((storage) => {
+      storage.setItem(OFFLINE_PROFILE_KEY, JSON.stringify(payload.offline_auth || {}));
+      storage.setItem('erfassungLastSyncAt', payload.server_time || new Date().toISOString());
+      return null;
+    });
+  } catch (error) {
+    console.warn('Bootstrap für Offline-Modus konnte nicht aktualisiert werden', error);
+  }
 }
 
 function serializeFormData(form) {
@@ -820,6 +861,7 @@ async function processPunchSubmission(form, payload) {
     try {
       await punchQueue.add(payload);
       await refreshQueueIndicator();
+  await refreshOfflineBootstrap();
       if (reason === 'server') {
         dispatchSyncStatus('Server nicht erreichbar – Aktionen werden nachgereicht.', 'error');
         showFeedback('Server nicht erreichbar. Buchung wurde zwischengespeichert.', 'error');
@@ -882,6 +924,7 @@ async function processVacationSubmission(form, payload) {
     try {
       const id = await vacationQueue.add(payload);
       await refreshQueueIndicator();
+  await refreshOfflineBootstrap();
       if (reason === 'server') {
         dispatchSyncStatus('Server nicht erreichbar – Aktionen werden nachgereicht.', 'error');
         showFeedback('Server nicht erreichbar. Urlaubsantrag wurde zwischengespeichert.', 'error');
@@ -1052,6 +1095,12 @@ function setupConnectionHandlers() {
   window.addEventListener('online', () => {
     flushOfflineQueues();
   });
+  const syncButton = document.querySelector('[data-action="sync-now"]');
+  if (syncButton) {
+    syncButton.addEventListener('click', () => {
+      flushOfflineQueues();
+    });
+  }
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -1061,6 +1110,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   registerOfflineForms();
   setupConnectionHandlers();
   await refreshQueueIndicator();
+  await refreshOfflineBootstrap();
   if (navigator.onLine) {
     flushOfflineQueues();
   }
