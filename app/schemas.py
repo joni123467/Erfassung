@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
@@ -201,3 +201,47 @@ class DashboardMetrics(BaseModel):
     overtime_limit_remaining_minutes: int = 0
     overtime_limit_exceeded: bool = False
     overtime_limit_excess_minutes: int = 0
+
+
+class SyncOperationPayload(BaseModel):
+    action: str
+    company_id: Optional[str] = None
+    notes: str = ""
+
+
+class SyncOperationIn(BaseModel):
+    operation_id: str
+    type: str = "punch"
+    created_at: Optional[str] = None
+    payload: SyncOperationPayload
+
+
+class SyncPushRequest(BaseModel):
+    operations: List[SyncOperationIn] = []
+    since: Optional[str] = None
+
+
+class SyncOperationResult(BaseModel):
+    operation_id: str
+    status: str
+    message: str = ""
+    server_entry_id: Optional[int] = None
+
+
+class SyncBootstrapResponse(BaseModel):
+    server_time: datetime
+    last_sync_token: str
+    companies: List[Company]
+    holidays: List[Holiday]
+    time_entries: List[TimeEntry]
+    vacations: List[VacationRequest]
+    pending_count: int
+    offline_auth: dict[str, object]
+
+
+class SyncPullResponse(BaseModel):
+    server_time: datetime
+    last_sync_token: str
+    results: List[SyncOperationResult]
+    updated: dict[str, object]
+    conflicts: List[SyncOperationResult] = []
