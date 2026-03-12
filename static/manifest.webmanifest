@@ -3,7 +3,7 @@
   "name": "Erfassung Mobile",
   "short_name": "Erfassung",
   "lang": "de-DE",
-  "start_url": "/mobile",
+  "start_url": "/static/offline.html",
   "scope": "/",
   "display": "standalone",
   "display_override": [
