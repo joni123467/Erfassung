@@ -10,10 +10,11 @@ const MOBILE_STATE_SELECTOR = '[data-mobile-state]';
 const VACATION_LIST_SELECTOR = '[data-vacation-list]';
 const VACATION_EMPTY_SELECTOR = '[data-vacation-empty]';
 const DB_NAME = 'erfassung-mobile';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const PUNCH_STORE = 'pendingPunches';
 const VACATION_STORE = 'pendingVacations';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
+const OFFLINE_PROFILE_KEY = 'erfassungOfflineProfile';
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
@@ -185,13 +186,25 @@ function createQueue(storeName, fallbackKey) {
     return {
       async add(record) {
         const data = read();
-        const entry = { id: Date.now() + Math.random(), createdAt: Date.now(), data: record };
+        const entry = {
+          id: Date.now() + Math.random(),
+          createdAt: Date.now(),
+          operationId: record.operationId || `op-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          status: 'pending',
+          retryCount: 0,
+          lastError: '',
+          data: record,
+        };
         data.push(entry);
         write(data);
         return entry.id;
       },
       async all() {
         return read();
+      },
+      async update(id, patch) {
+        const data = read().map((item) => (item.id === id ? { ...item, ...patch } : item));
+        write(data);
       },
       async remove(id) {
         write(read().filter((item) => item.id !== id));
@@ -218,10 +231,25 @@ function createQueue(storeName, fallbackKey) {
 
   return {
     async add(record) {
-      return withStore('readwrite', (store) => store.add({ createdAt: Date.now(), data: record }));
+      const enriched = {
+        createdAt: Date.now(),
+        operationId: record.operationId || `op-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        status: 'pending',
+        retryCount: 0,
+        lastError: '',
+        data: record,
+      };
+      return withStore('readwrite', (store) => store.add(enriched));
     },
     async all() {
       return (await withStore('readonly', (store) => store.getAll())) || [];
+    },
+    async update(id, patch) {
+      const current = await withStore('readonly', (store) => store.get(id));
+      if (!current) {
+        return;
+      }
+      await withStore('readwrite', (store) => store.put({ ...current, ...patch }));
     },
     async remove(id) {
       await withStore('readwrite', (store) => store.delete(id));
@@ -236,84 +264,186 @@ function createQueue(storeName, fallbackKey) {
 const punchQueue = createQueue(PUNCH_STORE, 'erfassungPendingPunches');
 const vacationQueue = createQueue(VACATION_STORE, 'erfassungPendingVacations');
 
-function updateQueueIndicator({ punches = 0, vacations = 0, total = punches + vacations } = {}) {
+const syncRuntimeState = {
+  networkOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  serverReachable: false,
+  syncInProgress: false,
+  pendingOperations: 0,
+  failedOperations: 0,
+  conflictOperations: 0,
+  lastSuccessfulSyncAt: null,
+};
+
+function dispatchSyncRuntimeState() {
+  document.dispatchEvent(new CustomEvent('mobile-sync-state', { detail: { ...syncRuntimeState } }));
+}
+
+function updateQueueIndicator({ pending = 0, syncing = 0, failed = 0, conflicts = 0, vacations = 0 } = {}) {
   const info = document.getElementById(QUEUE_INFO_ID);
   const countElement = document.getElementById(QUEUE_COUNT_ID);
   const syncText = document.getElementById(SYNC_TEXT_ID);
+  const totalPending = pending + syncing + vacations;
+
+  syncRuntimeState.pendingOperations = totalPending;
+  syncRuntimeState.failedOperations = failed;
+  syncRuntimeState.conflictOperations = conflicts;
+  syncRuntimeState.syncInProgress = syncing > 0;
+
   if (countElement) {
-    countElement.textContent = String(total);
+    countElement.textContent = String(totalPending);
   }
   if (syncText) {
-    const detailParts = [];
-    if (punches) {
-      detailParts.push(`${punches} Stempel`);
-    }
-    if (vacations) {
-      detailParts.push(`${vacations} Urlaub`);
-    }
-    const detail = detailParts.join(' · ');
-    if (total === 0) {
-      syncText.textContent = 'Offline-Aktionen werden synchronisiert.';
-    } else if (total === 1) {
-      syncText.textContent = detail ? `Eine Aktion wartet auf Synchronisation (${detail}).` : 'Eine Aktion wartet auf Synchronisation.';
+    if (!syncRuntimeState.networkOnline) {
+      syncText.textContent = 'Kein Netz – Offline-Modus aktiv.';
+    } else if (!syncRuntimeState.serverReachable) {
+      syncText.textContent = 'Netz verfügbar, Server derzeit nicht erreichbar.';
+    } else if (conflicts > 0) {
+      syncText.textContent = `${conflicts} Konflikt(e) müssen geprüft werden.`;
+    } else if (failed > 0) {
+      syncText.textContent = `${failed} Aktion(en) fehlgeschlagen – erneuter Sync erforderlich.`;
+    } else if (syncing > 0) {
+      syncText.textContent = `Synchronisation läuft (${syncing} aktiv).`;
+    } else if (totalPending > 0) {
+      syncText.textContent = `${totalPending} Aktion(en) warten auf Synchronisation.`;
     } else {
-      syncText.textContent = detail ? `${total} Aktionen warten auf Synchronisation (${detail}).` : `${total} Aktionen warten auf Synchronisation.`;
+      const ts = syncRuntimeState.lastSuccessfulSyncAt;
+      syncText.textContent = ts
+        ? `Alles synchronisiert (letzter Sync ${new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}).`
+        : 'Alles synchronisiert.';
     }
   }
-  setElementHidden(info, total === 0);
+  setElementHidden(info, totalPending === 0 && failed === 0 && conflicts === 0 && !syncRuntimeState.syncInProgress);
+  dispatchSyncRuntimeState();
 }
 
 async function refreshQueueIndicator() {
-  const [punches, vacations] = await Promise.all([punchQueue.count(), vacationQueue.count()]);
-  const total = punches + vacations;
-  updateQueueIndicator({ punches, vacations, total });
-  return { punches, vacations, total };
+  const punchRecords = await punchQueue.all();
+  const vacationPending = await vacationQueue.count();
+  let pending = 0;
+  let syncing = 0;
+  let failed = 0;
+  let conflicts = 0;
+  for (const record of punchRecords) {
+    const status = record.status || 'pending';
+    if (status === 'pending') pending += 1;
+    else if (status === 'syncing') syncing += 1;
+    else if (status === 'failed') failed += 1;
+    else if (status === 'conflict') conflicts += 1;
+  }
+  updateQueueIndicator({ pending, syncing, failed, conflicts, vacations: vacationPending });
+  return { pending, syncing, failed, conflicts, vacations: vacationPending, total: pending + syncing + vacationPending };
+}
+
+async function reachabilityCheck() {
+  syncRuntimeState.networkOnline = navigator.onLine;
+  if (!syncRuntimeState.networkOnline) {
+    syncRuntimeState.serverReachable = false;
+    await refreshQueueIndicator();
+    return false;
+  }
+  try {
+    const response = await fetch('/api/ping', {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { 'x-erfassung-reachability': '1' },
+    });
+    syncRuntimeState.serverReachable = response.ok;
+  } catch (_error) {
+    syncRuntimeState.serverReachable = false;
+  }
+  await refreshQueueIndicator();
+  return syncRuntimeState.serverReachable;
 }
 
 async function flushPunchQueue() {
   const records = await punchQueue.all();
-  if (!records.length) {
+  const candidates = records.filter((record) => {
+    const status = record.status || 'pending';
+    return status === 'pending' || status === 'failed' || status === 'syncing';
+  });
+  if (!candidates.length) {
     return { processed: 0, error: false };
   }
+
+  const serverReady = await reachabilityCheck();
+  if (!serverReady) {
+    dispatchSyncStatus('Netz vorhanden, aber Server nicht erreichbar.', 'error');
+    return { processed: 0, error: true };
+  }
+
   let processed = 0;
   let errorOccurred = false;
-  for (const record of records) {
-    const body = new URLSearchParams(record.data);
-    try {
-      const response = await fetch('/punch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-      });
-      if (!response.ok) {
-        throw new Error(`Serverfehler ${response.status}`);
+
+  for (const record of candidates) {
+    await punchQueue.update(record.id, { status: 'syncing', retryCount: (record.retryCount || 0) + 1 });
+  }
+  await refreshQueueIndicator();
+
+  const operations = candidates.map((record) => ({
+    operation_id: record.operationId || `punch-${record.id}`,
+    type: 'punch',
+    created_at: new Date(record.createdAt || Date.now()).toISOString(),
+    payload: record.data,
+  }));
+
+  try {
+    const response = await fetch('/api/mobile/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ operations }),
+    });
+    if (!response.ok) {
+      throw new Error(`Serverfehler ${response.status}`);
+    }
+    const result = await response.json();
+    const byId = new Map((result.results || []).map((item) => [item.operation_id, item]));
+
+    for (const record of candidates) {
+      const opId = record.operationId || `punch-${record.id}`;
+      const item = byId.get(opId);
+      if (!item) {
+        await punchQueue.update(record.id, { status: 'failed', lastError: 'Keine Serverantwort für Operation.' });
+        continue;
       }
-      await punchQueue.remove(record.id);
-      processed += 1;
-    } catch (error) {
-      console.warn('Synchronisation fehlgeschlagen', error);
-      errorOccurred = true;
-      break;
+      if (item.status === 'synced') {
+        await punchQueue.remove(record.id);
+        processed += 1;
+      } else if (item.status === 'conflict') {
+        await punchQueue.update(record.id, { status: 'conflict', lastError: item.message || 'Konflikt' });
+      } else {
+        await punchQueue.update(record.id, { status: 'failed', lastError: item.message || 'Synchronisation fehlgeschlagen' });
+      }
+    }
+
+    syncRuntimeState.lastSuccessfulSyncAt = result.server_time || new Date().toISOString();
+    withLocalStorage((storage) => {
+      storage.setItem('erfassungLastSyncAt', syncRuntimeState.lastSuccessfulSyncAt);
+      return null;
+    });
+  } catch (error) {
+    console.warn('Synchronisation fehlgeschlagen', error);
+    errorOccurred = true;
+    for (const record of candidates) {
+      await punchQueue.update(record.id, { status: 'failed', lastError: 'Server derzeit nicht erreichbar' });
     }
   }
+
   const counts = await refreshQueueIndicator();
-  if (counts.total === 0 && mobileState?.pendingPunchSync) {
-    mobileState.pendingPunchSync = false;
-    persistMobileState();
-  }
-  if (processed > 0 && counts.total === 0) {
+  if (!errorOccurred && counts.pending === 0 && counts.syncing === 0 && counts.failed === 0 && counts.conflicts === 0) {
     dispatchSyncStatus('Alle zwischengespeicherten Aktionen wurden übertragen.', 'synced');
     showFeedback('Offline-Buchungen erfolgreich übertragen.', 'success');
-  } else if (errorOccurred) {
-    dispatchSyncStatus('Synchronisation nicht möglich – verbleibende Aktionen werden später erneut gesendet.', 'error');
+  } else if (counts.conflicts > 0) {
+    dispatchSyncStatus('Synchronisation mit Konflikten abgeschlossen. Bitte prüfen.', 'error');
+    showFeedback('Mindestens eine Buchung ist im Konfliktstatus.', 'error');
+  } else if (counts.failed > 0 || errorOccurred) {
+    dispatchSyncStatus('Synchronisation fehlgeschlagen – erneuter Versuch folgt.', 'error');
     showFeedback('Synchronisation der Buchungen fehlgeschlagen. Bitte später erneut versuchen.', 'error');
-  } else if (counts.total > 0) {
-    const message = counts.total === 1
-      ? 'Synchronisation läuft – 1 Aktion verbleibend.'
-      : `Synchronisation läuft – ${counts.total} Aktionen verbleiben.`;
-    dispatchSyncStatus(message, 'queue');
+  } else if (counts.pending > 0) {
+    dispatchSyncStatus('Änderungen warten weiterhin auf Synchronisation.', 'queue');
   }
+
   return { processed, error: errorOccurred };
 }
 
@@ -382,6 +512,27 @@ async function flushVacationQueue() {
 async function flushOfflineQueues() {
   await flushPunchQueue();
   await flushVacationQueue();
+}
+
+
+async function refreshOfflineBootstrap() {
+  if (!navigator.onLine) {
+    return;
+  }
+  try {
+    const response = await fetch('/api/mobile/bootstrap', { credentials: 'same-origin' });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    withLocalStorage((storage) => {
+      storage.setItem(OFFLINE_PROFILE_KEY, JSON.stringify(payload.offline_auth || {}));
+      storage.setItem('erfassungLastSyncAt', payload.server_time || new Date().toISOString());
+      return null;
+    });
+  } catch (error) {
+    console.warn('Bootstrap für Offline-Modus konnte nicht aktualisiert werden', error);
+  }
 }
 
 function serializeFormData(form) {
@@ -837,7 +988,7 @@ async function processPunchSubmission(form, payload) {
     }
   }
 
-  if (navigator.onLine) {
+  if (await reachabilityCheck()) {
     try {
       const response = await fetch(actionUrl, {
         method: 'POST',
@@ -871,7 +1022,6 @@ async function processPunchSubmission(form, payload) {
     }
   }
 
-  await storeOffline('offline');
 }
 
 async function processVacationSubmission(form, payload) {
@@ -899,7 +1049,7 @@ async function processVacationSubmission(form, payload) {
     }
   }
 
-  if (navigator.onLine) {
+  if (await reachabilityCheck()) {
     try {
       const response = await fetch(actionUrl, {
         method: 'POST',
@@ -930,7 +1080,6 @@ async function processVacationSubmission(form, payload) {
     }
   }
 
-  await storeOffline('offline');
 }
 
 function handleOfflineSubmission(event) {
@@ -944,7 +1093,6 @@ function handleOfflineSubmission(event) {
     processPunchSubmission(form, payload);
   }
 
-  await storeOffline('offline');
 }
 
 function registerTabHandling() {
@@ -1050,8 +1198,20 @@ function registerOfflineForms() {
 
 function setupConnectionHandlers() {
   window.addEventListener('online', () => {
-    flushOfflineQueues();
+    reachabilityCheck().then(() => flushOfflineQueues());
   });
+  window.addEventListener('offline', () => {
+    reachabilityCheck();
+  });
+  const syncButton = document.querySelector('[data-action="sync-now"]');
+  if (syncButton) {
+    syncButton.addEventListener('click', () => {
+      flushOfflineQueues();
+    });
+  }
+  window.setInterval(() => {
+    reachabilityCheck();
+  }, 30000);
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -1060,8 +1220,12 @@ window.addEventListener('DOMContentLoaded', async () => {
   initializeMobileState();
   registerOfflineForms();
   setupConnectionHandlers();
+  const storedSyncAt = withLocalStorage((storage) => storage.getItem('erfassungLastSyncAt')) || null;
+  syncRuntimeState.lastSuccessfulSyncAt = storedSyncAt;
   await refreshQueueIndicator();
-  if (navigator.onLine) {
+  await reachabilityCheck();
+  await refreshOfflineBootstrap();
+  if (syncRuntimeState.serverReachable) {
     flushOfflineQueues();
   }
 });
