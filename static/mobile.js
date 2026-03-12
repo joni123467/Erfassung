@@ -428,6 +428,13 @@ async function flushPunchQueue() {
     for (const record of candidates) {
       await punchQueue.update(record.id, { status: 'failed', lastError: 'Server derzeit nicht erreichbar' });
     }
+    if (conflictItems.length) {
+      showFeedback('Mindestens eine Offline-Buchung konnte wegen Konflikt nicht angewendet werden.', 'error');
+      dispatchSyncStatus('Synchronisation mit Konflikten abgeschlossen. Bitte prüfen.', 'error');
+    }
+  } catch (error) {
+    console.warn('Synchronisation fehlgeschlagen', error);
+    errorOccurred = true;
   }
 
   const counts = await refreshQueueIndicator();
@@ -971,6 +978,7 @@ async function processPunchSubmission(form, payload) {
     try {
       await punchQueue.add(payload);
       await refreshQueueIndicator();
+  await refreshOfflineBootstrap();
       if (reason === 'server') {
         dispatchSyncStatus('Server nicht erreichbar – Aktionen werden nachgereicht.', 'error');
         showFeedback('Server nicht erreichbar. Buchung wurde zwischengespeichert.', 'error');
@@ -1032,6 +1040,7 @@ async function processVacationSubmission(form, payload) {
     try {
       const id = await vacationQueue.add(payload);
       await refreshQueueIndicator();
+  await refreshOfflineBootstrap();
       if (reason === 'server') {
         dispatchSyncStatus('Server nicht erreichbar – Aktionen werden nachgereicht.', 'error');
         showFeedback('Server nicht erreichbar. Urlaubsantrag wurde zwischengespeichert.', 'error');
