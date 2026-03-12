@@ -95,6 +95,7 @@ Die mobile Oberfläche (`/mobile`) arbeitet jetzt mit einer Offline-First-Sync-A
 
 - **PWA-Installierbarkeit** über Manifest (`/static/manifest.webmanifest`) und Service Worker (`/static/sw.js`). Die installierte App startet über eine lokale Start-Shell (`/static/offline.html`), damit sie auch ohne Serververbindung zuverlässig öffnet.
 - **App-Shell-Caching** für mobile Kernansichten und statische Assets.
+- **Offline-Startseite mit vollem Mobile-Funktionsumfang**: `/static/offline.html` enthält Stempeln, Pause, Auftrag/Firma, Kommentare und Urlaub als lokale Formulare mit Outbox-Speicherung.
 - **IndexedDB-Outbox** für Offline-Stempelungen und Urlaubsaktionen (`static/mobile.js`).
 - **Robuste Synchronisation** über `POST /api/mobile/sync` mit idempotenten `operation_id`s.
 - **Bootstrap-Endpunkt** `GET /api/mobile/bootstrap` für lokale Stammdaten, Zeitbuchungen und Offline-Auth-Verifier.

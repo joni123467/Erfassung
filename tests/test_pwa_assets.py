@@ -13,3 +13,11 @@ def test_manifest_start_url_and_scope():
     manifest = Path('static/manifest.webmanifest').read_text(encoding='utf-8')
     assert '"start_url": "/static/offline.html"' in manifest
     assert '"scope": "/"' in manifest
+
+
+def test_offline_shell_contains_mobile_forms():
+    html = Path('static/offline.html').read_text(encoding='utf-8')
+    assert "data-mobile-state=\"true\"" in html
+    assert "data-offline=\"punch\"" in html
+    assert "data-offline=\"vacation\"" in html
+    assert "/static/mobile.js" in html

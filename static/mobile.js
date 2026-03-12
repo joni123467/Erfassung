@@ -331,6 +331,7 @@ async function refreshQueueIndicator() {
     else if (status === 'conflict') conflicts += 1;
   }
   updateQueueIndicator({ pending, syncing, failed, conflicts, vacations: vacationPending });
+  renderOfflineLocalBookings();
   return { pending, syncing, failed, conflicts, vacations: vacationPending, total: pending + syncing + vacationPending };
 }
 
@@ -427,22 +428,6 @@ async function flushPunchQueue() {
     errorOccurred = true;
     for (const record of candidates) {
       await punchQueue.update(record.id, { status: 'failed', lastError: 'Server derzeit nicht erreichbar' });
-    }
-
-    syncRuntimeState.lastSuccessfulSyncAt = result.server_time || new Date().toISOString();
-    withLocalStorage((storage) => {
-      storage.setItem('erfassungLastSyncAt', syncRuntimeState.lastSuccessfulSyncAt);
-      return null;
-    });
-  } catch (error) {
-    console.warn('Synchronisation fehlgeschlagen', error);
-    errorOccurred = true;
-    for (const record of candidates) {
-      await punchQueue.update(record.id, { status: 'failed', lastError: 'Server derzeit nicht erreichbar' });
-    }
-    if (conflictItems.length) {
-      showFeedback('Mindestens eine Offline-Buchung konnte wegen Konflikt nicht angewendet werden.', 'error');
-      dispatchSyncStatus('Synchronisation mit Konflikten abgeschlossen. Bitte prüfen.', 'error');
     }
   } catch (error) {
     console.warn('Synchronisation fehlgeschlagen', error);
@@ -546,11 +531,75 @@ async function refreshOfflineBootstrap() {
     const payload = await response.json();
     withLocalStorage((storage) => {
       storage.setItem(OFFLINE_PROFILE_KEY, JSON.stringify(payload.offline_auth || {}));
+      storage.setItem('erfassungOfflineBootstrap', JSON.stringify(payload));
       storage.setItem('erfassungLastSyncAt', payload.server_time || new Date().toISOString());
       return null;
     });
   } catch (error) {
     console.warn('Bootstrap für Offline-Modus konnte nicht aktualisiert werden', error);
+  }
+}
+
+
+function renderOfflineLocalBookings() {
+  const list = document.getElementById('offline-local-bookings');
+  if (!list) {
+    return;
+  }
+  punchQueue.all().then((items) => {
+    list.innerHTML = '';
+    if (!items.length) {
+      const li = document.createElement('li');
+      li.textContent = 'Keine lokalen Buchungen.';
+      list.appendChild(li);
+      return;
+    }
+    items.slice().reverse().slice(0, 20).forEach((item) => {
+      const li = document.createElement('li');
+      const action = item?.data?.action || 'Aktion';
+      const note = item?.data?.notes ? ` – ${item.data.notes}` : '';
+      const status = item?.status || 'pending';
+      li.textContent = `${action}${note} [${status}]`;
+      list.appendChild(li);
+    });
+  }).catch(() => {});
+}
+
+function hydrateOfflineShellFromBootstrap() {
+  const shell = document.querySelector('[data-offline-shell="true"]');
+  if (!shell) {
+    return;
+  }
+  const bootstrapRaw = withLocalStorage((storage) => storage.getItem('erfassungOfflineBootstrap'));
+  if (!bootstrapRaw) {
+    return;
+  }
+  try {
+    const bootstrap = JSON.parse(bootstrapRaw);
+    const profileRaw = withLocalStorage((storage) => storage.getItem(OFFLINE_PROFILE_KEY));
+    if (profileRaw) {
+      const profile = JSON.parse(profileRaw);
+      const userLabel = document.getElementById('offline-shell-user');
+      if (userLabel && profile?.full_name) {
+        userLabel.textContent = `${profile.full_name} · Offline-Modus`;
+      }
+    }
+    const select = document.getElementById('offline-company-select');
+    if (select && Array.isArray(bootstrap.companies)) {
+      select.innerHTML = '';
+      const first = document.createElement('option');
+      first.value = '';
+      first.textContent = 'Firma wählen';
+      select.appendChild(first);
+      bootstrap.companies.forEach((company) => {
+        const option = document.createElement('option');
+        option.value = String(company.id);
+        option.textContent = company.name;
+        select.appendChild(option);
+      });
+    }
+  } catch (_error) {
+    // ignore parse issues
   }
 }
 
@@ -1241,6 +1290,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initializeMobileState();
   registerOfflineForms();
   setupConnectionHandlers();
+  hydrateOfflineShellFromBootstrap();
   const storedSyncAt = withLocalStorage((storage) => storage.getItem('erfassungLastSyncAt')) || null;
   syncRuntimeState.lastSuccessfulSyncAt = storedSyncAt;
   await refreshQueueIndicator();
