@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import shutil
@@ -21,7 +23,7 @@ try:  # FastAPI <=0.75 did not re-export BackgroundTasks
     from fastapi import BackgroundTasks
 except ImportError:  # pragma: no cover - fallback for older FastAPI releases
     from starlette.background import BackgroundTasks
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
@@ -30,7 +32,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
-from . import crud, database, holiday_calculator, models, schemas, services
+from . import crud, database, holiday_calculator, models, schemas, services, sync
 from .integrations import timemoto
 from .excel_export import export_time_entries
 from .pdf_export import export_team_overview_pdf, export_time_overview_pdf
@@ -330,6 +332,11 @@ def ensure_schema() -> None:
         table_names = inspector.get_table_names()
         if "companies" not in table_names:
             models.Base.metadata.tables["companies"].create(bind=connection)
+        if "companies" in table_names:
+            company_columns = {column["name"] for column in inspector.get_columns("companies")}
+            if "updated_at" not in company_columns:
+                connection.execute(text("ALTER TABLE companies ADD COLUMN updated_at DATETIME"))
+                connection.execute(text("UPDATE companies SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
         if "time_entries" in table_names:
             columns = {column["name"] for column in inspector.get_columns("time_entries")}
             if "company_id" not in columns:
@@ -387,6 +394,9 @@ def ensure_schema() -> None:
                         "WHERE monthly_overtime_limit_minutes IS NULL"
                     )
                 )
+            if "updated_at" not in columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
+                connection.execute(text("UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
         if "groups" in table_names:
             columns = {column["name"] for column in inspector.get_columns("groups")}
             if "can_manage_users" not in columns:
@@ -416,6 +426,10 @@ def ensure_schema() -> None:
                     text("UPDATE groups SET can_edit_time_entries = 1 WHERE is_admin = 1")
                 )
         if "holidays" in table_names:
+            holiday_columns = {column["name"] for column in inspector.get_columns("holidays")}
+            if "updated_at" not in holiday_columns:
+                connection.execute(text("ALTER TABLE holidays ADD COLUMN updated_at DATETIME"))
+                connection.execute(text("UPDATE holidays SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
             index_rows = connection.execute(text("PRAGMA index_list('holidays')")).fetchall()
             legacy_unique_index = None
             for row in index_rows:
@@ -471,6 +485,13 @@ SELECT id, name, date, region, created_at FROM holidays
                 connection.execute(
                     text("ALTER TABLE vacation_requests ADD COLUMN previous_status VARCHAR")
                 )
+            if "updated_at" not in columns:
+                connection.execute(text("ALTER TABLE vacation_requests ADD COLUMN updated_at DATETIME"))
+                connection.execute(text("UPDATE vacation_requests SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
+
+        if "sync_operation_logs" not in table_names:
+            models.Base.metadata.tables["sync_operation_logs"].create(bind=connection)
+
 
 
 def _sanitize_next(next_url: str, default: str = "/time") -> str:
@@ -3262,6 +3283,129 @@ def export_user_time_entries(user_id: int, db: Session = Depends(database.get_db
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _build_sync_token(db: Session, user_id: int) -> str:
+    latest_entry = (
+        db.query(models.TimeEntry.updated_at)
+        .filter(models.TimeEntry.user_id == user_id)
+        .order_by(models.TimeEntry.updated_at.desc())
+        .first()
+    )
+    latest_vacation = (
+        db.query(models.VacationRequest.updated_at)
+        .filter(models.VacationRequest.user_id == user_id)
+        .order_by(models.VacationRequest.updated_at.desc())
+        .first()
+    )
+    points = [latest_entry[0] if latest_entry else None, latest_vacation[0] if latest_vacation else None]
+    max_point = max((p for p in points if p is not None), default=datetime.utcnow())
+    return max_point.isoformat()
+
+
+def _build_offline_pin_verifier(user: models.User) -> dict[str, object]:
+    iterations = 180000
+    salt = hashlib.sha256(f"erfassung:{user.id}:{user.username}".encode("utf-8")).digest()[:16]
+    pin_hash = hashlib.pbkdf2_hmac("sha256", user.pin_code.encode("utf-8"), salt, iterations)
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "iterations": iterations,
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "pin_hash": base64.b64encode(pin_hash).decode("ascii"),
+    }
+
+
+@app.get("/api/mobile/bootstrap", response_model=schemas.SyncBootstrapResponse)
+def mobile_bootstrap(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nicht angemeldet")
+    year = date.today().year
+    holiday_region = crud.get_default_holiday_region(db)
+    return {
+        "server_time": datetime.utcnow(),
+        "last_sync_token": _build_sync_token(db, user.id),
+        "companies": crud.get_companies(db),
+        "holidays": crud.get_holidays_for_year(db, year, holiday_region),
+        "time_entries": crud.get_time_entries_for_user(db, user.id),
+        "vacations": crud.get_vacations_for_user(db, user.id),
+        "pending_count": db.query(models.SyncOperationLog)
+        .filter(models.SyncOperationLog.user_id == user.id, models.SyncOperationLog.status != "synced")
+        .count(),
+        "offline_auth": _build_offline_pin_verifier(user),
+    }
+
+
+@app.post("/api/mobile/sync", response_model=schemas.SyncPullResponse)
+def mobile_sync_push(payload: schemas.SyncPushRequest, request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nicht angemeldet")
+
+    results: list[schemas.SyncOperationResult] = []
+    conflicts: list[schemas.SyncOperationResult] = []
+
+    for operation in payload.operations:
+        existing = (
+            db.query(models.SyncOperationLog)
+            .filter(models.SyncOperationLog.operation_id == operation.operation_id)
+            .first()
+        )
+        if existing:
+            result = schemas.SyncOperationResult(
+                operation_id=operation.operation_id,
+                status=existing.status,
+                message=existing.message or "Bereits verarbeitet",
+            )
+        else:
+            op_result = sync.apply_punch_operation(db, user, operation.model_dump())
+            log = models.SyncOperationLog(
+                user_id=user.id,
+                operation_id=operation.operation_id,
+                operation_type=operation.type,
+                status=op_result.status,
+                message=op_result.message,
+            )
+            db.add(log)
+            db.commit()
+            result = schemas.SyncOperationResult(
+                operation_id=op_result.operation_id,
+                status=op_result.status,
+                message=op_result.message,
+                server_entry_id=op_result.server_entry_id,
+            )
+        if result.status == "conflict":
+            conflicts.append(result)
+        results.append(result)
+
+    last_sync = _build_sync_token(db, user.id)
+    updated = {
+        "time_entries": [schemas.TimeEntry.model_validate(item) for item in crud.get_time_entries_for_user(db, user.id)],
+        "vacations": [schemas.VacationRequest.model_validate(item) for item in crud.get_vacations_for_user(db, user.id)],
+        "companies": [schemas.Company.model_validate(item) for item in crud.get_companies(db)],
+        "holidays": [
+            schemas.Holiday.model_validate(item)
+            for item in crud.get_holidays_for_year(db, date.today().year, crud.get_default_holiday_region(db))
+        ],
+    }
+    return {
+        "server_time": datetime.utcnow(),
+        "last_sync_token": last_sync,
+        "results": results,
+        "updated": updated,
+        "conflicts": conflicts,
+    }
+
+
+
+@app.get("/api/ping")
+def api_ping():
+    return JSONResponse(
+        {"status": "ok", "server_time": datetime.utcnow().isoformat()},
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
     )
 
 

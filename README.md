@@ -88,3 +88,79 @@ bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467
 ### Update über die Administrationsoberfläche
 
 Administratoren finden im Bereich **Administration → System & Updates** eine Oberfläche zum Auslösen von Aktualisierungen. Die Seite listet verfügbare Branches (einschließlich `version-x.x.x`), erlaubt eigene Referenzen und zeigt das Protokoll aus `logs/update.log` an. Während der Vorgang läuft, bleibt die Seite geöffnet; nach erfolgreichem Abschluss wird die Anwendung neu gestartet und der Benutzer landet automatisch wieder auf dem Dashboard.
+
+## Offline-First / PWA
+
+Die mobile Oberfläche (`/mobile`) arbeitet jetzt mit einer Offline-First-Sync-Architektur:
+
+- **PWA-Installierbarkeit** über Manifest (`/static/manifest.webmanifest`) und Service Worker (`/static/sw.js`). Die installierte App startet über eine lokale Start-Shell (`/static/offline.html`), damit sie auch ohne Serververbindung zuverlässig öffnet.
+- **App-Shell-Caching** für mobile Kernansichten und statische Assets.
+- **Offline-Startseite mit vollem Mobile-Funktionsumfang**: `/static/offline.html` enthält Stempeln, Pause, Auftrag/Firma, Kommentare und Urlaub als lokale Formulare mit Outbox-Speicherung.
+- **IndexedDB-Outbox** für Offline-Stempelungen und Urlaubsaktionen (`static/mobile.js`).
+- **Robuste Synchronisation** über `POST /api/mobile/sync` mit idempotenten `operation_id`s.
+- **Bootstrap-Endpunkt** `GET /api/mobile/bootstrap` für lokale Stammdaten, Zeitbuchungen und Offline-Auth-Verifier.
+- **Konfliktbehandlung**: serverseitig werden widersprüchliche Offline-Operationen als `conflict` markiert und nicht still überschrieben.
+
+### Offline-Authentifizierung (bekannte Benutzer)
+
+Für bereits online bekannte Benutzer liefert der Bootstrap-Endpunkt einen lokalen PIN-Verifier (PBKDF2-SHA256, Salt + Iterationen). Die PIN wird **nicht im Klartext** lokal gespeichert.
+
+> Sicherheitsgrenze: Da Web-PWAs keinen sicheren Hardware-Keystore wie native Apps garantieren, ist dies eine bestmögliche Web-Variante, aber kein vollwertiger Ersatz für natives Secure Enclave Handling.
+
+### Sync-Ablauf
+
+1. Offline erzeugte Aktionen landen in der lokalen Outbox.
+2. Bei App-Start, Reconnect oder manuellem „Jetzt synchronisieren“ wird die Outbox gepusht.
+3. Der Server verarbeitet idempotent über `operation_id`.
+4. Ergebnisstatus pro Operation: `synced`, `conflict`, `failed`.
+5. Die UI zeigt Pending-Count, Sync-Lauf und Fehlerzustände.
+
+### iPhone / Safari QA-Checkliste
+
+- [ ] App zu Home-Bildschirm hinzufügen.
+- [ ] App im Flugmodus starten.
+- [ ] Arbeitsbeginn/-ende sowie Pause offline ausführen.
+- [ ] App schließen, neu öffnen, lokale Daten prüfen.
+- [ ] Online gehen und Sync auslösen.
+- [ ] Konfliktfall prüfen (z. B. parallel serverseitig beendet).
+- [ ] Sync-Retry bei kurzzeitigem Serverausfall prüfen.
+
+### Tests
+
+Neue automatisierte Tests liegen unter `tests/test_mobile_sync.py` und decken u. a. ab:
+
+- lokale Sync-/Konfliktlogik,
+- idempotente Wiederholung identischer Sync-Requests.
+
+### Statusmodell (Online/Sync)
+
+Die mobile PWA trennt folgende Zustände explizit:
+
+- `networkOnline` (Netzsignal vom Gerät)
+- `serverReachable` (echter Reachability-Check via `GET /api/ping`, **nicht** aus SW-Cache)
+- `syncInProgress` (mindestens eine Operation mit Status `syncing`)
+- `pendingOperations` (wartende lokale Aktionen)
+- `failedOperations` (fehlgeschlagene Aktionen)
+- `conflictOperations` (Konflikte)
+- `lastSuccessfulSyncAt` (Zeitpunkt der letzten erfolgreichen Server-Synchronisation)
+
+Die Banner-/Statusanzeige basiert auf diesem Modell und nicht nur auf `navigator.onLine`.
+
+### Outbox-Status
+
+Offline-Operationen werden in IndexedDB gespeichert und behalten einen persistierten Status:
+
+- `pending`
+- `syncing`
+- `failed`
+- `conflict`
+
+Erst bei `synced` werden erfolgreiche Operationen aus der Outbox entfernt.
+
+### iOS-PWA Besonderheit (Storage-Kontext)
+
+Safari-Tab und installierte Home-Screen-PWA können auf iOS getrennte Storage-Kontexte haben. Deshalb muss die installierte PWA **mindestens einmal online gestartet** werden, damit ihr eigener IndexedDB-/Cache-Kontext initialisiert wird.
+
+### Offline-Start auf iPhone
+
+Der Service Worker liefert bei Navigationsanfragen offline eine gecachte App-Shell bzw. einen Offline-Fallback (`/static/offline.html`) aus. Dadurch startet die installierte PWA auch ohne Internet, statt mit „Safari kann die Seite nicht öffnen“ abzubrechen.
