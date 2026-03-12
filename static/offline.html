@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Erfassung Offline</title>
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="theme-color" content="#1d7ed0" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="is-mobile">
+  <main class="page">
+    <section class="mobile-dashboard">
+      <header class="mobile-dashboard__header">
+        <h1 class="mobile-dashboard__title">Erfassung</h1>
+        <p id="offline-shell-text">Offline-Modus aktiv. Die App ist lokal gestartet.</p>
+      </header>
+      <aside class="mobile-queue" style="display:block">
+        <span class="mobile-badge mobile-badge--queued">📱</span>
+        <span id="offline-shell-detail">Wenn der Server erreichbar ist, öffnet sich die mobile Erfassung automatisch.</span>
+      </aside>
+      <p style="margin-top:1rem">
+        <a class="button primary" href="/mobile">Mobile Erfassung öffnen</a>
+      </p>
+    </section>
+  </main>
+  <script>
+    (async () => {
+      if (!navigator.onLine) {
+        return;
+      }
+      try {
+        const ping = await fetch('/api/ping', { cache: 'no-store', credentials: 'same-origin' });
+        if (!ping.ok) {
+          return;
+        }
+        document.getElementById('offline-shell-text').textContent = 'Verbindung erkannt. Mobile Erfassung wird geöffnet …';
+        document.getElementById('offline-shell-detail').textContent = 'Falls keine Anmeldung vorliegt, wird die Login-Seite geöffnet.';
+        window.location.replace('/mobile');
+      } catch (_error) {
+        // keep offline shell
+      }
+    })();
+  </script>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

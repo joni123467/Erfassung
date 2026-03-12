@@ -51,10 +51,41 @@ def _add_time_entry_external_columns(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+
+
+def _add_offline_sync_columns(connection: sqlite3.Connection) -> None:
+    def _columns(table: str) -> set[str]:
+        cursor = connection.execute(f"PRAGMA table_info('{table}')")
+        return {row[1] for row in cursor.fetchall()}
+
+    for table in ("companies", "users", "holidays", "vacation_requests"):
+        cols = _columns(table)
+        if "updated_at" not in cols:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN updated_at DATETIME")
+            connection.execute(f"UPDATE {table} SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL")
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sync_operation_logs (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            operation_id VARCHAR NOT NULL UNIQUE,
+            operation_type VARCHAR NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'synced',
+            message VARCHAR DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS ix_sync_operation_logs_user_id ON sync_operation_logs(user_id)")
+    connection.commit()
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
     (3, _add_time_entry_external_columns),
+    (4, _add_offline_sync_columns),
 ]
 
 
