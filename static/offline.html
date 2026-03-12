@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Erfassung Offline</title>
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="theme-color" content="#1d7ed0" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="is-mobile">
+  <main class="page">
+    <section
+      class="mobile-dashboard"
+      data-offline-shell="true"
+      data-mobile-state="true"
+      data-state-running="false"
+      data-state-break="false"
+      data-state-company="false"
+      data-start-timestamp=""
+      data-start-label=""
+      data-worked-label="0:00"
+      data-total-break-minutes="0"
+      data-break-timestamp=""
+      data-break-label=""
+      data-break-total-label="0:00"
+      data-company-name=""
+    >
+      <header class="mobile-dashboard__header">
+        <div>
+          <h1 class="mobile-dashboard__title">Mobile Erfassung (Offline)</h1>
+          <p class="mobile-dashboard__date" id="offline-shell-user">Offline-Modus aktiv</p>
+        </div>
+        <p class="mobile-dashboard__status" data-state="active" hidden>
+          <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
+          seit <span data-field="header-start"></span> Uhr
+        </p>
+        <p class="mobile-dashboard__status mobile-dashboard__status--idle" data-state="idle">
+          <span class="mobile-badge">Bereit</span>
+          Offline-Stempelung aktiv.
+        </p>
+      </header>
+
+      <aside class="mobile-queue" id="mobile-queue-info" aria-live="polite" hidden>
+        <span class="mobile-badge mobile-badge--queued" aria-hidden="true">⏳</span>
+        <span id="mobile-sync-text">Offline-Aktionen werden synchronisiert.</span>
+        <strong class="mobile-queue__count"><span id="mobile-pending-count">0</span>x</strong>
+        <button type="button" class="mobile-nav-button" data-action="sync-now">Jetzt synchronisieren</button>
+      </aside>
+
+      <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite" hidden></div>
+
+      <div class="mobile-panels">
+        <section class="mobile-panel is-active" data-tab-panel="buchung" aria-hidden="false">
+          <div class="mobile-card">
+            <h2 class="mobile-card__title">Schnell stempeln</h2>
+            <p class="mobile-card__text">Aktuelle Arbeitszeit: <span data-field="worked-duration">0:00</span> Std</p>
+            <p class="mobile-card__text" data-state="break-active" hidden>
+              <span class="mobile-badge mobile-badge--break">Pause läuft</span>
+              seit <span data-field="break-start"></span> Uhr
+            </p>
+            <p class="mobile-card__text" data-state="break-idle">Keine aktive Pause.</p>
+            <p class="mobile-card__text" data-state="company-active" hidden>
+              Auftrag: <strong data-field="company-name"></strong>
+            </p>
+            <p class="mobile-card__text">Pausen gesamt: <span data-field="break-total">0:00</span> Std</p>
+
+            <div class="mobile-grid-actions">
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="next_url" value="/mobile" />
+                <input type="hidden" name="action" value="start_work" />
+                <input type="hidden" name="notes" value="" />
+                <button class="button primary" type="submit">Arbeitsbeginn</button>
+              </form>
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="next_url" value="/mobile" />
+                <input type="hidden" name="action" value="end_work" />
+                <input type="hidden" name="notes" value="" />
+                <button class="button" type="submit">Arbeitsende</button>
+              </form>
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="next_url" value="/mobile" />
+                <input type="hidden" name="action" value="start_break" />
+                <input type="hidden" name="notes" value="" />
+                <button class="button" type="submit">Pause starten</button>
+              </form>
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="next_url" value="/mobile" />
+                <input type="hidden" name="action" value="end_break" />
+                <input type="hidden" name="notes" value="" />
+                <button class="button" type="submit">Pause beenden</button>
+              </form>
+            </div>
+
+            <form method="post" action="/punch" data-offline="punch" style="margin-top: 1rem;">
+              <input type="hidden" name="next_url" value="/mobile" />
+              <input type="hidden" name="action" value="start_company" />
+              <label>Firma/Auftrag</label>
+              <select name="company_id" id="offline-company-select"></select>
+              <label>Kommentar</label>
+              <input type="text" name="notes" placeholder="Kommentar" />
+              <button type="submit" class="button primary" style="margin-top: 0.5rem;">Auftrag starten</button>
+            </form>
+
+            <form method="post" action="/punch" data-offline="punch" style="margin-top: 0.75rem;">
+              <input type="hidden" name="next_url" value="/mobile" />
+              <input type="hidden" name="action" value="end_company" />
+              <label>Kommentar</label>
+              <input type="text" name="notes" placeholder="Kommentar" />
+              <button type="submit" class="button" style="margin-top: 0.5rem;">Auftrag beenden</button>
+            </form>
+
+            <h3 style="margin-top:1rem">Offline-Buchungen (lokal)</h3>
+            <ul id="offline-local-bookings"></ul>
+          </div>
+        </section>
+
+        <section class="mobile-panel is-active" data-tab-panel="urlaub" aria-hidden="false" style="margin-top:1rem;">
+          <div class="mobile-card">
+            <h2 class="mobile-card__title">Urlaub offline erfassen</h2>
+            <form method="post" action="/vacations" data-offline="vacation">
+              <label>Von</label>
+              <input type="date" name="start_date" required />
+              <label>Bis</label>
+              <input type="date" name="end_date" required />
+              <label>Kommentar</label>
+              <input type="text" name="comment" placeholder="Kommentar" />
+              <label><input type="checkbox" name="use_overtime" /> Überstundenabbau</label>
+              <button type="submit" class="button primary" style="margin-top:0.5rem;">Urlaubsantrag speichern</button>
+            </form>
+            <ul data-vacation-list></ul>
+            <p data-vacation-empty>Keine lokalen Urlaubsanträge.</p>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/static/app.js"></script>
+  <script src="/static/mobile.js"></script>
+</body>
+</html>

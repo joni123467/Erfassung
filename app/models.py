@@ -29,6 +29,7 @@ class Company(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
     description = Column(Text, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     time_entries = relationship("TimeEntry", back_populates="company")
 
@@ -67,6 +68,7 @@ class User(Base):
     vacation_carryover_days = Column(Integer, default=0)
     rfid_tag = Column(String, unique=True, nullable=True)
     monthly_overtime_limit_minutes = Column(Integer, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
@@ -206,6 +208,7 @@ class VacationRequest(Base):
     use_overtime = Column(Boolean, default=False)
     overtime_minutes = Column(Integer, default=0)
     previous_status = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="vacation_requests")
 
@@ -218,6 +221,19 @@ class Holiday(Base):
     name = Column(String, nullable=False)
     date = Column(Date, nullable=False)
     region = Column(String, default="DE")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SyncOperationLog(Base):
+    __tablename__ = "sync_operation_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    operation_id = Column(String, nullable=False, unique=True, index=True)
+    operation_type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="synced")
+    message = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

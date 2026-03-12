@@ -1,10 +1,16 @@
 {
+  "id": "/mobile",
   "name": "Erfassung Mobile",
   "short_name": "Erfassung",
   "lang": "de-DE",
   "start_url": "/mobile",
   "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "orientation": "portrait",
   "background_color": "#f2f6fb",
   "theme_color": "#1d7ed0",
   "description": "Offlinefähige mobile Zeiterfassung für Erfassung.",
