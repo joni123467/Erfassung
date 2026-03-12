@@ -130,3 +130,36 @@ Neue automatisierte Tests liegen unter `tests/test_mobile_sync.py` und decken u.
 
 - lokale Sync-/Konfliktlogik,
 - idempotente Wiederholung identischer Sync-Requests.
+
+### Statusmodell (Online/Sync)
+
+Die mobile PWA trennt folgende Zustände explizit:
+
+- `networkOnline` (Netzsignal vom Gerät)
+- `serverReachable` (echter Reachability-Check via `GET /api/ping`, **nicht** aus SW-Cache)
+- `syncInProgress` (mindestens eine Operation mit Status `syncing`)
+- `pendingOperations` (wartende lokale Aktionen)
+- `failedOperations` (fehlgeschlagene Aktionen)
+- `conflictOperations` (Konflikte)
+- `lastSuccessfulSyncAt` (Zeitpunkt der letzten erfolgreichen Server-Synchronisation)
+
+Die Banner-/Statusanzeige basiert auf diesem Modell und nicht nur auf `navigator.onLine`.
+
+### Outbox-Status
+
+Offline-Operationen werden in IndexedDB gespeichert und behalten einen persistierten Status:
+
+- `pending`
+- `syncing`
+- `failed`
+- `conflict`
+
+Erst bei `synced` werden erfolgreiche Operationen aus der Outbox entfernt.
+
+### iOS-PWA Besonderheit (Storage-Kontext)
+
+Safari-Tab und installierte Home-Screen-PWA können auf iOS getrennte Storage-Kontexte haben. Deshalb muss die installierte PWA **mindestens einmal online gestartet** werden, damit ihr eigener IndexedDB-/Cache-Kontext initialisiert wird.
+
+### Offline-Start auf iPhone
+
+Der Service Worker liefert bei Navigationsanfragen offline eine gecachte App-Shell bzw. einen Offline-Fallback (`/static/offline.html`) aus. Dadurch startet die installierte PWA auch ohne Internet, statt mit „Safari kann die Seite nicht öffnen“ abzubrechen.

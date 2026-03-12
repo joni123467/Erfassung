@@ -110,3 +110,24 @@ def test_mobile_sync_idempotent_requests():
     assert first_result['operation_id'] == second_result['operation_id']
 
     app.dependency_overrides.clear()
+
+
+def test_api_ping_no_cache_headers():
+    Session = build_session()
+
+    def override_get_db():
+        db = Session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.get('/api/ping')
+    assert response.status_code == 200
+    assert response.json()['status'] == 'ok'
+    assert 'no-store' in response.headers.get('cache-control', '')
+
+    app.dependency_overrides.clear()

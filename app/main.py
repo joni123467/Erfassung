@@ -23,7 +23,7 @@ try:  # FastAPI <=0.75 did not re-export BackgroundTasks
     from fastapi import BackgroundTasks
 except ImportError:  # pragma: no cover - fallback for older FastAPI releases
     from starlette.background import BackgroundTasks
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
@@ -3399,6 +3399,14 @@ def mobile_sync_push(payload: schemas.SyncPushRequest, request: Request, db: Ses
         "conflicts": conflicts,
     }
 
+
+
+@app.get("/api/ping")
+def api_ping():
+    return JSONResponse(
+        {"status": "ok", "server_time": datetime.utcnow().isoformat()},
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
+    )
 
 
 @app.get("/health")
