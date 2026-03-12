@@ -428,6 +428,18 @@ async function flushPunchQueue() {
     for (const record of candidates) {
       await punchQueue.update(record.id, { status: 'failed', lastError: 'Server derzeit nicht erreichbar' });
     }
+
+    syncRuntimeState.lastSuccessfulSyncAt = result.server_time || new Date().toISOString();
+    withLocalStorage((storage) => {
+      storage.setItem('erfassungLastSyncAt', syncRuntimeState.lastSuccessfulSyncAt);
+      return null;
+    });
+  } catch (error) {
+    console.warn('Synchronisation fehlgeschlagen', error);
+    errorOccurred = true;
+    for (const record of candidates) {
+      await punchQueue.update(record.id, { status: 'failed', lastError: 'Server derzeit nicht erreichbar' });
+    }
     if (conflictItems.length) {
       showFeedback('Mindestens eine Offline-Buchung konnte wegen Konflikt nicht angewendet werden.', 'error');
       dispatchSyncStatus('Synchronisation mit Konflikten abgeschlossen. Bitte prüfen.', 'error');

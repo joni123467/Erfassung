@@ -1,12 +1,15 @@
 {
-  "id": "/mobile",
+  "id": "/static/offline.html",
   "name": "Erfassung Mobile",
   "short_name": "Erfassung",
   "lang": "de-DE",
-  "start_url": "/mobile",
+  "start_url": "/static/offline.html",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "portrait",
   "background_color": "#f2f6fb",
   "theme_color": "#1d7ed0",

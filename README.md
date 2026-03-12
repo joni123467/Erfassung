@@ -93,7 +93,7 @@ Administratoren finden im Bereich **Administration → System & Updates** eine O
 
 Die mobile Oberfläche (`/mobile`) arbeitet jetzt mit einer Offline-First-Sync-Architektur:
 
-- **PWA-Installierbarkeit** über Manifest (`/static/manifest.webmanifest`) und Service Worker (`/static/sw.js`).
+- **PWA-Installierbarkeit** über Manifest (`/static/manifest.webmanifest`) und Service Worker (`/static/sw.js`). Die installierte App startet über eine lokale Start-Shell (`/static/offline.html`), damit sie auch ohne Serververbindung zuverlässig öffnet.
 - **App-Shell-Caching** für mobile Kernansichten und statische Assets.
 - **IndexedDB-Outbox** für Offline-Stempelungen und Urlaubsaktionen (`static/mobile.js`).
 - **Robuste Synchronisation** über `POST /api/mobile/sync` mit idempotenten `operation_id`s.
