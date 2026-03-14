@@ -1,7 +1,17 @@
+import os
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./erfassung.db"
+SQLALCHEMY_DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./erfassung.db")
+
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite:///"):
+    raw_path = SQLALCHEMY_DATABASE_URL.replace("sqlite:///", "", 1)
+    db_path = Path(raw_path)
+    if not db_path.is_absolute():
+        db_path = Path.cwd() / db_path
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}

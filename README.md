@@ -20,8 +20,8 @@
 Das Projekt enthält ein Installationsskript, das Systempakete prüft, Abhängigkeiten installiert und eine virtuelle Umgebung vorbereitet. Es kann per `wget` bezogen werden und funktioniert ohne lokal vorhandenes Git.
 
 ```bash
-wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.0.4/install.sh -O install.sh
-bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/version-0.0.4.tar.gz
+wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.1.4/install.sh -O install.sh
+bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/version-0.1.4.tar.gz
 ```
 
 Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen im Zielverzeichnis (`/opt/erfassung` als Standard), entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
@@ -79,8 +79,8 @@ Für installierte Instanzen steht mit `update.sh` ein zweistufiger Updater zur V
 Der Updater kann – ähnlich wie die Installation – ohne lokale Git-Kopie genutzt werden:
 
 ```bash
-wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.0.4/update.sh -O update.sh
-bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467/Erfassung --ref version-0.0.4
+wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.1.4/update.sh -O update.sh
+bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467/Erfassung --ref version-0.1.4
 ```
 
 Über `--repo-url` lässt sich bei Bedarf ein eigener Fork bzw. eine alternative Quelle angeben, `--ref` steuert den Branch oder Tag. Vorhandene Abhängigkeiten werden nach dem Kopiervorgang automatisch aktualisiert.
@@ -88,3 +88,43 @@ bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467
 ### Update über die Administrationsoberfläche
 
 Administratoren finden im Bereich **Administration → System & Updates** eine Oberfläche zum Auslösen von Aktualisierungen. Die Seite listet verfügbare Branches (einschließlich `version-x.x.x`), erlaubt eigene Referenzen und zeigt das Protokoll aus `logs/update.log` an. Während der Vorgang läuft, bleibt die Seite geöffnet; nach erfolgreichem Abschluss wird die Anwendung neu gestartet und der Benutzer landet automatisch wieder auf dem Dashboard.
+
+
+## Docker Deployment
+
+Für einen einfachen privaten Self-Deploy kann die Anwendung direkt als Container betrieben werden. Der Container startet die App über `uvicorn app.main:app --host 0.0.0.0 --port 8000` (ohne `--reload`) auf Port `8000`.
+
+### Docker Build
+
+```bash
+docker build -t erfassung .
+```
+
+### Docker Run
+
+```bash
+docker run -p 8000:8000 erfassung
+```
+
+Für persistente Daten sollten die Laufzeitordner eingebunden werden (SQLite, Logs, Konfiguration), z. B.:
+
+```bash
+docker run -p 8000:8000 \
+  -e DATABASE_URL=sqlite:////app/data/erfassung.db \
+  -v ./data:/app/data \
+  -v ./logs:/app/logs \
+  -v ./config:/app/config \
+  erfassung
+```
+
+### Docker Compose
+
+```bash
+docker compose up -d
+```
+
+Die bereitgestellte `compose.yaml` bindet `./data`, `./logs` und `./config` ein. Dadurch bleiben SQLite-Datenbank (`/app/data/erfassung.db`), Logs (`/app/logs`) und Integrations-/Konfigurationsdateien (`/app/config`, z. B. TimeMoto) auch nach Container-Neustarts erhalten.
+
+### Zugriff
+
+<http://localhost:8000>
