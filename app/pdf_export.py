@@ -172,7 +172,7 @@ def export_time_overview_pdf(
             company_data.append(
                 [
                     str(record["name"]),
-                    f"{_format_minutes(int(record["minutes"]))} Std",
+                    f"{_format_minutes(int(record['minutes']))} Std",
                     str(record["count"]),
                 ]
             )
