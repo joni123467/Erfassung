@@ -1,0 +1,13 @@
+services:
+  erfassung:
+    build: .
+    container_name: erfassung
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/erfassung.db
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    restart: unless-stopped
