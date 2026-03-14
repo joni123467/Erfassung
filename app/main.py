@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
-import shutil
 import logging
-import socket
-import subprocess
 from calendar import monthrange
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse
-from urllib.error import HTTPError, URLError
-from urllib.request import Request as URLRequest, urlopen
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 
@@ -49,12 +43,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 templates.env.globals["app_version"] = APP_VERSION
-
-APP_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_UPDATE_REPO = os.environ.get("ERFASSUNG_REPO_URL", "https://github.com/joni123467/Erfassung")
-UPDATE_SCRIPT_PATH = APP_ROOT / "update.sh"
-UPDATE_LOG_PATH = APP_ROOT / "logs" / "update.log"
-
 
 def _parse_overtime_limit_hours(value: Optional[str]) -> Optional[int]:
     if value is None:
@@ -97,214 +85,7 @@ TIME_ENTRY_STATUS_LABELS = {
 }
 
 
-def _read_update_log(limit: int = 400) -> str:
-    try:
-        with UPDATE_LOG_PATH.open("r", encoding="utf-8") as handle:
-            lines = handle.readlines()
-    except FileNotFoundError:
-        return ""
-    if not lines:
-        return ""
-    tail = lines[-limit:]
-    return "".join(tail)
 
-
-def _update_ref_sort_key(value: str) -> tuple:
-    if value == "main":
-        return (0, 0, 0, 0, value)
-    if value.startswith("version-"):
-        number_part = value[len("version-") :]
-        segments: list[int] = []
-        for piece in number_part.split("."):
-            try:
-                segments.append(int(piece))
-            except ValueError:
-                segments.append(0)
-        while len(segments) < 3:
-            segments.append(0)
-        major, minor, patch = segments[:3]
-        return (1, -major, -minor, -patch, value)
-    return (2, value.lower())
-
-
-def _fetch_remote_refs_via_http(repo_url: str) -> set[str]:
-    parsed = urlparse(repo_url)
-    netloc = parsed.netloc.lower()
-    if "github.com" not in netloc:
-        return set()
-    parts = [part for part in parsed.path.strip("/").split("/") if part]
-    if len(parts) < 2:
-        return set()
-    owner, repository = parts[0], parts[1]
-    if repository.endswith(".git"):
-        repository = repository[:-4]
-    api_base = f"https://api.github.com/repos/{owner}/{repository}"
-    endpoints = [
-        f"{api_base}/branches?per_page=100",
-        f"{api_base}/tags?per_page=100",
-    ]
-    headers = {"Accept": "application/vnd.github+json"}
-    refs: set[str] = set()
-    for endpoint in endpoints:
-        try:
-            http_request = URLRequest(endpoint, headers=headers)
-            with urlopen(http_request, timeout=10) as response:
-                payload = response.read()
-        except (HTTPError, URLError, TimeoutError, socket.timeout, OSError):
-            continue
-        try:
-            data = json.loads(payload.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    name = item.get("name")
-                    if isinstance(name, str) and name:
-                        refs.add(name)
-    return refs
-
-
-def _list_remote_branches(repo_url: str) -> List[str]:
-    refs: set[str] = set()
-    try:
-        result = subprocess.run(
-            ["git", "ls-remote", "--heads", "--tags", repo_url],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=15,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pass
-    else:
-        for line in result.stdout.splitlines():
-            parts = line.strip().split()
-            if len(parts) != 2:
-                continue
-            ref = parts[1]
-            if ref.endswith("^{}"):
-                continue
-            if ref.startswith("refs/heads/"):
-                refs.add(ref[len("refs/heads/") :])
-            elif ref.startswith("refs/tags/"):
-                refs.add(ref[len("refs/tags/") :])
-    if not refs:
-        refs.update(_fetch_remote_refs_via_http(repo_url))
-    if not refs:
-        return []
-    return sorted(refs, key=_update_ref_sort_key)
-
-
-def _execute_update(ref: str, repo_url: str, skip_service_restart: bool = False) -> bool:
-    UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    cleanup_error: OSError | None = None
-    try:
-        UPDATE_LOG_PATH.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        cleanup_error = exc
-    shell = shutil.which("bash") or shutil.which("sh")
-    if not shell:
-        raise FileNotFoundError("Keine Shell zum Ausführen des Update-Skripts gefunden")
-    command = [
-        shell,
-        str(UPDATE_SCRIPT_PATH),
-        "--app-dir",
-        str(APP_ROOT),
-        "--repo-url",
-        repo_url,
-        "--ref",
-        ref,
-    ]
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    if skip_service_restart:
-        env["ERFASSUNG_SKIP_SERVICE_RESTART"] = "1"
-    try:
-        log_file_handle = UPDATE_LOG_PATH.open("w", encoding="utf-8")
-    except OSError as exc:
-        raise RuntimeError("Update-Protokoll konnte nicht erstellt werden") from exc
-    with log_file_handle as log_file:
-        if cleanup_error is not None:
-            cleanup_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            log_file.write(
-                f"[{cleanup_stamp}] ⚠️ Altes Update-Protokoll konnte nicht entfernt werden: {cleanup_error}\n"
-            )
-        start_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        log_file.write(f"[{start_stamp}] Starte Update auf '{ref}'\n")
-        log_file.flush()
-        try:
-            process = subprocess.Popen(
-                command,
-                cwd=str(APP_ROOT),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                stdin=subprocess.DEVNULL,
-            )
-        except OSError as exc:
-            error_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            log_file.write(f"[{error_stamp}] ❌ Update konnte nicht gestartet werden: {exc}\n\n")
-            log_file.flush()
-            raise
-        assert process.stdout is not None
-        with process.stdout:
-            for line in process.stdout:
-                log_file.write(line)
-                log_file.flush()
-        return_code = process.wait()
-        end_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        if return_code == 0:
-            log_file.write(f"[{end_stamp}] ✅ Update abgeschlossen\n\n")
-            log_file.flush()
-            return True
-        log_file.write(f"[{end_stamp}] ❌ Update fehlgeschlagen (Exit {return_code})\n\n")
-        log_file.flush()
-        return False
-
-
-def _running_under_systemd_service() -> bool:
-    return bool(os.environ.get("INVOCATION_ID"))
-
-
-def _schedule_service_restart(delay_seconds: int = 5) -> bool:
-    systemd_run = shutil.which("systemd-run")
-    systemctl_path = shutil.which("systemctl")
-    if not systemd_run or not systemctl_path:
-        return False
-    try:
-        delay = max(int(delay_seconds), 0)
-    except (TypeError, ValueError):
-        delay = 0
-    command = [
-        systemd_run,
-        "--quiet",
-        f"--on-active={delay}",
-        systemctl_path,
-        "restart",
-        "erfassung.service",
-    ]
-    try:
-        subprocess.Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
-    except OSError:
-        return False
-    return True
-
-
-def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
-    user_id = request.session.get("user_id")
-    if not user_id:
-        return None
-    return crud.get_user(db, user_id)
 
 
 def _row_get(row: object, key: str, fallback_index: int | None = None):
@@ -424,10 +205,7 @@ def ensure_schema() -> None:
                 if not is_unique or not str(name).startswith("sqlite_autoindex"):
                     continue
                 index_info = connection.execute(text(f"PRAGMA index_info('{name}')")).fetchall()
-                columns = [
-                    _row_get(info, "name", 2)
-                    for info in index_info
-                ]
+                columns = [_row_get(info, "name", 2) for info in index_info]
                 if columns == ["date"]:
                     legacy_unique_index = name
                     break
@@ -485,7 +263,6 @@ def _sanitize_next(next_url: str, default: str = "/time") -> str:
     if parsed.query:
         return f"{path}?{parsed.query}"
     return path
-
 
 def _build_redirect(path: str, **params: str) -> str:
     query = urlencode({key: value for key, value in params.items() if value})
@@ -1772,7 +1549,6 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "holidays": _ensure_admin(user),
         "approvals_manual": _can_approve_manual_entries(user),
         "approvals_vacations": _can_manage_vacations(user),
-        "updates": _ensure_admin(user),
         "reports": _can_view_time_reports(user),
         "edit_time_entries": _can_edit_time_entries(user),
         "integrations": _ensure_admin(user),
@@ -2846,104 +2622,6 @@ def delete_holiday_admin(
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
-
-@app.get("/admin/system", response_class=HTMLResponse)
-def admin_system_overview(request: Request, db: Session = Depends(database.get_db)):
-    user = get_logged_in_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    repo_url = DEFAULT_UPDATE_REPO
-    branches = _list_remote_branches(repo_url)
-    preferred_branch = f"version-{APP_VERSION}"
-    selected = request.query_params.get("ref")
-    if not selected:
-        if preferred_branch in branches:
-            selected = preferred_branch
-        elif "main" in branches:
-            selected = "main"
-        elif branches:
-            selected = branches[0]
-        else:
-            selected = preferred_branch
-    if selected not in branches:
-        branches = [selected] + [branch for branch in branches if branch != selected]
-    if not branches:
-        branches = [selected]
-    updater_available = UPDATE_SCRIPT_PATH.exists()
-    update_log = _read_update_log()
-    message = request.query_params.get("msg")
-    error = request.query_params.get("error")
-    return _admin_template(
-        "admin/system.html",
-        request,
-        user,
-        message=message,
-        error=error,
-        branches=branches,
-        selected_branch=selected,
-        repo_url=repo_url,
-        updater_available=updater_available,
-        update_log=update_log,
-    )
-
-
-@app.post("/admin/system/update")
-def admin_system_trigger_update(
-    request: Request,
-    ref: str = Form(...),
-    custom_ref: str = Form(""),
-    db: Session = Depends(database.get_db),
-):
-    user = get_logged_in_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    preferred_branch = f"version-{APP_VERSION}"
-    if not UPDATE_SCRIPT_PATH.exists():
-        redirect = _build_redirect("/admin/system", error="Updater-Skript wurde nicht gefunden.")
-        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    chosen_ref = (custom_ref or "").strip() or (ref or preferred_branch)
-    repo_url = DEFAULT_UPDATE_REPO
-    skip_restart = _running_under_systemd_service()
-    try:
-        success = _execute_update(
-            chosen_ref,
-            repo_url,
-            skip_service_restart=skip_restart,
-        )
-    except Exception:
-        redirect = _build_redirect(
-            "/admin/system",
-            error="Update konnte nicht gestartet werden. Bitte Log prüfen.",
-            ref=chosen_ref,
-        )
-        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    if success:
-        message = "Update erfolgreich abgeschlossen."
-        if skip_restart:
-            if _schedule_service_restart():
-                message = (
-                    "Update erfolgreich abgeschlossen. Dienst wird in Kürze neu gestartet."
-                )
-            else:
-                message = (
-                    "Update erfolgreich abgeschlossen. Bitte Dienst manuell neu starten."
-                )
-        redirect = _build_redirect(
-            "/admin/system",
-            msg=message,
-            ref=chosen_ref,
-        )
-        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect(
-        "/admin/system",
-        error="Update fehlgeschlagen. Details im Update-Protokoll.",
-        ref=chosen_ref,
-    )
-    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
 def _parse_checkbox(value: str | None) -> bool:
