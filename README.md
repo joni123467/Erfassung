@@ -1,130 +1,113 @@
 # Erfassung
 
-"Erfassung" ist eine moderne Zeiterfassungssoftware mit Überstundenermittlung, Urlaubsplanung, Feiertagssynchronisation und Excel-Export. Die Anwendung ist als Web-App mit FastAPI umgesetzt und kann später um RFID-Terminals erweitert werden.
+Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-## Features
+**Version:** `0.1.4`
 
-- Anmeldung über einen persönlichen 4-stelligen PIN.
-- Umfangreiche Administrationsoberfläche für Benutzer- und Gruppenverwaltung inklusive PIN-, Rollen- und Arbeitszeitkontingenten.
-- Firmenverwaltung, damit Arbeitszeiten eindeutig Projekten oder Unternehmen zugeordnet werden können.
-- Direktes Stempeln vom Dashboard mit Firmenauswahl und Kommentarfeld für jede Buchung.
-- Komfortable Echtzeit-Stempelung im TopZeit-Stil: Arbeitsbeginn/-ende, Auftragsstart auf eine Firma sowie Pausenstart/-ende auf einen Klick.
-- Administratoren können bestehende Zeitbuchungen filtern, anpassen oder löschen.
-- Verwaltung von Urlaubsanträgen und Feiertagssynchronisation für deutsche Bundesländer (via `python-holidays`).
-- Export von Arbeitszeiten als Excel-Datei (`.xlsx`).
+## Deployment-Standard (neu)
 
-## Installation
+Der Standardweg ist jetzt vollständig image-basiert:
 
-### Automatische Installation (wget & install.sh)
+1. Code nach GitHub pushen
+2. GitHub Actions baut das Docker-Image
+3. Image wird in die GitHub Container Registry (GHCR) veröffentlicht
+4. Portainer deployt dieses GHCR-Image per Stack/Compose
 
-Das Projekt enthält ein Installationsskript, das Systempakete prüft, Abhängigkeiten installiert und eine virtuelle Umgebung vorbereitet. Es kann per `wget` bezogen werden und funktioniert ohne lokal vorhandenes Git.
+> Portainer baut **nicht** lokal, sondern zieht ein bereits gebautes Image.
 
-```bash
-wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.1.4/install.sh -O install.sh
-bash install.sh --source-url https://github.com/joni123467/Erfassung/archive/refs/heads/version-0.1.4.tar.gz
-```
+## Einstiegspunkt und Laufzeit
 
-Das Installationsskript und der Quellcode liegen im öffentlichen Repository <https://github.com/joni123467/Erfassung>. Wird das Skript erneut ausgeführt, erkennt es bestehende Installationen im Zielverzeichnis (`/opt/erfassung` als Standard), entfernt sie und richtet die Anwendung frisch ein. So bleiben Aktualisierungen reproduzierbar.
+- FastAPI-App: `app.main:app`
+- Standardport: `8000`
+- Container-Startkommando:
+  `uvicorn app.main:app --host 0.0.0.0 --port 8000`
 
-Alle Python-Abhängigkeiten werden direkt als vorgefertigte Wheels über `pip` eingespielt – zusätzliche Rust- oder Compiler-Werkzeuge sind nicht länger erforderlich. Auf Wunsch kann über `--install-dir` ein alternatives Zielverzeichnis angegeben werden. Nach erfolgreicher Installation finden Sie die Anwendung unter dem gewählten Pfad; Aktivierung und Start erfolgen wie gewohnt mit `source .venv/bin/activate` und `uvicorn app.main:app --reload`. Systeme mit `systemd` erhalten automatisch den Dienst `erfassung.service`, der die Anwendung als Hintergrundprozess auf Port `8000` betreibt.
-
-### Manuelle Installation
-
-Wenn Sie das Installationsskript nicht verwenden möchten, kann die Installation weiterhin klassisch erfolgen:
+## Lokale Entwicklung
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-oder
+## Docker (lokal)
 
 ```bash
-poetry install
-```
-
-## Entwicklung starten
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --reload
-```
-
-Die Anwendung lauscht damit auf allen verfügbaren Netzwerk-Interfaces und ist im lokalen Netz unter der jeweiligen IP-Adresse des Hosts erreichbar (z. B. <http://127.0.0.1:8000> auf dem gleichen Rechner).
-
-## Anmeldung und Rollen
-
-Beim ersten Start wird automatisch eine Administratorgruppe sowie ein Benutzer `admin` angelegt. Dieser kann sich mit dem PIN `0000` anmelden und anschließend weitere Nutzer oder Gruppen in der Administrationsansicht verwalten.
-
-## Feiertage synchronisieren
-
-Um Feiertage für ein Bundesland zu laden, kann folgender API-Call abgesetzt werden:
-
-```bash
-curl -X POST "http://127.0.0.1:8000/api/holidays/sync?year=2024&state=BY"
-```
-
-## RFID-Integration (Ausblick)
-
-Die Architektur ist so aufgebaut, dass später eine RFID-Erweiterung realisiert werden kann. Die Zeiterfassung kann über zusätzliche Endpoints oder Hintergrundprozesse ergänzt werden, die Stempelzeiten verarbeiten.
-
-## Tests
-
-Zurzeit sind keine automatisierten Tests hinterlegt. Es wird empfohlen, für produktive Szenarien API- und Integrationstests zu ergänzen.
-
-## Aktualisierung
-
-Für installierte Instanzen steht mit `update.sh` ein zweistufiger Updater zur Verfügung. Beim Start lädt das Skript automatisch die aktuellste Version des Repository-Archivs, führt daraus die jüngste Update-Routine aus und übernimmt anschließend den Quellcode in das Installationsverzeichnis. Dabei bleiben lokale Datenordner (`data`, `logs`), Konfigurationsdateien (`config`, `config.yml`, `config.yaml`, `.env`) sowie vorhandene virtuelle Umgebungen (`.venv`) erhalten. Die SQLite-Datenbank (`erfassung.db`) wird beibehalten; nach dem Kopiervorgang werden Tabellen erzeugt und Migrationen angewendet, sodass neue Felder ohne manuelle Eingriffe zur Verfügung stehen. Abschließend startet das Skript – sofern vorhanden – den Dienst `erfassung.service` neu.
-
-Der Updater kann – ähnlich wie die Installation – ohne lokale Git-Kopie genutzt werden:
-
-```bash
-wget https://raw.githubusercontent.com/joni123467/Erfassung/version-0.1.4/update.sh -O update.sh
-bash update.sh --app-dir /opt/erfassung --repo-url https://github.com/joni123467/Erfassung --ref version-0.1.4
-```
-
-Über `--repo-url` lässt sich bei Bedarf ein eigener Fork bzw. eine alternative Quelle angeben, `--ref` steuert den Branch oder Tag. Vorhandene Abhängigkeiten werden nach dem Kopiervorgang automatisch aktualisiert.
-
-### Update über die Administrationsoberfläche
-
-Administratoren finden im Bereich **Administration → System & Updates** eine Oberfläche zum Auslösen von Aktualisierungen. Die Seite listet verfügbare Branches (einschließlich `version-x.x.x`), erlaubt eigene Referenzen und zeigt das Protokoll aus `logs/update.log` an. Während der Vorgang läuft, bleibt die Seite geöffnet; nach erfolgreichem Abschluss wird die Anwendung neu gestartet und der Benutzer landet automatisch wieder auf dem Dashboard.
-
-
-## Docker Deployment
-
-Für einen einfachen privaten Self-Deploy kann die Anwendung direkt als Container betrieben werden. Der Container startet die App über `uvicorn app.main:app --host 0.0.0.0 --port 8000` (ohne `--reload`) auf Port `8000`.
-
-### Docker Build
-
-```bash
-docker build -t erfassung .
-```
-
-### Docker Run
-
-```bash
-docker run -p 8000:8000 erfassung
-```
-
-Für persistente Daten sollten die Laufzeitordner eingebunden werden (SQLite, Logs, Konfiguration), z. B.:
-
-```bash
-docker run -p 8000:8000 \
+docker build -t erfassung:0.1.4 .
+docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
-  -v ./data:/app/data \
-  -v ./logs:/app/logs \
-  -v ./config:/app/config \
-  erfassung
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/config:/app/config \
+  erfassung:0.1.4
 ```
 
-### Docker Compose
+## GHCR & GitHub Actions
 
-```bash
-docker compose up -d
+Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffentlicht nach GHCR.
+
+### Trigger
+
+- Push auf `main`
+- Push von Tags `v*` (z. B. `v0.1.4`)
+- Manuell über `workflow_dispatch`
+
+### Tags
+
+- Versions-Tag aus `VERSION` (hier `0.1.4`)
+- `latest` auf `main`
+- Git-Tag (`v0.1.4`)
+
+### Erwartetes Image
+
+Beispiel:
+
+`ghcr.io/OWNER/erfassung:0.1.4`
+
+`OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
+
+## Deployment mit Portainer
+
+Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert ein GHCR-Image (ohne lokalen Build).
+
+### Beispiel
+
+```yaml
+services:
+  erfassung:
+    image: ghcr.io/OWNER/erfassung:0.1.4
+    container_name: erfassung
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/erfassung.db
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
 ```
 
-Die bereitgestellte `compose.yaml` bindet `./data`, `./logs` und `./config` ein. Dadurch bleiben SQLite-Datenbank (`/app/data/erfassung.db`), Logs (`/app/logs`) und Integrations-/Konfigurationsdateien (`/app/config`, z. B. TimeMoto) auch nach Container-Neustarts erhalten.
+## Persistenz (wichtig)
 
-### Zugriff
+Für produktiven Betrieb sollten folgende Pfade persistent gemountet werden:
 
-<http://localhost:8000>
+- `/app/data` (inkl. SQLite-DB `erfassung.db`)
+- `/app/logs`
+- `/app/config` (z. B. Integrationskonfigurationen wie TimeMoto)
+
+Optional zusätzlich:
+
+- `.env`-Datei im Stack/Host, falls eigene Umgebungsvariablen genutzt werden
+
+## Was du selbst anpassen musst
+
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.1.4`)
+- optional Image-Name/Tag (`erfassung`, `0.1.4`, `latest`)
+- Volume-Hostpfade (`./data`, `./logs`, `./config`)
+- ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
+
+## Hinweise zu privaten Repositories
+
+GHCR funktioniert auch mit privaten Repositories. In Portainer muss dann ein Registry-Zugang (PAT mit `read:packages`) hinterlegt werden, damit das private Image gezogen werden kann.
