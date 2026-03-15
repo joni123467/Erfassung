@@ -1,6 +1,8 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.1.5-r3';
+const CACHE_VERSION = 'erfassung-mobile-v0.1.5-r4';
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
+const NAVIGATION_TIMEOUT_MS = 1500;
+const API_TIMEOUT_MS = 4000;
 const CORE_ASSETS = [
   MOBILE_SHELL,
   OFFLINE_SHELL,
@@ -51,9 +53,19 @@ async function staleWhileRevalidate(request) {
   return cached || networkPromise || Response.error();
 }
 
+async function fetchWithTimeout(request, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(request, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function networkFirstForNavigation(request) {
   try {
-    const response = await fetch(request);
+    const response = await fetchWithTimeout(request, NAVIGATION_TIMEOUT_MS);
     if (response && response.ok) {
       const cache = await caches.open(CACHE_VERSION);
       cache.put(MOBILE_SHELL, response.clone());
@@ -96,7 +108,7 @@ self.addEventListener('fetch', (event) => {
 
   if (url.pathname.startsWith('/api/') || url.pathname === '/mobile/sync-data') {
     event.respondWith(
-      fetch(request).catch(() => caches.match(request, { ignoreSearch: true }) || Response.error())
+      fetchWithTimeout(request, API_TIMEOUT_MS).catch(() => caches.match(request, { ignoreSearch: true }) || Response.error())
     );
     return;
   }
