@@ -8,27 +8,27 @@ const VACATION_LIST_SELECTOR = '[data-vacation-list]';
 const VACATION_EMPTY_SELECTOR = '[data-vacation-empty]';
 
 const DB_NAME = 'erfassung-mobile';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const ACTION_STORE = 'pendingActions';
 const DATA_STORE = 'mobileData';
 const META_STORE = 'meta';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
-const MONTH_WINDOW_DAYS = 183;
+const SERVER_REACHABILITY_KEY = 'serverReachability';
+const SYNC_LOCK_KEY = 'syncLock';
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
 let mobileState = null;
 let workDurationTimerId = null;
 let modalController = null;
+let syncInFlight = false;
+let initialServerState = null;
 
 function setElementHidden(element, hidden) {
   if (!element) return;
   element.hidden = !!hidden;
-  if (hidden) {
-    element.setAttribute('hidden', 'hidden');
-  } else {
-    element.removeAttribute('hidden');
-  }
+  if (hidden) element.setAttribute('hidden', 'hidden');
+  else element.removeAttribute('hidden');
 }
 
 function withLocalStorage(callback) {
@@ -67,11 +67,17 @@ function showFeedback(message, type = 'info') {
   element.dataset.timeoutId = String(timeoutId);
 }
 
-function setStatusBadge(online) {
+function setStatusBadge(state) {
   const badge = document.getElementById('mobile-server-badge');
   if (!badge) return;
-  badge.textContent = online ? 'Online' : 'Offline';
-  badge.dataset.state = online ? 'online' : 'offline';
+  const labels = {
+    online: 'Server erreichbar',
+    offline: 'Offline',
+    unreachable: 'Server nicht erreichbar',
+    syncing: 'Synchronisiert …',
+  };
+  badge.textContent = labels[state] || labels.offline;
+  badge.dataset.state = state;
 }
 
 function updateLastSyncLabel(value) {
@@ -106,6 +112,166 @@ function updatePendingIndicator(total, detail) {
   } else {
     element.textContent = detail ? `${total} Offline-Aktionen warten (${detail})` : `${total} Offline-Aktionen warten`;
   }
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => window.clearTimeout(timeoutId));
+}
+
+function normalizeBreakLabel(minutes) {
+  const value = Number(minutes || 0);
+  const safe = Number.isFinite(value) ? value : 0;
+  const hours = Math.floor(safe / 60);
+  const remainder = Math.abs(Math.round(safe % 60));
+  return `${hours}:${String(remainder).padStart(2, '0')}`;
+}
+
+function buildStateFromEntry(entry) {
+  if (!entry) {
+    return {
+      isWorking: false,
+      onBreak: false,
+      hasCompany: false,
+      startedAtMs: null,
+      breakStartedAtMs: null,
+      totalBreakMs: 0,
+      startLabel: '',
+      breakLabel: '',
+      breakTotalLabel: '0:00',
+      companyName: '',
+      workedLabel: '0:00',
+      pendingPunchSync: false,
+    };
+  }
+  const startIso = `${entry.work_date}T${entry.start_time}`;
+  const breakIso = entry.break_started_at ? `${entry.work_date}T${entry.break_started_at}` : null;
+  const startedAtMs = Date.parse(startIso);
+  const breakStartedAtMs = breakIso ? Date.parse(breakIso) : null;
+  const breakMinutes = Number(entry.total_break_minutes || entry.break_minutes || 0);
+
+  return {
+    isWorking: !!entry.is_open,
+    onBreak: !!entry.break_started_at,
+    hasCompany: !!entry.company_id,
+    startedAtMs: Number.isNaN(startedAtMs) ? null : startedAtMs,
+    breakStartedAtMs: Number.isNaN(breakStartedAtMs) ? null : breakStartedAtMs,
+    totalBreakMs: Math.max(0, breakMinutes * 60000),
+    startLabel: entry.start_time ? entry.start_time.slice(0, 5) : '',
+    breakLabel: entry.break_started_at ? entry.break_started_at.slice(0, 5) : '',
+    breakTotalLabel: normalizeBreakLabel(breakMinutes),
+    companyName: entry.company_name || '',
+    workedLabel: normalizeBreakLabel(entry.worked_minutes || 0),
+    pendingPunchSync: false,
+  };
+}
+
+function cloneState(state) {
+  return {
+    isWorking: !!state.isWorking,
+    onBreak: !!state.onBreak,
+    hasCompany: !!state.hasCompany,
+    startedAtMs: state.startedAtMs || null,
+    breakStartedAtMs: state.breakStartedAtMs || null,
+    totalBreakMs: Number(state.totalBreakMs || 0),
+    startLabel: state.startLabel || '',
+    breakLabel: state.breakLabel || '',
+    breakTotalLabel: state.breakTotalLabel || '0:00',
+    companyName: state.companyName || '',
+    workedLabel: state.workedLabel || '0:00',
+    pendingPunchSync: !!state.pendingPunchSync,
+  };
+}
+
+function formatTime(ms) {
+  if (!ms) return '';
+  const date = new Date(ms);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatDuration(ms) {
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`;
+}
+
+function applyPunchActionToState(state, action, payload = {}) {
+  const next = cloneState(state);
+  const now = Date.now();
+  if (action === 'start_work') {
+    next.isWorking = true;
+    next.onBreak = false;
+    next.hasCompany = false;
+    next.startedAtMs = now;
+    next.breakStartedAtMs = null;
+    next.totalBreakMs = 0;
+    next.startLabel = formatTime(now);
+    next.breakLabel = '';
+    next.breakTotalLabel = '0:00';
+    next.companyName = '';
+  } else if (action === 'end_work') {
+    return buildStateFromEntry(null);
+  } else if (action === 'start_break' && next.isWorking && !next.onBreak) {
+    next.onBreak = true;
+    next.breakStartedAtMs = now;
+    next.breakLabel = formatTime(now);
+  } else if (action === 'end_break' && next.isWorking && next.onBreak) {
+    if (next.breakStartedAtMs) {
+      next.totalBreakMs += Math.max(0, now - next.breakStartedAtMs);
+    }
+    next.onBreak = false;
+    next.breakStartedAtMs = null;
+    next.breakLabel = '';
+    next.breakTotalLabel = formatDuration(next.totalBreakMs);
+  } else if (action === 'start_company') {
+    next.isWorking = true;
+    next.onBreak = false;
+    next.hasCompany = true;
+    next.startedAtMs = now;
+    next.startLabel = formatTime(now);
+    next.breakStartedAtMs = null;
+    next.totalBreakMs = 0;
+    next.breakLabel = '';
+    next.breakTotalLabel = '0:00';
+    next.companyName = (payload.new_company_name || '').trim() || payload.company_name || '';
+  } else if (action === 'end_company') {
+    next.isWorking = true;
+    next.onBreak = false;
+    next.hasCompany = false;
+    next.startedAtMs = now;
+    next.startLabel = formatTime(now);
+    next.breakStartedAtMs = null;
+    next.totalBreakMs = 0;
+    next.breakLabel = '';
+    next.breakTotalLabel = '0:00';
+    next.companyName = '';
+  }
+  return next;
+}
+
+function loadStoredMobileState() {
+  return withLocalStorage((storage) => {
+    try {
+      return JSON.parse(storage.getItem(MOBILE_STATE_STORAGE_KEY) || 'null');
+    } catch {
+      return null;
+    }
+  });
+}
+
+function persistMobileState() {
+  if (!mobileState) return;
+  withLocalStorage((storage) => {
+    storage.setItem(MOBILE_STATE_STORAGE_KEY, JSON.stringify({ ...mobileState, version: 3, updatedAt: Date.now() }));
+    return null;
+  });
+}
+
+function clearStoredMobileState() {
+  withLocalStorage((storage) => {
+    storage.removeItem(MOBILE_STATE_STORAGE_KEY);
+    return null;
+  });
 }
 
 function openDatabase() {
@@ -161,10 +327,6 @@ async function getAllRecords(storeName) {
   return (await withStore(storeName, 'readonly', (store) => store.getAll())) || [];
 }
 
-function generateClientActionId(prefix) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function serializeFormData(form) {
   const payload = {};
   for (const [key, value] of new FormData(form).entries()) {
@@ -173,216 +335,8 @@ function serializeFormData(form) {
   return payload;
 }
 
-function formatTime(ms) {
-  if (!ms) return '';
-  const date = new Date(ms);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-function formatDuration(ms) {
-  const totalMinutes = Math.max(0, Math.round(ms / 60000));
-  return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`;
-}
-
-function loadStoredMobileState() {
-  return withLocalStorage((storage) => {
-    try {
-      return JSON.parse(storage.getItem(MOBILE_STATE_STORAGE_KEY) || 'null');
-    } catch {
-      return null;
-    }
-  });
-}
-
-function persistMobileState() {
-  if (!mobileState) return;
-  withLocalStorage((storage) => {
-    storage.setItem(MOBILE_STATE_STORAGE_KEY, JSON.stringify({ ...mobileState, version: 2, updatedAt: Date.now() }));
-    return null;
-  });
-}
-
-function clearStoredMobileState() {
-  withLocalStorage((storage) => {
-    storage.removeItem(MOBILE_STATE_STORAGE_KEY);
-    return null;
-  });
-}
-
-function applyStateVisibility(name, active) {
-  document.querySelectorAll(`[data-state="${name}"]`).forEach((element) => setElementHidden(element, !active));
-}
-
-function refreshControlStates() {
-  document.querySelectorAll('[data-toggle-disabled]').forEach((element) => {
-    element.toggleAttribute('disabled', !!element.closest('[hidden]'));
-  });
-}
-
-function updateWorkDuration() {
-  if (!mobileState) return;
-  if (!mobileState.isWorking || !mobileState.startedAtMs) {
-    mobileState.workedLabel = '0:00';
-  } else {
-    let total = Date.now() - mobileState.startedAtMs - (mobileState.totalBreakMs || 0);
-    if (mobileState.onBreak && mobileState.breakStartedAtMs) total -= Date.now() - mobileState.breakStartedAtMs;
-    mobileState.workedLabel = formatDuration(total);
-  }
-  const el = document.querySelector('[data-field="worked-duration"]');
-  if (el) el.textContent = mobileState.workedLabel;
-}
-
-function startWorkTimer() {
-  if (workDurationTimerId) window.clearInterval(workDurationTimerId);
-  workDurationTimerId = null;
-  updateWorkDuration();
-  if (!mobileState?.isWorking) return;
-  workDurationTimerId = window.setInterval(updateWorkDuration, 30000);
-}
-
-function updateUiState() {
-  if (!mobileState) return;
-  applyStateVisibility('active', mobileState.isWorking);
-  applyStateVisibility('idle', !mobileState.isWorking);
-  applyStateVisibility('break-active', mobileState.isWorking && mobileState.onBreak);
-  applyStateVisibility('break-idle', mobileState.isWorking && !mobileState.onBreak);
-  applyStateVisibility('company-active', mobileState.isWorking && mobileState.hasCompany);
-
-  const map = {
-    'header-start': mobileState.isWorking ? mobileState.startLabel || '--:--' : '',
-    'work-start': mobileState.isWorking ? mobileState.startLabel || '--:--' : '',
-    'company-name': mobileState.companyName || '',
-    'break-start': mobileState.onBreak ? mobileState.breakLabel || '--:--' : '',
-    'break-total': mobileState.breakTotalLabel || '0:00',
-  };
-  Object.entries(map).forEach(([key, value]) => {
-    const el = document.querySelector(`[data-field="${key}"]`);
-    if (el) el.textContent = value;
-  });
-
-  refreshControlStates();
-  startWorkTimer();
-  persistMobileState();
-}
-
-function initializeMobileState() {
-  const root = document.querySelector(MOBILE_STATE_SELECTOR);
-  if (!root) return;
-  mobileState = {
-    isWorking: root.dataset.stateRunning === 'true',
-    onBreak: root.dataset.stateBreak === 'true',
-    hasCompany: root.dataset.stateCompany === 'true',
-    startedAtMs: root.dataset.startTimestamp ? Date.parse(root.dataset.startTimestamp) : null,
-    breakStartedAtMs: root.dataset.breakTimestamp ? Date.parse(root.dataset.breakTimestamp) : null,
-    totalBreakMs: Number(root.dataset.totalBreakMinutes || '0') * 60000,
-    startLabel: root.dataset.startLabel || '',
-    breakLabel: root.dataset.breakLabel || '',
-    breakTotalLabel: root.dataset.breakTotalLabel || '0:00',
-    companyName: root.dataset.companyName || '',
-    workedLabel: root.dataset.workedLabel || '0:00',
-    pendingPunchSync: false,
-  };
-  const stored = loadStoredMobileState();
-  if (stored && stored.version >= 1 && (!navigator.onLine || stored.pendingPunchSync)) {
-    mobileState = { ...mobileState, ...stored };
-  }
-  if (!mobileState.isWorking && !mobileState.onBreak && !mobileState.hasCompany) {
-    clearStoredMobileState();
-  }
-  updateUiState();
-}
-
-function determineCompanyName(form, payload) {
-  const typed = (payload.new_company_name || '').trim();
-  if (typed) return typed;
-  const select = form.querySelector('select[name="company_id"]');
-  if (!select || !(select instanceof HTMLSelectElement)) return '';
-  return select.options[select.selectedIndex]?.textContent?.trim() || '';
-}
-
-function setWorkingState(startMs, { hasCompany = false, companyName = '', resetBreak = true } = {}) {
-  if (!mobileState) return;
-  if (startMs) {
-    mobileState.isWorking = true;
-    mobileState.startedAtMs = startMs;
-    mobileState.startLabel = formatTime(startMs);
-    if (resetBreak) {
-      mobileState.totalBreakMs = 0;
-      mobileState.breakTotalLabel = '0:00';
-    }
-    mobileState.onBreak = false;
-    mobileState.breakStartedAtMs = null;
-    mobileState.breakLabel = '';
-    mobileState.hasCompany = hasCompany;
-    mobileState.companyName = companyName;
-  } else {
-    mobileState.isWorking = false;
-    mobileState.startedAtMs = null;
-    mobileState.startLabel = '';
-    mobileState.totalBreakMs = 0;
-    mobileState.breakTotalLabel = '0:00';
-    mobileState.onBreak = false;
-    mobileState.breakStartedAtMs = null;
-    mobileState.breakLabel = '';
-    mobileState.hasCompany = false;
-    mobileState.companyName = '';
-  }
-  updateUiState();
-}
-
-function applyOfflinePunchAction(action, payload, form) {
-  if (!mobileState) return;
-  mobileState.pendingPunchSync = true;
-  const now = Date.now();
-  if (action === 'start_work') {
-    setWorkingState(now, { hasCompany: false, companyName: '', resetBreak: true });
-  } else if (action === 'end_work') {
-    setWorkingState(null);
-  } else if (action === 'start_break' && mobileState.isWorking && !mobileState.onBreak) {
-    mobileState.onBreak = true;
-    mobileState.breakStartedAtMs = now;
-    mobileState.breakLabel = formatTime(now);
-    updateUiState();
-  } else if (action === 'end_break' && mobileState.isWorking && mobileState.onBreak) {
-    const diff = mobileState.breakStartedAtMs ? Math.max(0, now - mobileState.breakStartedAtMs) : 0;
-    mobileState.totalBreakMs += diff;
-    mobileState.breakTotalLabel = formatDuration(mobileState.totalBreakMs);
-    mobileState.onBreak = false;
-    mobileState.breakStartedAtMs = null;
-    mobileState.breakLabel = '';
-    updateUiState();
-  } else if (action === 'start_company') {
-    setWorkingState(now, { hasCompany: true, companyName: determineCompanyName(form, payload), resetBreak: true });
-    modalController?.close?.();
-  } else if (action === 'end_company') {
-    setWorkingState(now, { hasCompany: false, companyName: '', resetBreak: true });
-  }
-}
-
-function appendVacationPreview(payload, offline = false) {
-  const list = document.querySelector(VACATION_LIST_SELECTOR);
-  const empty = document.querySelector(VACATION_EMPTY_SELECTOR);
-  if (!list) return;
-  setElementHidden(list, false);
-  if (empty) setElementHidden(empty, true);
-  const item = document.createElement('li');
-  item.className = 'mobile-vacation';
-  const head = document.createElement('header');
-  head.className = 'mobile-vacation__header';
-  const title = document.createElement('strong');
-  title.textContent = `${payload.start_date} – ${payload.end_date}`;
-  const status = document.createElement('span');
-  status.className = `mobile-vacation__status mobile-vacation__status--${offline ? 'offline' : 'pending'}`;
-  status.textContent = offline ? 'Offline gespeichert' : 'Wartet auf Freigabe';
-  head.append(title, status);
-  item.appendChild(head);
-  if (offline) {
-    const badge = document.createElement('span');
-    badge.className = 'mobile-vacation__badge';
-    badge.textContent = 'Synchronisation ausstehend';
-    item.appendChild(badge);
-  }
-  list.prepend(item);
+function generateClientActionId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 async function queueAction(type, payload) {
@@ -408,172 +362,379 @@ async function refreshQueueIndicator() {
   const punchCount = actions.filter((item) => item.type === 'punch').length;
   const vacationCount = actions.filter((item) => item.type === 'vacation').length;
   const total = actions.length;
-  const detail = [punchCount ? `${punchCount} Stempel` : '', vacationCount ? `${vacationCount} Urlaub` : ''].filter(Boolean).join(' · ');
+  const detail = [punchCount ? `${punchCount} Stempel` : '', vacationCount ? `${vacationCount} Urlaub` : '']
+    .filter(Boolean)
+    .join(' · ');
   updatePendingIndicator(total, detail);
   return { total, punchCount, vacationCount };
 }
 
-async function postAction(action) {
-  const body = new URLSearchParams(action.payload);
-  const response = await fetch(action.endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-    body: body.toString(),
-    credentials: 'same-origin',
-    redirect: 'follow',
+function applyStateVisibility(name, active) {
+  document.querySelectorAll(`[data-state="${name}"]`).forEach((element) => setElementHidden(element, !active));
+}
+
+function refreshControlStates() {
+  document.querySelectorAll('[data-toggle-disabled]').forEach((element) => {
+    element.toggleAttribute('disabled', !!element.closest('[hidden]'));
   });
-  if (!response.ok) throw new Error(`Serverfehler ${response.status}`);
-  return response;
 }
 
-async function flushOfflineQueue(trigger = 'auto') {
-  const pending = await readPendingActions();
-  if (!pending.length) {
-    dispatchSyncStatus('Keine ausstehenden Offline-Aktionen.', 'synced');
-    await refreshQueueIndicator();
-    return;
-  }
-  dispatchSyncStatus('Synchronisation läuft …', 'syncing');
-  let processed = 0;
-  for (const action of pending) {
-    try {
-      await postAction(action);
-      await deleteRecord(ACTION_STORE, action.clientActionId);
-      processed += 1;
-    } catch (error) {
-      console.warn('Synchronisation gestoppt', error);
-      break;
-    }
-  }
-  const counts = await refreshQueueIndicator();
-  if (counts.total === 0) {
-    if (mobileState) {
-      mobileState.pendingPunchSync = false;
-      persistMobileState();
-    }
-    dispatchSyncStatus('Synchronisation erfolgreich. Alle Offline-Aktionen übertragen.', 'synced');
-    showFeedback('Synchronisation erfolgreich abgeschlossen.', 'success');
-  } else if (processed > 0) {
-    dispatchSyncStatus('Synchronisation teilweise abgeschlossen. Verbleibende Aktionen werden erneut versucht.', 'queue');
-    showFeedback('Teilweise synchronisiert – Rest folgt automatisch.', 'info');
+function updateWorkDuration() {
+  if (!mobileState) return;
+  if (!mobileState.isWorking || !mobileState.startedAtMs) {
+    mobileState.workedLabel = '0:00';
   } else {
-    dispatchSyncStatus('Server aktuell nicht erreichbar. Offline-Aktionen bleiben sicher gespeichert.', 'offline');
-    if (trigger !== 'auto') showFeedback('Der Server ist nicht erreichbar. Wir versuchen es automatisch erneut.', 'error');
+    let total = Date.now() - mobileState.startedAtMs - (mobileState.totalBreakMs || 0);
+    if (mobileState.onBreak && mobileState.breakStartedAtMs) {
+      total -= Date.now() - mobileState.breakStartedAtMs;
+    }
+    mobileState.workedLabel = formatDuration(total);
   }
+  const worked = document.querySelector('[data-field="worked-duration"]');
+  if (worked) worked.textContent = mobileState.workedLabel;
 }
 
-async function syncServerData() {
-  if (!navigator.onLine) return false;
+function startWorkTimer() {
+  if (workDurationTimerId) window.clearInterval(workDurationTimerId);
+  workDurationTimerId = null;
+  updateWorkDuration();
+  if (!mobileState?.isWorking) return;
+  workDurationTimerId = window.setInterval(updateWorkDuration, 30000);
+}
+
+function updateUiState() {
+  if (!mobileState) return;
+  applyStateVisibility('active', mobileState.isWorking);
+  applyStateVisibility('idle', !mobileState.isWorking);
+  applyStateVisibility('break-active', mobileState.isWorking && mobileState.onBreak);
+  applyStateVisibility('break-idle', mobileState.isWorking && !mobileState.onBreak);
+  applyStateVisibility('company-active', mobileState.isWorking && mobileState.hasCompany);
+
+  const values = {
+    'header-start': mobileState.isWorking ? mobileState.startLabel || '--:--' : '',
+    'work-start': mobileState.isWorking ? mobileState.startLabel || '--:--' : '',
+    'company-name': mobileState.companyName || '',
+    'break-start': mobileState.onBreak ? mobileState.breakLabel || '--:--' : '',
+    'break-total': mobileState.breakTotalLabel || '0:00',
+  };
+  Object.entries(values).forEach(([key, value]) => {
+    const element = document.querySelector(`[data-field="${key}"]`);
+    if (element) element.textContent = value;
+  });
+
+  refreshControlStates();
+  startWorkTimer();
+  persistMobileState();
+}
+
+function determineCompanyName(form, payload) {
+  const typed = (payload.new_company_name || '').trim();
+  if (typed) return typed;
+  const select = form.querySelector('select[name="company_id"]');
+  if (!(select instanceof HTMLSelectElement)) return '';
+  return select.options[select.selectedIndex]?.textContent?.trim() || '';
+}
+
+async function recomputeEffectiveState() {
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const pending = await readPendingActions();
+
+  let base = initialServerState ? cloneState(initialServerState) : buildStateFromEntry(snapshot?.data?.active_entry || null);
+  if (!snapshot?.data?.active_entry && !initialServerState) {
+    const stored = loadStoredMobileState();
+    if (stored && stored.version >= 1) {
+      base = cloneState(stored);
+    }
+  }
+
+  for (const action of pending) {
+    if (action.type !== 'punch') continue;
+    const payload = action.payload || {};
+    if (payload.action === 'start_company' && !payload.company_name) {
+      payload.company_name = determineCompanyName(document, payload);
+    }
+    base = applyPunchActionToState(base, payload.action, payload);
+    base.pendingPunchSync = true;
+  }
+
+  if (!pending.some((entry) => entry.type === 'punch')) {
+    base.pendingPunchSync = false;
+  }
+
+  mobileState = base;
+  updateUiState();
+}
+
+async function appendVacationPreview(payload, offline = false) {
+  const list = document.querySelector(VACATION_LIST_SELECTOR);
+  const empty = document.querySelector(VACATION_EMPTY_SELECTOR);
+  if (!list) return;
+  setElementHidden(list, false);
+  if (empty) setElementHidden(empty, true);
+  const item = document.createElement('li');
+  item.className = 'mobile-vacation';
+  const head = document.createElement('header');
+  head.className = 'mobile-vacation__header';
+  const title = document.createElement('strong');
+  title.textContent = `${payload.start_date} – ${payload.end_date}`;
+  const status = document.createElement('span');
+  status.className = `mobile-vacation__status mobile-vacation__status--${offline ? 'offline' : 'pending'}`;
+  status.textContent = offline ? 'Offline gespeichert' : 'Wartet auf Freigabe';
+  head.append(title, status);
+  item.appendChild(head);
+  if (offline) {
+    const badge = document.createElement('span');
+    badge.className = 'mobile-vacation__badge';
+    badge.textContent = 'Synchronisation ausstehend';
+    item.appendChild(badge);
+  }
+  list.prepend(item);
+}
+
+async function checkServerReachability(force = false) {
+  if (!navigator.onLine) {
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'offline', updatedAt: Date.now() });
+    setStatusBadge('offline');
+    return 'offline';
+  }
+
+  const last = await getRecord(META_STORE, SERVER_REACHABILITY_KEY);
+  if (!force && last?.value === 'online' && Date.now() - (last.updatedAt || 0) < 15000) {
+    setStatusBadge('online');
+    return 'online';
+  }
+
   try {
-    const response = await fetch('/mobile/sync-data', { credentials: 'same-origin' });
-    if (!response.ok) throw new Error(`Sync-HTTP ${response.status}`);
-    const payload = await response.json();
-    await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
-    await putRecord(META_STORE, { key: 'lastSyncAt', value: new Date().toISOString() });
-    await putRecord(META_STORE, { key: 'localDataReady', value: true });
-    updateLastSyncLabel(new Date().toISOString());
-    updateLocalDataBadge(true);
-    dispatchSyncStatus('Server erreichbar. Daten wurden aktualisiert.', 'synced');
-    await hydrateCompaniesFromCache();
-    return true;
+    const response = await fetchWithTimeout('/api/ping', {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }, 2500);
+    if (!response.ok) {
+      throw new Error(`Ping ${response.status}`);
+    }
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'online', updatedAt: Date.now() });
+    setStatusBadge('online');
+    return 'online';
   } catch (error) {
-    console.warn('Datenabgleich fehlgeschlagen', error);
-    return false;
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
+    setStatusBadge('unreachable');
+    return 'unreachable';
   }
 }
 
 async function hydrateCompaniesFromCache() {
-  const snapshotRecord = await getRecord(DATA_STORE, 'snapshot');
-  const companies = snapshotRecord?.data?.companies;
-  if (!Array.isArray(companies)) return;
-  const selects = Array.from(document.querySelectorAll('select[name="company_id"]'));
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const companies = snapshot?.data?.companies;
+  if (!Array.isArray(companies) || companies.length === 0) return;
+
+  const selects = document.querySelectorAll('select[name="company_id"]');
   selects.forEach((select) => {
     if (!(select instanceof HTMLSelectElement)) return;
-    const currentValue = select.value;
-    const defaultOption = select.querySelector('option[value=""]');
+    const selected = select.value;
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'Firma auswählen';
     select.innerHTML = '';
-    if (defaultOption) {
-      select.appendChild(defaultOption);
-    } else {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'Firma auswählen';
-      select.appendChild(option);
-    }
+    select.appendChild(empty);
     companies.forEach((company) => {
       const option = document.createElement('option');
       option.value = String(company.id);
       option.textContent = company.name;
-      if (String(company.id) === String(currentValue)) option.selected = true;
+      if (String(company.id) === String(selected)) option.selected = true;
       select.appendChild(option);
     });
   });
 }
 
-async function initializeSyncMeta() {
-  const syncMeta = await getRecord(META_STORE, 'lastSyncAt');
-  const dataMeta = await getRecord(META_STORE, 'localDataReady');
-  updateLastSyncLabel(syncMeta?.value || null);
-  updateLocalDataBadge(!!dataMeta?.value);
-  await refreshQueueIndicator();
+async function syncServerData() {
+  const status = await checkServerReachability(true);
+  if (status !== 'online') {
+    return false;
+  }
+  try {
+    const response = await fetchWithTimeout('/mobile/sync-data', {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    }, 5000);
+    if (!response.ok) throw new Error(`Sync HTTP ${response.status}`);
+    const payload = await response.json();
+    await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
+    await putRecord(META_STORE, { key: 'lastSyncAt', value: new Date().toISOString(), updatedAt: Date.now() });
+    await putRecord(META_STORE, { key: 'localDataReady', value: true, updatedAt: Date.now() });
+    updateLocalDataBadge(true);
+    updateLastSyncLabel(new Date().toISOString());
+    await hydrateCompaniesFromCache();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function postQueuedAction(entry) {
+  const body = new URLSearchParams(entry.payload);
+  const response = await fetchWithTimeout(entry.endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: body.toString(),
+    credentials: 'same-origin',
+    redirect: 'follow',
+    cache: 'no-store',
+  }, 8000);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response;
+}
+
+async function flushOfflineQueue() {
+  const pending = await readPendingActions();
+  if (!pending.length) {
+    return { processed: 0, failed: 0 };
+  }
+
+  dispatchSyncStatus('Synchronisation läuft …', 'syncing');
+  setStatusBadge('syncing');
+
+  let processed = 0;
+  for (const entry of pending) {
+    try {
+      await postQueuedAction(entry);
+      await deleteRecord(ACTION_STORE, entry.clientActionId);
+      processed += 1;
+    } catch (error) {
+      break;
+    }
+  }
+
+  const remaining = await refreshQueueIndicator();
+  if (remaining.total === 0) {
+    dispatchSyncStatus('Synchronisation erfolgreich. Alle Aktionen wurden übertragen.', 'synced');
+    showFeedback('Synchronisation erfolgreich.', 'success');
+    return { processed, failed: 0 };
+  }
+  if (processed > 0) {
+    dispatchSyncStatus('Synchronisation teilweise erfolgreich. Verbleibende Aktionen folgen automatisch.', 'queue');
+    showFeedback('Teilweise synchronisiert. Rest wird erneut versucht.', 'info');
+    return { processed, failed: remaining.total };
+  }
+  dispatchSyncStatus('Server aktuell nicht erreichbar. Aktionen bleiben sicher lokal gespeichert.', 'unreachable');
+  return { processed: 0, failed: remaining.total };
+}
+
+async function performReconnectSync(trigger = 'auto') {
+  if (syncInFlight) return;
+  syncInFlight = true;
+  await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: true, updatedAt: Date.now() });
+  try {
+    const status = await checkServerReachability(true);
+    if (status !== 'online') {
+      if (status === 'unreachable') {
+        dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar.', 'unreachable');
+      } else {
+        dispatchSyncStatus('Keine Verbindung. Du arbeitest offline.', 'offline');
+      }
+      await recomputeEffectiveState();
+      return;
+    }
+
+    await flushOfflineQueue();
+    await syncServerData();
+    await recomputeEffectiveState();
+    await refreshQueueIndicator();
+
+    if (trigger !== 'background') {
+      dispatchSyncStatus('Server wieder erreichbar. Daten sind synchronisiert.', 'synced');
+    }
+  } finally {
+    await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: false, updatedAt: Date.now() });
+    syncInFlight = false;
+    await checkServerReachability();
+  }
 }
 
 async function processPunchSubmission(form, payload) {
   payload.client_action_id = payload.client_action_id || generateClientActionId('punch');
-  const body = new URLSearchParams(payload);
-  if (navigator.onLine) {
-    try {
-      const response = await fetch(form.getAttribute('action') || '/punch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-        redirect: 'follow',
-      });
-      if (!response.ok) throw new Error(`Serverfehler ${response.status}`);
-      if (response.redirected) {
-        window.location.href = response.url;
-        return;
-      }
-      showFeedback('Buchung erfolgreich übertragen.', 'success');
-      dispatchSyncStatus('Buchung wurde an den Server übertragen.', 'synced');
+  if (payload.action === 'start_company') {
+    payload.company_name = determineCompanyName(form, payload);
+  }
+
+  const reachability = await checkServerReachability();
+  if (reachability !== 'online') {
+    await queueAction('punch', payload);
+    await recomputeEffectiveState();
+    await refreshQueueIndicator();
+    showFeedback('Offline-Aktion lokal gespeichert. Wird automatisch synchronisiert.', 'info');
+    dispatchSyncStatus('Offline gespeichert – Stempelung wurde lokal erfasst.', 'queue');
+    return;
+  }
+
+  try {
+    const response = await fetchWithTimeout(form.getAttribute('action') || '/punch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: new URLSearchParams(payload).toString(),
+      credentials: 'same-origin',
+      redirect: 'follow',
+      cache: 'no-store',
+    }, 5000);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (response.redirected) {
+      window.location.href = response.url;
       return;
     } catch {
       // fallback queue
     }
+    showFeedback('Buchung erfolgreich übertragen.', 'success');
+    dispatchSyncStatus('Buchung wurde an den Server übertragen.', 'synced');
+    await syncServerData();
+    await recomputeEffectiveState();
+  } catch (error) {
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
+    setStatusBadge('unreachable');
+    await queueAction('punch', payload);
+    await recomputeEffectiveState();
+    await refreshQueueIndicator();
+    showFeedback('Server nicht erreichbar. Aktion wurde lokal gespeichert.', 'info');
+    dispatchSyncStatus('Server nicht erreichbar – Aktion lokal gespeichert.', 'unreachable');
   }
-
-  await queueAction('punch', payload);
-  applyOfflinePunchAction(payload.action, payload, form);
-  await refreshQueueIndicator();
-  showFeedback('Offline-Aktion lokal gespeichert. Synchronisation folgt automatisch.', 'info');
-  dispatchSyncStatus('Offline – Stempelaktion sicher gespeichert.', 'queue');
 }
 
 async function processVacationSubmission(form, payload) {
   payload.client_action_id = payload.client_action_id || generateClientActionId('vacation');
-  const body = new URLSearchParams(payload);
-  if (navigator.onLine) {
-    try {
-      const response = await fetch(form.getAttribute('action') || '/vacations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-        redirect: 'follow',
-      });
-      if (!response.ok) throw new Error(`Serverfehler ${response.status}`);
-      showFeedback('Urlaubsantrag erfolgreich übertragen.', 'success');
-      return;
-    } catch {
-      // fallback queue
-    }
+  const reachability = await checkServerReachability();
+  if (reachability !== 'online') {
+    await queueAction('vacation', payload);
+    await appendVacationPreview(payload, true);
+    await refreshQueueIndicator();
+    showFeedback('Urlaubsantrag offline gespeichert.', 'info');
+    dispatchSyncStatus('Offline gespeichert – Urlaubsantrag wartet auf Synchronisation.', 'queue');
+    return;
   }
-  await queueAction('vacation', payload);
-  appendVacationPreview(payload, true);
-  await refreshQueueIndicator();
-  showFeedback('Urlaubsantrag offline gespeichert. Wird bei Verbindung übertragen.', 'info');
-  dispatchSyncStatus('Offline – Urlaubsantrag sicher gespeichert.', 'queue');
+
+  try {
+    const response = await fetchWithTimeout(form.getAttribute('action') || '/vacations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: new URLSearchParams(payload).toString(),
+      credentials: 'same-origin',
+      redirect: 'follow',
+      cache: 'no-store',
+    }, 5000);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    showFeedback('Urlaubsantrag erfolgreich übertragen.', 'success');
+    await syncServerData();
+  } catch (error) {
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
+    setStatusBadge('unreachable');
+    await queueAction('vacation', payload);
+    await appendVacationPreview(payload, true);
+    await refreshQueueIndicator();
+    showFeedback('Server nicht erreichbar. Antrag lokal gespeichert.', 'info');
+    dispatchSyncStatus('Server nicht erreichbar – Antrag lokal gespeichert.', 'unreachable');
+  }
 }
 
 async function handleOfflineSubmission(event) {
@@ -591,6 +752,7 @@ async function handleOfflineSubmission(event) {
 function registerTabHandling() {
   const tabs = Array.from(document.querySelectorAll(TAB_SELECTOR));
   const panels = Array.from(document.querySelectorAll(PANEL_SELECTOR));
+  if (!tabs.length || !panels.length) return;
   const defaultTab = tabs.find((item) => item.classList.contains('is-active'))?.dataset.tab || 'buchung';
   const valid = new Set(tabs.map((item) => item.dataset.tab));
 
@@ -643,38 +805,63 @@ function registerOfflineForms() {
   document.querySelectorAll(FORM_SELECTOR).forEach((form) => form.addEventListener('submit', handleOfflineSubmission));
 }
 
-function handleNetworkStatus() {
-  const online = navigator.onLine;
-  setStatusBadge(online);
-  if (online) {
-    dispatchSyncStatus('Server erreichbar. Synchronisation wird ausgeführt.', 'online');
-    syncServerData();
-    flushOfflineQueue('network-online');
-  } else {
-    dispatchSyncStatus('Keine Verbindung. Du arbeitest offline, Eingaben werden lokal gespeichert.', 'offline');
+function initializeServerStateFromDataset() {
+  const root = document.querySelector(MOBILE_STATE_SELECTOR);
+  if (!root) {
+    initialServerState = buildStateFromEntry(null);
+    mobileState = buildStateFromEntry(null);
+    return;
   }
+
+  const data = root.dataset;
+  const entry = data.stateRunning === 'true' ? {
+    work_date: data.startTimestamp ? data.startTimestamp.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    start_time: data.startLabel ? `${data.startLabel}:00` : '00:00:00',
+    break_started_at: data.stateBreak === 'true' && data.breakLabel ? `${data.breakLabel}:00` : null,
+    company_id: data.stateCompany === 'true' ? 1 : null,
+    company_name: data.companyName || '',
+    is_open: true,
+    total_break_minutes: Number(data.totalBreakMinutes || 0),
+    worked_minutes: 0,
+    break_minutes: Number(data.totalBreakMinutes || 0),
+  } : null;
+
+  initialServerState = buildStateFromEntry(entry);
+  mobileState = cloneState(initialServerState);
+}
+
+async function initializeSyncMeta() {
+  const lastSync = await getRecord(META_STORE, 'lastSyncAt');
+  const localData = await getRecord(META_STORE, 'localDataReady');
+  updateLastSyncLabel(lastSync?.value || null);
+  updateLocalDataBadge(!!localData?.value);
+  await refreshQueueIndicator();
 }
 
 function setupConnectionHandlers() {
-  window.addEventListener('online', handleNetworkStatus);
-  window.addEventListener('offline', handleNetworkStatus);
+  window.addEventListener('online', () => performReconnectSync('online-event'));
+  window.addEventListener('offline', async () => {
+    setStatusBadge('offline');
+    dispatchSyncStatus('Keine Verbindung. Eingaben werden lokal gespeichert.', 'offline');
+    await checkServerReachability(true);
+  });
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
   registerTabHandling();
   registerModalHandling();
-  initializeMobileState();
   registerOfflineForms();
   setupConnectionHandlers();
+  initializeServerStateFromDataset();
   await initializeSyncMeta();
   await hydrateCompaniesFromCache();
-  setStatusBadge(navigator.onLine);
-  if (navigator.onLine) {
-    const synced = await syncServerData();
-    if (synced) {
-      showFeedback(`Lokale Daten der letzten ${Math.round(MONTH_WINDOW_DAYS / 30)} Monate aktualisiert.`, 'success');
-    }
-    await flushOfflineQueue('app-start');
+  await recomputeEffectiveState();
+
+  const status = await checkServerReachability(true);
+  if (status === 'online') {
+    await performReconnectSync('startup');
+  } else if (status === 'unreachable') {
+    dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar. Lokale Daten werden genutzt.', 'unreachable');
   } else {
     dispatchSyncStatus('Offline-Modus aktiv. Lokale Daten werden verwendet.', 'offline');
   }

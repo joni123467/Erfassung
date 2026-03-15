@@ -1139,6 +1139,14 @@ def _serialize_mobile_vacation(vacation: models.VacationRequest) -> dict[str, ob
     }
 
 
+@app.get("/api/ping")
+def api_ping(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
+    return JSONResponse({"status": "ok", "version": APP_VERSION, "timestamp": datetime.utcnow().isoformat()})
+
+
 @app.get("/mobile/sync-data")
 def mobile_sync_data(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)

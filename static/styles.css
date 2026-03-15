@@ -1899,6 +1899,17 @@ tr.status-rejected td {
     color: var(--danger);
 }
 
+
+.mobile-badge[data-state="unreachable"] {
+    background: rgba(255, 193, 7, 0.2);
+    color: #b57a00;
+}
+
+.mobile-badge[data-state="syncing"] {
+    background: rgba(29, 126, 208, 0.18);
+    color: var(--brand);
+}
+
 #mobile-local-data[data-state="ready"] {
     color: var(--success);
 }
