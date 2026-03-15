@@ -62,6 +62,16 @@ async function refreshInBackground(request, timeoutMs) {
   }
 }
 
+async function fetchWithTimeout(request, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(request, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function networkFirstForNavigation(request) {
   try {
     const response = await fetchWithTimeout(request, NAVIGATION_TIMEOUT_MS);
