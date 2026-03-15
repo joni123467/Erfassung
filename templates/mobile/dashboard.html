@@ -291,8 +291,8 @@
                                         {% if entry.total_break_minutes %}
                                             <span>Pausen {{ entry.total_break_minutes|format_minutes }} Std</span>
                                         {% endif %}
-                                        {% if entry.company %}
-                                            <span>{{ entry.company.name }}</span>
+                                        {% if entry.company or entry.deleted_company_name %}
+                                            <span>{{ entry.company_display_name }}</span>
                                         {% endif %}
                                         {% if entry.notes %}
                                             <span class="mobile-entry__notes">{{ entry.notes }}</span>

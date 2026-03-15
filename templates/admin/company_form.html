@@ -23,7 +23,7 @@
         </div>
     </form>
     {% if is_edit %}
-        <form method="post" action="/admin/companies/{{ company.id }}/delete" class="danger-zone" onsubmit="return confirm('Firma wirklich löschen? Es dürfen keine Buchungen mehr zugeordnet sein.');">
+        <form method="post" action="/admin/companies/{{ company.id }}/delete" class="danger-zone" onsubmit="return confirm('Firma wirklich löschen? Vorhandene Buchungen werden als gelöscht markiert und bleiben sichtbar.');">
             <button type="submit" class="button danger small">Firma löschen</button>
         </form>
     {% endif %}
