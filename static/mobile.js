@@ -851,25 +851,31 @@ function registerTabHandling() {
 function registerModalHandling() {
   const modal = document.getElementById(MODAL_ID);
   if (!modal) return;
+  const openers = Array.from(document.querySelectorAll(`[data-open="${MODAL_ID}"]`));
+  const closers = Array.from(modal.querySelectorAll('[data-close]'));
+
   const setVisible = (visible) => {
     modal.classList.toggle('is-visible', visible);
     modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
     document.body.classList.toggle('modal-open', visible);
   };
+
   modalController = { open: () => setVisible(true), close: () => setVisible(false) };
-  document.addEventListener('click', (event) => {
-    const target = event.target instanceof Element ? event.target.closest(`[data-open="${MODAL_ID}"]`) : null;
-    if (target) {
+
+  openers.forEach((opener) => {
+    opener.addEventListener('click', (event) => {
       event.preventDefault();
       setVisible(true);
-      return;
-    }
-    const closer = event.target instanceof Element ? event.target.closest('[data-close]') : null;
-    if (closer && modal.contains(closer)) {
+    });
+  });
+
+  closers.forEach((closer) => {
+    closer.addEventListener('click', (event) => {
       event.preventDefault();
       setVisible(false);
-    }
+    });
   });
+
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && modal.classList.contains('is-visible')) setVisible(false);
   });

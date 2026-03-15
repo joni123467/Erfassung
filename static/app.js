@@ -1,7 +1,7 @@
 window.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker
-      .register('/static/sw.js?v=0.1.5', { scope: '/' })
+      .register('/static/sw.js?v=0.1.5-r3', { scope: '/' })
       .catch((error) => console.warn('Service Worker Registrierung fehlgeschlagen', error));
   }
 });
