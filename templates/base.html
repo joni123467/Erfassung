@@ -54,15 +54,6 @@
 </header>
 {% endif %}
 <main class="page">
-    {% if not mobile %}
-    <div class="offline-banner" id="offline-banner" role="status" aria-live="polite" hidden>
-        <span class="offline-banner__icon" aria-hidden="true">📡</span>
-        <span class="offline-banner__text">
-            <strong>Verbindungsstatus</strong>
-            <span id="offline-sync-status">Offline – Aktionen werden zwischengespeichert.</span>
-        </span>
-    </div>
-    {% endif %}
     {% if message %}
         <div class="alert alert-success">{{ message }}</div>
     {% endif %}

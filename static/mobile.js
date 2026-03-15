@@ -195,7 +195,7 @@ function formatDuration(ms) {
   return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
-function validatePunchActionAgainstState(state, action) {
+function validatePunchActionAgainstState(state, action, payload = {}) {
   const isWorking = !!state?.isWorking;
   const onBreak = !!state?.onBreak;
   const hasCompany = !!state?.hasCompany;
@@ -205,7 +205,11 @@ function validatePunchActionAgainstState(state, action) {
     return { allowed: true };
   }
   if (action === 'start_company') {
-    if (isWorking && hasCompany) return { allowed: false, duplicate: true, reason: 'Auftrag läuft bereits' };
+    const requestedName = ((payload.new_company_name || payload.company_name || '') + '').trim();
+    const currentName = ((state?.companyName || '') + '').trim();
+    if (isWorking && hasCompany && requestedName && currentName && requestedName === currentName) {
+      return { allowed: false, duplicate: true, reason: 'Auftrag läuft bereits' };
+    }
     return { allowed: true };
   }
   if (action === 'end_work') {
@@ -638,7 +642,7 @@ async function flushOfflineQueue() {
   for (const entry of pending) {
     if (entry.type === 'punch') {
       const action = entry.payload?.action;
-      const validation = validatePunchActionAgainstState(projectedState, action);
+      const validation = validatePunchActionAgainstState(projectedState, action, entry.payload || {});
       if (!validation.allowed) {
         await deleteRecord(ACTION_STORE, entry.clientActionId);
         skipped += 1;
@@ -713,7 +717,7 @@ async function processPunchSubmission(form, payload) {
   }
 
   await recomputeEffectiveState();
-  const validation = validatePunchActionAgainstState(mobileState || buildStateFromEntry(null), payload.action);
+  const validation = validatePunchActionAgainstState(mobileState || buildStateFromEntry(null), payload.action, payload);
   if (!validation.allowed) {
     showFeedback(`Aktion übersprungen: ${validation.reason}.`, 'info');
     dispatchSyncStatus('Aktion war bereits berücksichtigt und wurde nicht erneut gespeichert.', 'queue');
