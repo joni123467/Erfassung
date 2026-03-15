@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mobile Erfassung (Offline)</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="is-mobile">
+  <main class="page">
+    <section class="mobile-dashboard" data-mobile-state="true" data-state-running="false" data-state-break="false" data-state-company="false" data-total-break-minutes="0" data-worked-label="0:00">
+      <header class="mobile-dashboard__header">
+        <div>
+          <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
+          <p class="mobile-dashboard__date">Offline-Modus</p>
+        </div>
+      </header>
+      <aside class="mobile-queue mobile-queue--status" aria-live="polite">
+        <div class="mobile-queue__line">
+          <span class="mobile-badge" id="mobile-server-badge" data-state="offline">Offline</span>
+          <span id="mobile-local-data" data-state="empty">Lokale Daten werden geladen …</span>
+        </div>
+        <div class="mobile-queue__line">
+          <span id="mobile-pending-actions">Offline-Aktionen werden vorbereitet …</span>
+        </div>
+        <div class="mobile-queue__line mobile-queue__line--muted">
+          <span>Zuletzt synchronisiert:</span>
+          <strong id="mobile-last-sync">Noch keine Synchronisation</strong>
+        </div>
+      </aside>
+      <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite">
+        Die App wurde offline gestartet. Sobald du wieder online bist, werden Daten automatisch synchronisiert.
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/static/mobile.js"></script>
+</body>
+</html>

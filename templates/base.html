@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Erfassung{% endblock %}</title>
-    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
-    <link rel="apple-touch-icon" href="/static/icons/icon.svg">
-    <link rel="manifest" href="/static/manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg?v={{ app_version }}">
+    <link rel="apple-touch-icon" href="/static/icons/icon.svg?v={{ app_version }}">
+    <link rel="manifest" href="/static/manifest.webmanifest?v={{ app_version }}">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="theme-color" content="#1d7ed0">
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}">
 </head>
 <body{% if mobile %} class="is-mobile"{% endif %}>
 {% if not mobile %}
@@ -54,15 +54,6 @@
 </header>
 {% endif %}
 <main class="page">
-    {% if not mobile %}
-    <div class="offline-banner" id="offline-banner" role="status" aria-live="polite" hidden>
-        <span class="offline-banner__icon" aria-hidden="true">📡</span>
-        <span class="offline-banner__text">
-            <strong>Verbindungsstatus</strong>
-            <span id="offline-sync-status">Offline – Aktionen werden zwischengespeichert.</span>
-        </span>
-    </div>
-    {% endif %}
     {% if message %}
         <div class="alert alert-success">{{ message }}</div>
     {% endif %}
@@ -84,7 +75,7 @@
     <p>Erfassung v{{ app_version }} &copy; {{ now().year }}</p>
 </footer>
 {% endif %}
-<script type="module" src="/static/app.js"></script>
+<script type="module" src="/static/app.js?v={{ app_version }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

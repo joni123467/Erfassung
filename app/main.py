@@ -15,7 +15,7 @@ try:  # FastAPI <=0.75 did not re-export BackgroundTasks
     from fastapi import BackgroundTasks
 except ImportError:  # pragma: no cover - fallback for older FastAPI releases
     from starlette.background import BackgroundTasks
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
@@ -253,6 +253,8 @@ SELECT id, name, date, region, created_at FROM holidays
                 )
                 connection.execute(text("DROP TABLE holidays"))
                 connection.execute(text("ALTER TABLE holidays_migrated RENAME TO holidays"))
+        if "mobile_sync_actions" not in table_names:
+            models.Base.metadata.tables["mobile_sync_actions"].create(bind=connection)
         if "vacation_requests" in table_names:
             columns = {column["name"] for column in inspector.get_columns("vacation_requests")}
             if "use_overtime" not in columns:
@@ -1101,6 +1103,105 @@ def submit_time_entry(
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
+def _mobile_sync_cutoff() -> date:
+    return date.today() - timedelta(days=183)
+
+
+def _serialize_mobile_entry(entry: models.TimeEntry) -> dict[str, object]:
+    return {
+        "id": entry.id,
+        "work_date": entry.work_date.isoformat(),
+        "start_time": entry.start_time.strftime("%H:%M:%S") if entry.start_time else "",
+        "end_time": entry.end_time.strftime("%H:%M:%S") if entry.end_time else "",
+        "break_minutes": entry.break_minutes,
+        "break_started_at": entry.break_started_at.strftime("%H:%M:%S") if entry.break_started_at else None,
+        "is_open": bool(entry.is_open),
+        "notes": entry.notes or "",
+        "status": entry.status,
+        "company_id": entry.company_id,
+        "company_name": entry.company.name if entry.company else "",
+        "worked_minutes": entry.worked_minutes,
+        "total_break_minutes": entry.total_break_minutes,
+        "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
+    }
+
+
+def _serialize_mobile_vacation(vacation: models.VacationRequest) -> dict[str, object]:
+    return {
+        "id": vacation.id,
+        "start_date": vacation.start_date.isoformat(),
+        "end_date": vacation.end_date.isoformat(),
+        "status": vacation.status,
+        "comment": vacation.comment or "",
+        "use_overtime": bool(vacation.use_overtime),
+        "overtime_minutes": vacation.overtime_minutes,
+        "created_at": vacation.created_at.isoformat() if vacation.created_at else None,
+    }
+
+
+@app.get("/api/ping")
+def api_ping(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
+    return JSONResponse({"status": "ok", "version": APP_VERSION, "timestamp": datetime.utcnow().isoformat()})
+
+
+@app.get("/mobile/sync-data")
+def mobile_sync_data(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
+
+    cutoff = _mobile_sync_cutoff()
+    entries = crud.get_mobile_history_time_entries(db, user.id, cutoff)
+    vacations = crud.get_mobile_history_vacations(db, user.id, cutoff)
+    companies = crud.get_companies(db)
+    active_entry = crud.get_open_time_entry(db, user.id)
+    metrics = services.calculate_dashboard_metrics(db, user.id, date.today().replace(day=1))
+
+    payload = {
+        "version": APP_VERSION,
+        "generated_at": datetime.utcnow().isoformat(),
+        "period": {
+            "from": cutoff.isoformat(),
+            "to": date.today().isoformat(),
+            "days": 183,
+        },
+        "user": {
+            "id": user.id,
+            "full_name": user.full_name,
+            "group": user.group.name if user.group else "",
+            "daily_target_minutes": int(round(user.daily_target_minutes or 0)),
+            "weekly_target_minutes": int(round(user.weekly_target_minutes or 0)),
+        },
+        "companies": [
+            {
+                "id": company.id,
+                "name": company.name,
+                "description": company.description or "",
+            }
+            for company in companies
+        ],
+        "entries": [_serialize_mobile_entry(entry) for entry in entries],
+        "vacations": [_serialize_mobile_vacation(vacation) for vacation in vacations],
+        "active_entry": _serialize_mobile_entry(active_entry) if active_entry else None,
+        "metrics": {
+            "worked_minutes": metrics.worked_minutes,
+            "target_minutes": metrics.target_minutes,
+            "balance_minutes": metrics.balance_minutes,
+            "vacation_summary": {
+                "total_days": metrics.vacation_summary.total_days,
+                "used_days": metrics.vacation_summary.used_days,
+                "planned_days": metrics.vacation_summary.planned_days,
+                "remaining_days": metrics.vacation_summary.remaining_days,
+                "carryover_days": metrics.vacation_summary.carryover_days,
+            },
+        },
+    }
+    return JSONResponse(payload)
+
+
 @app.post("/punch")
 def punch_action(
     request: Request,
@@ -1109,23 +1210,53 @@ def punch_action(
     new_company_name: Optional[str] = Form(None),
     notes: str = Form(""),
     next_url: str = Form("/dashboard"),
+    client_action_id: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if client_action_id:
+        existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
+        if existing_action:
+            redirect = _build_redirect(_sanitize_next(next_url), msg="Aktion bereits synchronisiert")
+            return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     target = _sanitize_next(next_url)
     active_entry = crud.get_open_time_entry(db, user.id)
     now = datetime.now()
     message = ""
     error = ""
 
+    def _safe_start_running_entry(*, company_id: Optional[int] = None, notes_value: str = "") -> bool:
+        nonlocal error
+        try:
+            crud.start_running_entry(
+                db,
+                user_id=user.id,
+                started_at=now,
+                company_id=company_id,
+                notes=notes_value,
+            )
+            return True
+        except ValueError as exc:
+            if str(exc) == "OVERLAPPING_TIME_ENTRY":
+                overlapping_active = crud.get_open_time_entry(db, user.id)
+                if overlapping_active:
+                    return False
+            raise
+
     if action == "start_work":
         if active_entry:
-            error = "Es läuft bereits eine Arbeitszeit."
+            if client_action_id:
+                message = "Arbeitszeit läuft bereits."
+            else:
+                error = "Es läuft bereits eine Arbeitszeit."
         else:
-            crud.start_running_entry(db, user_id=user.id, started_at=now, notes=notes.strip())
-            message = "Arbeitszeit gestartet."
+            created = _safe_start_running_entry(notes_value=notes.strip())
+            if created:
+                message = "Arbeitszeit gestartet."
+            else:
+                message = "Arbeitszeit läuft bereits."
     elif action == "start_company":
         new_company_value = (new_company_name or "").strip()
         target_company = None
@@ -1161,19 +1292,21 @@ def punch_action(
                         error = "Firma wurde nicht gefunden."
         if not error and target_company:
             if active_entry and active_entry.company_id == target_company.id:
-                error = "Dieser Auftrag läuft bereits."
+                if client_action_id:
+                    message = "Dieser Auftrag läuft bereits."
+                else:
+                    error = "Dieser Auftrag läuft bereits."
             else:
                 previous_company = active_entry.company if active_entry else None
                 if active_entry:
                     crud.finish_running_entry(db, active_entry, now)
-                crud.start_running_entry(
-                    db,
-                    user_id=user.id,
-                    started_at=now,
+                created = _safe_start_running_entry(
                     company_id=target_company.id,
-                    notes=notes.strip(),
+                    notes_value=notes.strip(),
                 )
-                if created_company:
+                if not created:
+                    message = f"Auftrag bei {target_company.name} läuft bereits."
+                elif created_company:
                     message = f"Neue Firma {target_company.name} angelegt und Auftrag gestartet."
                 elif previous_company and previous_company.id != target_company.id:
                     message = f"Auftrag zu {target_company.name} gewechselt."
@@ -1190,13 +1323,11 @@ def punch_action(
             error = "Es läuft kein Auftrag."
         else:
             crud.finish_running_entry(db, active_entry, now)
-            crud.start_running_entry(
-                db,
-                user_id=user.id,
-                started_at=now,
-                notes=notes.strip(),
-            )
-            message = "Auftrag beendet. Arbeitszeit läuft weiter."
+            created = _safe_start_running_entry(notes_value=notes.strip())
+            if created:
+                message = "Auftrag beendet. Arbeitszeit läuft weiter."
+            else:
+                message = "Auftrag beendet. Arbeitszeit läuft bereits."
     elif action == "start_break":
         if not active_entry:
             error = "Keine laufende Arbeitszeit vorhanden."
@@ -1215,6 +1346,16 @@ def punch_action(
             message = "Pause beendet."
     else:
         error = "Unbekannte Aktion."
+
+    if message and not error and client_action_id:
+        existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
+        if not existing_action:
+            crud.create_mobile_sync_action(
+                db,
+                user_id=user.id,
+                client_action_id=client_action_id,
+                action=action,
+            )
 
     params = {}
     if message and not error:
@@ -1242,11 +1383,19 @@ def submit_vacation(
     end_date: date = Form(...),
     comment: str = Form(""),
     use_overtime: Optional[str] = Form(None),
+    client_action_id: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if client_action_id:
+        existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
+        if existing_action:
+            return RedirectResponse(
+                url="/records/vacations?msg=Aktion+bereits+synchronisiert",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
     if end_date < start_date:
         return RedirectResponse(
             url="/records/vacations?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen",
@@ -1277,6 +1426,15 @@ def submit_vacation(
             url=redirect,
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    if client_action_id:
+        existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
+        if not existing_action:
+            crud.create_mobile_sync_action(
+                db,
+                user_id=user.id,
+                client_action_id=client_action_id,
+                action="create_vacation",
+            )
     return RedirectResponse(
         url="/records/vacations?msg=Urlaubsantrag+erstellt",
         status_code=status.HTTP_303_SEE_OTHER,
