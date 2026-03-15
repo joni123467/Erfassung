@@ -119,6 +119,9 @@
                     </form>
                 </div>
                 <div class="mobile-action-grid" data-state="active" {% if not active_entry %}hidden{% endif %}>
+                    {% if companies or can_create_companies %}
+                        <button type="button" class="mobile-button" data-open="mobile-order-modal" data-toggle-disabled="true">Auftrag starten</button>
+                    {% endif %}
                     <form method="post" action="/punch" data-offline="punch" data-state="break-idle">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="start_break">
