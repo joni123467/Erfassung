@@ -1884,6 +1884,24 @@ tr.status-rejected td {
     color: #b57a00;
 }
 
+
+.mobile-badge--mode {
+    background: rgba(29, 126, 208, 0.15);
+    color: var(--brand);
+}
+
+.company-search-empty {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.admin-user-qr {
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+}
+
 .mobile-badge--queued {
     background: rgba(255, 193, 7, 0.15);
     color: #b57a00;

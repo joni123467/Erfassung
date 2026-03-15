@@ -24,6 +24,7 @@
         </div>
         <p class="mobile-dashboard__status" data-state="active" {% if not active_entry %}hidden{% endif %}>
             <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
+            <span class="mobile-badge mobile-badge--mode" data-field="booking-mode">{{ 'Auftrag läuft' if active_entry and active_entry.company_id is not none else 'Nur Arbeitszeit' }}</span>
             seit <span data-field="header-start">{{ active_entry.start_time.strftime('%H:%M') if active_entry else '' }}</span> Uhr
         </p>
         <p class="mobile-dashboard__status mobile-dashboard__status--idle" data-state="idle" {% if active_entry %}hidden{% endif %}>
@@ -144,8 +145,12 @@
                             <input type="hidden" name="action" value="start_company">
                             {% if companies %}
                                 <label>
+                                    Firma suchen
+                                    <input type="search" placeholder="Firma suchen …" autocomplete="off" data-company-search-target="mobile-order-company-select">
+                                </label>
+                                <label>
                                     Firma auswählen
-                                    <select name="company_id">
+                                    <select name="company_id" id="mobile-order-company-select" data-company-searchable="true">
                                         <option value="">Firma wählen</option>
                                         {% for company in companies %}
                                             <option value="{{ company.id }}">{{ company.name }}</option>
