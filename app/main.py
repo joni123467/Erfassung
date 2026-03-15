@@ -105,6 +105,24 @@ def _row_get(row: object, key: str, fallback_index: int | None = None):
 logger = logging.getLogger(__name__)
 
 
+def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
+    """Return the user referenced by the active session, if any."""
+
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        return None
+    try:
+        parsed_user_id = int(user_id)
+    except (TypeError, ValueError):
+        request.session.pop("user_id", None)
+        return None
+
+    user = crud.get_user(db, parsed_user_id)
+    if user is None:
+        request.session.pop("user_id", None)
+    return user
+
+
 def ensure_schema() -> None:
     with database.engine.begin() as connection:
         inspector = inspect(connection)
