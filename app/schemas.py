@@ -85,30 +85,31 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pin_code: str
+    password: str
 
-    @field_validator("pin_code")
+    @field_validator("password")
     @classmethod
-    def validate_pin(cls, value: str) -> str:
-        if len(value) != 4 or not value.isdigit():
-            raise ValueError("PIN muss aus genau 4 Ziffern bestehen")
+    def validate_password(cls, value: str) -> str:
+        if len(value) < 10:
+            raise ValueError("Kennwort muss mindestens 10 Zeichen lang sein")
         return value
 
 
 class UserUpdate(UserBase):
-    pin_code: str
+    password: Optional[str] = None
 
-    @field_validator("pin_code")
+    @field_validator("password")
     @classmethod
-    def validate_pin(cls, value: str) -> str:
-        if len(value) != 4 or not value.isdigit():
-            raise ValueError("PIN muss aus genau 4 Ziffern bestehen")
+    def validate_password(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value:
+            return None
+        if len(value) < 10:
+            raise ValueError("Kennwort muss mindestens 10 Zeichen lang sein")
         return value
 
 
 class User(UserBase):
     id: int
-    pin_code: str
     group: Optional[Group]
     model_config = ConfigDict(from_attributes=True)
     standard_daily_minutes: int = 0

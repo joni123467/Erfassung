@@ -3,10 +3,12 @@
 {% block content %}
 <section class="login-card">
     <h1>Anmelden</h1>
-    <p>Bitte geben Sie Ihren persönlichen 4-stelligen PIN ein.</p>
+    <p>Bitte melden Sie sich mit Benutzername und Kennwort an.</p>
     <form method="post" action="/login" class="login-form">
-        <label for="pin_code">PIN</label>
-        <input id="pin_code" type="password" name="pin_code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required autofocus>
+        <label for="username">Benutzername</label>
+        <input id="username" type="text" name="username" required autofocus>
+        <label for="password">Kennwort</label>
+        <input id="password" type="password" name="password" autocomplete="current-password" required>
         <button type="submit" class="button primary full-width">Anmelden</button>
     </form>
 </section>
