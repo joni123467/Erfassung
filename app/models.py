@@ -221,6 +221,19 @@ class Holiday(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MobileSyncAction(Base):
+    __tablename__ = "mobile_sync_actions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_action_id", name="uq_mobile_sync_actions_user_client"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    client_action_id = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 def default_work_end(start: time, minutes: int) -> time:
     start_dt = datetime.combine(date.today(), start)
     end_dt = start_dt + timedelta(minutes=minutes)

@@ -636,3 +636,56 @@ def delete_company(db: Session, company_id: int) -> bool:
     db.delete(db_company)
     db.commit()
     return True
+
+
+def get_mobile_sync_action(
+    db: Session, user_id: int, client_action_id: str
+) -> Optional[models.MobileSyncAction]:
+    return (
+        db.query(models.MobileSyncAction)
+        .filter(models.MobileSyncAction.user_id == user_id)
+        .filter(models.MobileSyncAction.client_action_id == client_action_id)
+        .first()
+    )
+
+
+def create_mobile_sync_action(
+    db: Session,
+    *,
+    user_id: int,
+    client_action_id: str,
+    action: str,
+) -> models.MobileSyncAction:
+    db_action = models.MobileSyncAction(
+        user_id=user_id,
+        client_action_id=client_action_id,
+        action=action,
+    )
+    db.add(db_action)
+    db.commit()
+    db.refresh(db_action)
+    return db_action
+
+
+def get_mobile_history_time_entries(
+    db: Session, user_id: int, since_date: date
+) -> List[models.TimeEntry]:
+    return (
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.user_id == user_id)
+        .filter(models.TimeEntry.work_date >= since_date)
+        .order_by(models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc())
+        .all()
+    )
+
+
+def get_mobile_history_vacations(
+    db: Session, user_id: int, since_date: date
+) -> List[models.VacationRequest]:
+    return (
+        db.query(models.VacationRequest)
+        .filter(models.VacationRequest.user_id == user_id)
+        .filter(models.VacationRequest.end_date >= since_date)
+        .order_by(models.VacationRequest.start_date.desc())
+        .all()
+    )

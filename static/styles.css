@@ -1817,10 +1817,8 @@ tr.status-rejected td {
 }
 
 .mobile-queue {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
+    display: grid;
+    gap: 0.4rem;
     background: rgba(29, 126, 208, 0.12);
     color: var(--brand);
     border-radius: 14px;
@@ -1828,9 +1826,16 @@ tr.status-rejected td {
     box-shadow: inset 0 0 0 1px rgba(29, 126, 208, 0.1);
 }
 
-.mobile-queue__count {
-    font-variant-numeric: tabular-nums;
-    font-size: 0.85rem;
+.mobile-queue__line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.86rem;
+}
+
+.mobile-queue__line--muted {
+    color: var(--text-muted);
 }
 
 .mobile-feedback {
@@ -1882,6 +1887,24 @@ tr.status-rejected td {
 .mobile-badge--queued {
     background: rgba(255, 193, 7, 0.15);
     color: #b57a00;
+}
+
+.mobile-badge[data-state="online"] {
+    background: rgba(46, 125, 50, 0.15);
+    color: var(--success);
+}
+
+.mobile-badge[data-state="offline"] {
+    background: rgba(214, 40, 57, 0.15);
+    color: var(--danger);
+}
+
+#mobile-local-data[data-state="ready"] {
+    color: var(--success);
+}
+
+#mobile-local-data[data-state="empty"] {
+    color: var(--text-muted);
 }
 
 .mobile-tabs {

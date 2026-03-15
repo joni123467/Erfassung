@@ -59,7 +59,7 @@ window.addEventListener('DOMContentLoaded', () => {
   handleOnlineStatusChange();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker
-      .register('/static/sw.js', { scope: '/' })
+      .register('/static/sw.js?v=0.1.5', { scope: '/' })
       .catch((error) => console.warn('Service Worker Registrierung fehlgeschlagen', error));
   }
 });
