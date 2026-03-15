@@ -5,7 +5,6 @@ const NAVIGATION_TIMEOUT_MS = 1500;
 const API_TIMEOUT_MS = 4000;
 const STATIC_TIMEOUT_MS = 2500;
 const CORE_ASSETS = [
-  MOBILE_SHELL,
   OFFLINE_SHELL,
   '/static/styles.css',
   '/static/mobile.js',
