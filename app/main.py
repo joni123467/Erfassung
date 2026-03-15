@@ -144,6 +144,9 @@ logger = logging.getLogger(__name__)
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
     """Return the user referenced by the active session, if any."""
 
+    if "session" not in request.scope:
+        return None
+
     user_id = request.session.get("user_id")
     if user_id is None:
         return None
@@ -816,7 +819,7 @@ def ensure_seed_data():
 
 @app.middleware("http")
 async def db_session_middleware(request: Request, call_next):
-    if _should_force_password_change(request.url.path):
+    if "session" in request.scope and _should_force_password_change(request.url.path):
         db = database.SessionLocal()
         try:
             user = get_logged_in_user(request, db)
