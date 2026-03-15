@@ -15,7 +15,7 @@ try:  # FastAPI <=0.75 did not re-export BackgroundTasks
     from fastapi import BackgroundTasks
 except ImportError:  # pragma: no cover - fallback for older FastAPI releases
     from starlette.background import BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
@@ -43,6 +43,14 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 templates.env.globals["app_version"] = APP_VERSION
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    response = FileResponse("static/sw.js", media_type="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 def _parse_overtime_limit_hours(value: Optional[str]) -> Optional[int]:
     if value is None:
