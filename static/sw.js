@@ -1,8 +1,9 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.1.5-r4';
+const CACHE_VERSION = 'erfassung-mobile-v0.1.6-r1';
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
 const NAVIGATION_TIMEOUT_MS = 1500;
 const API_TIMEOUT_MS = 4000;
+const STATIC_TIMEOUT_MS = 2500;
 const CORE_ASSETS = [
   MOBILE_SHELL,
   OFFLINE_SHELL,
@@ -26,12 +27,22 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-async function cacheFirst(request) {
+async function fetchWithTimeout(request, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(request, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function cacheFirst(request, timeoutMs = 0) {
   const cached = await caches.match(request, { ignoreSearch: true });
   if (cached) {
     return cached;
   }
-  const response = await fetch(request);
+  const response = timeoutMs > 0 ? await fetchWithTimeout(request, timeoutMs) : await fetch(request);
   if (response && response.ok) {
     const cache = await caches.open(CACHE_VERSION);
     cache.put(request, response.clone());
@@ -39,18 +50,16 @@ async function cacheFirst(request) {
   return response;
 }
 
-async function staleWhileRevalidate(request) {
-  const cache = await caches.open(CACHE_VERSION);
-  const cached = await cache.match(request, { ignoreSearch: true });
-  const networkPromise = fetch(request)
-    .then((response) => {
-      if (response && response.ok) {
-        cache.put(request, response.clone());
-      }
-      return response;
-    })
-    .catch(() => null);
-  return cached || networkPromise || Response.error();
+async function refreshInBackground(request, timeoutMs) {
+  try {
+    const response = await fetchWithTimeout(request, timeoutMs);
+    if (response && response.ok) {
+      const cache = await caches.open(CACHE_VERSION);
+      await cache.put(request, response.clone());
+    }
+  } catch (error) {
+    // ignore refresh failures
+  }
 }
 
 async function fetchWithTimeout(request, timeoutMs) {
@@ -102,7 +111,8 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.pathname.startsWith('/static/')) {
-    event.respondWith(staleWhileRevalidate(request));
+    event.respondWith(cacheFirst(request, STATIC_TIMEOUT_MS).catch(() => Response.error()));
+    event.waitUntil(refreshInBackground(request, STATIC_TIMEOUT_MS));
     return;
   }
 
@@ -113,5 +123,5 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(cacheFirst(request));
+  event.respondWith(cacheFirst(request, NAVIGATION_TIMEOUT_MS));
 });
