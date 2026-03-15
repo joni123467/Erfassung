@@ -1616,6 +1616,15 @@ tr.status-rejected td {
     background: rgba(214, 40, 57, 0.08);
 }
 
+tr.company-deleted td {
+    background: rgba(255, 152, 0, 0.12);
+}
+
+.mobile-entry.is-deleted-company {
+    border-left: 3px solid #ff9800;
+    padding-left: 0.75rem;
+}
+
 .highlight {
     box-shadow: 0 0 0 3px rgba(31, 60, 136, 0.15);
 }

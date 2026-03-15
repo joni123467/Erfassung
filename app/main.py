@@ -1579,9 +1579,9 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
         user, vacations, start_date, end_date
     )
     effective_minutes = total_work_minutes + vacation_minutes
-    balance = effective_minutes - target_minutes
-    total_overtime_minutes = max(balance, 0)
-    total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
+    balance_minutes = effective_minutes - target_minutes
+    total_overtime_minutes = max(balance_minutes, 0)
+    total_undertime_minutes = max(-balance_minutes, 0)
     vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
 
     company_totals_all = _aggregate_company_totals(approved_month_entries)
@@ -1603,6 +1603,7 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
             "total_overtime_minutes": total_overtime_minutes,
             "total_undertime_minutes": total_undertime_minutes,
             "target_minutes": target_minutes,
+            "balance_minutes": balance_minutes,
             "overtime_taken_minutes": overtime_taken_minutes,
             "company_totals_all": company_totals_all,
             "company_totals_filtered": company_totals_filtered,
@@ -1676,9 +1677,9 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         user, vacations, start_date, end_date
     )
     effective_minutes = total_work_minutes + vacation_minutes
-    balance = effective_minutes - target_minutes
-    total_overtime_minutes = max(balance, 0)
-    total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
+    balance_minutes = effective_minutes - target_minutes
+    total_overtime_minutes = max(balance_minutes, 0)
+    total_undertime_minutes = max(-balance_minutes, 0)
     vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
     company_totals_all = _aggregate_company_totals(approved_month_entries)
     overtime_limit_minutes = int(user.monthly_overtime_limit_minutes or 0)

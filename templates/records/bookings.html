@@ -31,7 +31,7 @@
         <div class="dashboard-summary-list__item dashboard-summary-list__item--diff {% if total_overtime_minutes >= total_undertime_minutes %}is-positive{% else %}is-negative{% endif %}">
             <dt>Saldo</dt>
             <dd>
-                {% if total_overtime_minutes %}+{{ total_overtime_minutes|format_minutes }} Std{% elif total_undertime_minutes %}-{{ total_undertime_minutes|format_minutes }} Std{% else %}Ausgeglichen{% endif %}
+                {% if balance_minutes > 0 %}+{{ balance_minutes|format_minutes }} Std{% elif balance_minutes < 0 %}-{{ (-balance_minutes)|format_minutes }} Std{% else %}Ausgeglichen{% endif %}
             </dd>
         </div>
         {% if user.time_account_enabled or user.overtime_vacation_enabled %}
@@ -108,7 +108,7 @@
             </thead>
             <tbody>
             {% for entry in entries %}
-                <tr class="status-{{ entry.status }}">
+                <tr class="status-{{ entry.status }}{% if entry.deleted_company_name and not entry.company %} company-deleted{% endif %}">
                     <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
                     <td>{{ entry.company_display_name }}</td>
                     <td>{{ entry.start_time.strftime('%H:%M') }}</td>

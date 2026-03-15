@@ -22,7 +22,7 @@
             </thead>
             <tbody>
             {% for entry in pending_entries %}
-                <tr>
+                <tr{% if entry.deleted_company_name and not entry.company %} class="company-deleted"{% endif %}>
                     <td>{{ entry.user.full_name }}</td>
                     <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
                     <td>{{ entry.start_time.strftime('%H:%M') }} – {{ entry.end_time.strftime('%H:%M') }}</td>

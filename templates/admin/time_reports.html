@@ -242,7 +242,7 @@
             <tbody>
             {% if entries_sorted %}
                 {% for entry in entries_sorted %}
-                    <tr class="status-{{ entry.status }}">
+                    <tr class="status-{{ entry.status }}{% if entry.deleted_company_name and not entry.company %} company-deleted{% endif %}">
                         <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
                         <td>{{ entry.user.full_name if entry.user else '–' }}</td>
                         <td>{{ entry.company_display_name }}</td>
