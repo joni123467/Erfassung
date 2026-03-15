@@ -27,10 +27,27 @@
                             Email
                             <input type="email" name="email" value="{{ form_user.email if is_edit else '' }}" required>
                         </label>
-                        <label>
-                            Login-PIN
-                            <input type="text" name="pin_code" value="{{ form_user.pin_code if is_edit else '' }}" pattern="\d{4}" maxlength="4" required>
-                        </label>
+                        {% if is_edit %}
+                            <label>
+                                Neues Kennwort (optional)
+                                <input type="password" name="reset_password" autocomplete="new-password" placeholder="Nur ausfüllen zum Zurücksetzen">
+                                <span class="form-hint">Mindestens 10 Zeichen inkl. Groß-/Kleinbuchstaben, Zahl und Sonderzeichen.</span>
+                            </label>
+                            <label>
+                                Neues Kennwort wiederholen
+                                <input type="password" name="reset_password_confirm" autocomplete="new-password" placeholder="Nur ausfüllen zum Zurücksetzen">
+                            </label>
+                        {% else %}
+                            <label>
+                                Kennwort
+                                <input type="password" name="password" autocomplete="new-password" required>
+                                <span class="form-hint">Mindestens 10 Zeichen inkl. Groß-/Kleinbuchstaben, Zahl und Sonderzeichen.</span>
+                            </label>
+                            <label>
+                                Kennwort wiederholen
+                                <input type="password" name="password_confirm" autocomplete="new-password" required>
+                            </label>
+                        {% endif %}
                         <label>
                             Gruppe
                             <select name="group_id">

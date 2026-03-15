@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
-from . import crud, database, holiday_calculator, models, schemas, services
+from . import crud, database, holiday_calculator, models, schemas, security, services
 from .integrations import timemoto
 from .excel_export import export_time_entries
 from .pdf_export import export_team_overview_pdf, export_time_overview_pdf
@@ -144,6 +144,9 @@ logger = logging.getLogger(__name__)
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
     """Return the user referenced by the active session, if any."""
 
+    if "session" not in request.scope:
+        return None
+
     user_id = request.session.get("user_id")
     if user_id is None:
         return None
@@ -157,6 +160,13 @@ def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
     if user is None:
         request.session.pop("user_id", None)
     return user
+
+
+def _should_force_password_change(path: str) -> bool:
+    if path.startswith("/static"):
+        return False
+    allowed_paths = {"/logout", "/account/password"}
+    return path not in allowed_paths
 
 
 def ensure_schema() -> None:
@@ -217,6 +227,12 @@ def ensure_schema() -> None:
                     text(
                         "ALTER TABLE users ADD COLUMN monthly_overtime_limit_minutes INTEGER DEFAULT 1200"
                     )
+                )
+            if "password_hash" not in columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR"))
+            if "must_change_password" not in columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 1")
                 )
                 connection.execute(
                     text(
@@ -761,9 +777,21 @@ def _seed_default_records() -> None:
                     email="admin@example.com",
                     group_id=admin_group.id if admin_group else None,
                     standard_weekly_hours=40.0,
-                    pin_code="0000",
+                    password="Admin!0000",
                 ),
             )
+            admin_user = crud.get_user_by_username(db, "admin")
+            if admin_user:
+                admin_user.password_hash = security.hash_password("0000")
+                admin_user.must_change_password = True
+                db.commit()
+        existing_users = crud.get_users(db)
+        for item in existing_users:
+            if not item.password_hash:
+                legacy_password = item.pin_code or "0000"
+                item.password_hash = security.hash_password(legacy_password)
+                item.must_change_password = True
+        db.commit()
     finally:
         db.close()
 
@@ -791,6 +819,17 @@ def ensure_seed_data():
 
 @app.middleware("http")
 async def db_session_middleware(request: Request, call_next):
+    if "session" in request.scope and _should_force_password_change(request.url.path):
+        db = database.SessionLocal()
+        try:
+            user = get_logged_in_user(request, db)
+            if user and user.must_change_password:
+                return RedirectResponse(
+                    url="/account/password?error=Bitte+ändern+Sie+zuerst+Ihr+Kennwort",
+                    status_code=status.HTTP_303_SEE_OTHER,
+                )
+        finally:
+            db.close()
     response = await call_next(request)
     return response
 
@@ -809,15 +848,22 @@ def login_page(request: Request, db: Session = Depends(database.get_db)):
 
 
 @app.post("/login")
-def login_submit(request: Request, pin_code: str = Form(...), db: Session = Depends(database.get_db)):
-    user = crud.get_user_by_pin(db, pin_code)
-    if not user:
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user = crud.get_user_by_username(db, username.strip())
+    if not user or not security.verify_password(password, user.password_hash):
         return templates.TemplateResponse(
             "login.html",
-            {"request": request, "error": "PIN konnte nicht gefunden werden.", "user": None},
+            {"request": request, "error": "Benutzername oder Kennwort ist ungültig.", "user": None},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     request.session["user_id"] = user.id
+    if user.must_change_password:
+        return RedirectResponse(url="/account/password", status_code=status.HTTP_303_SEE_OTHER)
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -825,6 +871,54 @@ def login_submit(request: Request, pin_code: str = Form(...), db: Session = Depe
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/account/password", response_class=HTMLResponse)
+def account_password_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(
+        "account/password.html",
+        {"request": request, "user": user, "error": None, "message": None, "hide_navigation": True},
+    )
+
+
+@app.post("/account/password")
+def account_password_update(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not security.verify_password(current_password, user.password_hash):
+        return templates.TemplateResponse(
+            "account/password.html",
+            {"request": request, "user": user, "error": "Aktuelles Kennwort ist ungültig.", "hide_navigation": True},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if new_password != confirm_password:
+        return templates.TemplateResponse(
+            "account/password.html",
+            {"request": request, "user": user, "error": "Die neuen Kennwörter stimmen nicht überein.", "hide_navigation": True},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        security.validate_password_strength(new_password)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            "account/password.html",
+            {"request": request, "user": user, "error": str(exc), "hide_navigation": True},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    user.password_hash = security.hash_password(new_password)
+    user.must_change_password = False
+    db.commit()
+    return RedirectResponse(url="/dashboard?msg=Kennwort+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
 def _build_daily_overview(db: Session, user_id: int, target_date: date) -> dict[str, object]:
@@ -2345,7 +2439,8 @@ def create_user_html(
     username: str = Form(...),
     full_name: str = Form(...),
     email: str = Form(...),
-    pin_code: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...),
     standard_weekly_hours: float = Form(40.0),
     monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
@@ -2376,13 +2471,16 @@ def create_user_html(
             status_code=status.HTTP_303_SEE_OTHER,
         )
     try:
+        if password != password_confirm:
+            raise ValueError("PASSWORD_CONFIRM_MISMATCH")
+        security.validate_password_strength(password)
         crud.create_user(
             db,
             schemas.UserCreate(
                 username=username,
                 full_name=full_name,
                 email=email,
-                pin_code=pin_code,
+                password=password,
                 standard_weekly_hours=standard_weekly_hours,
                 group_id=group_value,
                 time_account_enabled=time_account_value,
@@ -2396,7 +2494,12 @@ def create_user_html(
         )
     except (ValueError, IntegrityError) as exc:
         db.rollback()
-        message = "Ungültige+Eingabe" if isinstance(exc, ValueError) else "Benutzer+konnte+nicht+angelegt+werden"
+        if isinstance(exc, ValueError):
+            message = "Ungültige+Eingabe"
+            if str(exc) == "PASSWORD_CONFIRM_MISMATCH":
+                message = "Kennw%C3%B6rter+stimmen+nicht+%C3%BCberein"
+        else:
+            message = "Benutzer+konnte+nicht+angelegt+werden"
         return RedirectResponse(
             url=f"/admin/users/new?error={message}",
             status_code=status.HTTP_303_SEE_OTHER,
@@ -2411,7 +2514,8 @@ def update_user_html(
     username: str = Form(...),
     full_name: str = Form(...),
     email: str = Form(...),
-    pin_code: str = Form(...),
+    reset_password: str = Form(""),
+    reset_password_confirm: str = Form(""),
     standard_weekly_hours: float = Form(40.0),
     monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
@@ -2442,6 +2546,11 @@ def update_user_html(
             status_code=status.HTTP_303_SEE_OTHER,
         )
     try:
+        reset_password_value = reset_password.strip()
+        if reset_password_value:
+            if reset_password != reset_password_confirm:
+                raise ValueError("PASSWORD_CONFIRM_MISMATCH")
+            security.validate_password_strength(reset_password)
         updated = crud.update_user(
             db,
             user_id,
@@ -2449,7 +2558,7 @@ def update_user_html(
                 username=username,
                 full_name=full_name,
                 email=email,
-                pin_code=pin_code,
+                password=reset_password_value or None,
                 standard_weekly_hours=standard_weekly_hours,
                 group_id=group_value,
                 time_account_enabled=time_account_value,
@@ -2463,7 +2572,12 @@ def update_user_html(
         )
     except (ValueError, IntegrityError) as exc:
         db.rollback()
-        message = "Ungültige+Eingabe" if isinstance(exc, ValueError) else "Aktualisierung+fehlgeschlagen"
+        if isinstance(exc, ValueError):
+            message = "Ungültige+Eingabe"
+            if str(exc) == "PASSWORD_CONFIRM_MISMATCH":
+                message = "Kennw%C3%B6rter+stimmen+nicht+%C3%BCberein"
+        else:
+            message = "Aktualisierung+fehlgeschlagen"
         return RedirectResponse(
             url=f"/admin/users/{user_id}?error={message}",
             status_code=status.HTTP_303_SEE_OTHER,
