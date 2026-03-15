@@ -195,6 +195,38 @@ function formatDuration(ms) {
   return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
+function validatePunchActionAgainstState(state, action) {
+  const isWorking = !!state?.isWorking;
+  const onBreak = !!state?.onBreak;
+  const hasCompany = !!state?.hasCompany;
+
+  if (action === 'start_work') {
+    if (isWorking) return { allowed: false, duplicate: true, reason: 'Arbeitszeit läuft bereits' };
+    return { allowed: true };
+  }
+  if (action === 'start_company') {
+    if (isWorking && hasCompany) return { allowed: false, duplicate: true, reason: 'Auftrag läuft bereits' };
+    return { allowed: true };
+  }
+  if (action === 'end_work') {
+    if (!isWorking) return { allowed: false, duplicate: true, reason: 'Keine laufende Arbeitszeit' };
+    return { allowed: true };
+  }
+  if (action === 'start_break') {
+    if (!isWorking || onBreak) return { allowed: false, duplicate: true, reason: 'Pause kann nicht gestartet werden' };
+    return { allowed: true };
+  }
+  if (action === 'end_break') {
+    if (!isWorking || !onBreak) return { allowed: false, duplicate: true, reason: 'Keine laufende Pause' };
+    return { allowed: true };
+  }
+  if (action === 'end_company') {
+    if (!isWorking || !hasCompany) return { allowed: false, duplicate: true, reason: 'Kein laufender Auftrag' };
+    return { allowed: true };
+  }
+  return { allowed: true };
+}
+
 function applyPunchActionToState(state, action, payload = {}) {
   const next = cloneState(state);
   const now = Date.now();
@@ -592,17 +624,34 @@ async function postQueuedAction(entry) {
 async function flushOfflineQueue() {
   const pending = await readPendingActions();
   if (!pending.length) {
-    return { processed: 0, failed: 0 };
+    return { processed: 0, failed: 0, skipped: 0 };
   }
 
   dispatchSyncStatus('Synchronisation läuft …', 'syncing');
   setStatusBadge('syncing');
 
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  let projectedState = buildStateFromEntry(snapshot?.data?.active_entry || null);
   let processed = 0;
+  let skipped = 0;
+
   for (const entry of pending) {
+    if (entry.type === 'punch') {
+      const action = entry.payload?.action;
+      const validation = validatePunchActionAgainstState(projectedState, action);
+      if (!validation.allowed) {
+        await deleteRecord(ACTION_STORE, entry.clientActionId);
+        skipped += 1;
+        continue;
+      }
+    }
+
     try {
       await postQueuedAction(entry);
       await deleteRecord(ACTION_STORE, entry.clientActionId);
+      if (entry.type === 'punch') {
+        projectedState = applyPunchActionToState(projectedState, entry.payload?.action, entry.payload || {});
+      }
       processed += 1;
     } catch (error) {
       break;
@@ -613,15 +662,15 @@ async function flushOfflineQueue() {
   if (remaining.total === 0) {
     dispatchSyncStatus('Synchronisation erfolgreich. Alle Aktionen wurden übertragen.', 'synced');
     showFeedback('Synchronisation erfolgreich.', 'success');
-    return { processed, failed: 0 };
+    return { processed, failed: 0, skipped };
   }
-  if (processed > 0) {
+  if (processed > 0 || skipped > 0) {
     dispatchSyncStatus('Synchronisation teilweise erfolgreich. Verbleibende Aktionen folgen automatisch.', 'queue');
     showFeedback('Teilweise synchronisiert. Rest wird erneut versucht.', 'info');
-    return { processed, failed: remaining.total };
+    return { processed, failed: remaining.total, skipped };
   }
   dispatchSyncStatus('Server aktuell nicht erreichbar. Aktionen bleiben sicher lokal gespeichert.', 'unreachable');
-  return { processed: 0, failed: remaining.total };
+  return { processed: 0, failed: remaining.total, skipped };
 }
 
 async function performReconnectSync(trigger = 'auto') {
@@ -640,6 +689,8 @@ async function performReconnectSync(trigger = 'auto') {
       return;
     }
 
+    await syncServerData();
+    await recomputeEffectiveState();
     await flushOfflineQueue();
     await syncServerData();
     await recomputeEffectiveState();
@@ -659,6 +710,14 @@ async function processPunchSubmission(form, payload) {
   payload.client_action_id = payload.client_action_id || generateClientActionId('punch');
   if (payload.action === 'start_company') {
     payload.company_name = determineCompanyName(form, payload);
+  }
+
+  await recomputeEffectiveState();
+  const validation = validatePunchActionAgainstState(mobileState || buildStateFromEntry(null), payload.action);
+  if (!validation.allowed) {
+    showFeedback(`Aktion übersprungen: ${validation.reason}.`, 'info');
+    dispatchSyncStatus('Aktion war bereits berücksichtigt und wurde nicht erneut gespeichert.', 'queue');
+    return;
   }
 
   const reachability = await checkServerReachability();

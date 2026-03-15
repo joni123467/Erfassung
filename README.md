@@ -142,6 +142,7 @@ Die App speichert mobilrelevante Serverdaten für ca. 6 Monate (183 Tage) lokal 
 - Offline-Aktionen bleiben persistent in einer lokalen Queue gespeichert (auch nach Browser-Neustart).
 - Idempotenz über `client_action_id` je Aktion, damit doppelte Übertragungen vermieden werden.
 - Teilfehler lassen verbleibende Queue-Einträge intakt und werden später erneut versucht.
+- Doppelte Offline-Startaktionen werden über effektiven Zustand + `client_action_id` robust entdoppelt, um überlappende Laufzeitbuchungen zu vermeiden.
 
 ### Statusmeldungen in der mobilen App
 

@@ -1227,12 +1227,36 @@ def punch_action(
     message = ""
     error = ""
 
+    def _safe_start_running_entry(*, company_id: Optional[int] = None, notes_value: str = "") -> bool:
+        nonlocal error
+        try:
+            crud.start_running_entry(
+                db,
+                user_id=user.id,
+                started_at=now,
+                company_id=company_id,
+                notes=notes_value,
+            )
+            return True
+        except ValueError as exc:
+            if str(exc) == "OVERLAPPING_TIME_ENTRY":
+                overlapping_active = crud.get_open_time_entry(db, user.id)
+                if overlapping_active:
+                    return False
+            raise
+
     if action == "start_work":
         if active_entry:
-            error = "Es läuft bereits eine Arbeitszeit."
+            if client_action_id:
+                message = "Arbeitszeit läuft bereits."
+            else:
+                error = "Es läuft bereits eine Arbeitszeit."
         else:
-            crud.start_running_entry(db, user_id=user.id, started_at=now, notes=notes.strip())
-            message = "Arbeitszeit gestartet."
+            created = _safe_start_running_entry(notes_value=notes.strip())
+            if created:
+                message = "Arbeitszeit gestartet."
+            else:
+                message = "Arbeitszeit läuft bereits."
     elif action == "start_company":
         new_company_value = (new_company_name or "").strip()
         target_company = None
@@ -1268,19 +1292,21 @@ def punch_action(
                         error = "Firma wurde nicht gefunden."
         if not error and target_company:
             if active_entry and active_entry.company_id == target_company.id:
-                error = "Dieser Auftrag läuft bereits."
+                if client_action_id:
+                    message = "Dieser Auftrag läuft bereits."
+                else:
+                    error = "Dieser Auftrag läuft bereits."
             else:
                 previous_company = active_entry.company if active_entry else None
                 if active_entry:
                     crud.finish_running_entry(db, active_entry, now)
-                crud.start_running_entry(
-                    db,
-                    user_id=user.id,
-                    started_at=now,
+                created = _safe_start_running_entry(
                     company_id=target_company.id,
-                    notes=notes.strip(),
+                    notes_value=notes.strip(),
                 )
-                if created_company:
+                if not created:
+                    message = f"Auftrag bei {target_company.name} läuft bereits."
+                elif created_company:
                     message = f"Neue Firma {target_company.name} angelegt und Auftrag gestartet."
                 elif previous_company and previous_company.id != target_company.id:
                     message = f"Auftrag zu {target_company.name} gewechselt."
@@ -1297,13 +1323,11 @@ def punch_action(
             error = "Es läuft kein Auftrag."
         else:
             crud.finish_running_entry(db, active_entry, now)
-            crud.start_running_entry(
-                db,
-                user_id=user.id,
-                started_at=now,
-                notes=notes.strip(),
-            )
-            message = "Auftrag beendet. Arbeitszeit läuft weiter."
+            created = _safe_start_running_entry(notes_value=notes.strip())
+            if created:
+                message = "Auftrag beendet. Arbeitszeit läuft weiter."
+            else:
+                message = "Auftrag beendet. Arbeitszeit läuft bereits."
     elif action == "start_break":
         if not active_entry:
             error = "Keine laufende Arbeitszeit vorhanden."
