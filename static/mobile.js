@@ -745,10 +745,7 @@ async function processPunchSubmission(form, payload) {
     }, 5000);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (response.redirected) {
-      window.location.href = response.url;
-      return;
-    } catch {
-      // fallback queue
+      throw new Error('Unexpected redirect while submitting punch');
     }
     showFeedback('Buchung erfolgreich übertragen.', 'success');
     dispatchSyncStatus('Buchung wurde an den Server übertragen.', 'synced');
@@ -787,6 +784,7 @@ async function processVacationSubmission(form, payload) {
       cache: 'no-store',
     }, 5000);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (response.redirected) throw new Error('Unexpected redirect while submitting vacation');
     showFeedback('Urlaubsantrag erfolgreich übertragen.', 'success');
     await syncServerData();
   } catch (error) {
