@@ -1,11 +1,10 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.1.6-r1';
+const CACHE_VERSION = 'erfassung-mobile-v0.1.6-r2';
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
 const NAVIGATION_TIMEOUT_MS = 1500;
 const API_TIMEOUT_MS = 4000;
 const STATIC_TIMEOUT_MS = 2500;
 const CORE_ASSETS = [
-  MOBILE_SHELL,
   OFFLINE_SHELL,
   '/static/styles.css',
   '/static/mobile.js',
@@ -15,7 +14,11 @@ const CORE_ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_VERSION).then((cache) => cache.addAll(CORE_ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_VERSION);
+    await Promise.allSettled(CORE_ASSETS.map((asset) => cache.add(asset)));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -59,16 +62,6 @@ async function refreshInBackground(request, timeoutMs) {
     }
   } catch (error) {
     // ignore refresh failures
-  }
-}
-
-async function fetchWithTimeout(request, timeoutMs) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(request, { signal: controller.signal });
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 

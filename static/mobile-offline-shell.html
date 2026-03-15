@@ -9,13 +9,14 @@
 </head>
 <body class="is-mobile">
   <main class="page">
-    <section class="mobile-dashboard" data-mobile-state="true" data-state-running="false" data-state-break="false" data-state-company="false" data-total-break-minutes="0" data-worked-label="0:00">
+    <section class="mobile-dashboard" aria-label="Mobile Zeiterfassung" data-mobile-state="true" data-state-running="false" data-state-break="false" data-state-company="false" data-total-break-minutes="0" data-worked-label="0:00">
       <header class="mobile-dashboard__header">
         <div>
           <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
           <p class="mobile-dashboard__date">Offline-Modus</p>
         </div>
       </header>
+
       <aside class="mobile-queue mobile-queue--status" aria-live="polite">
         <div class="mobile-queue__line">
           <span class="mobile-badge" id="mobile-server-badge" data-state="offline">Offline</span>
@@ -29,8 +30,70 @@
           <strong id="mobile-last-sync">Noch keine Synchronisation</strong>
         </div>
       </aside>
+
       <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite">
         Die App wurde offline gestartet. Sobald du wieder online bist, werden Daten automatisch synchronisiert.
+      </div>
+
+      <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
+        <a href="#buchung" class="mobile-tab is-active" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="true" role="tab">Buchung</a>
+        <a href="#uebersicht" class="mobile-tab" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="false" role="tab">Übersicht</a>
+        <a href="#salden" class="mobile-tab" data-tab="salden" id="mobile-tab-salden" aria-controls="mobile-panel-salden" aria-selected="false" role="tab">Salden</a>
+        <a href="#urlaub" class="mobile-tab" data-tab="urlaub" id="mobile-tab-urlaub" aria-controls="mobile-panel-urlaub" aria-selected="false" role="tab">Urlaub</a>
+      </nav>
+
+      <div class="mobile-panels">
+        <section class="mobile-panel is-active" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung">
+          <div class="mobile-card">
+            <h2 class="mobile-card__title">Schnell stempeln</h2>
+            <div class="mobile-action-grid">
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="action" value="start_work">
+                <button type="submit" class="button button--primary">Arbeit starten</button>
+              </form>
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="action" value="end_work">
+                <button type="submit" class="button">Arbeit beenden</button>
+              </form>
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="action" value="start_break">
+                <button type="submit" class="button">Pause starten</button>
+              </form>
+              <form method="post" action="/punch" data-offline="punch">
+                <input type="hidden" name="action" value="end_break">
+                <button type="submit" class="button">Pause beenden</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section class="mobile-panel" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" hidden>
+          <div class="mobile-card">
+            <h2 class="mobile-card__title">Übersicht (offline)</h2>
+            <p class="mobile-card__text">Gespeicherte Daten werden lokal angezeigt, sobald vorhanden.</p>
+          </div>
+        </section>
+
+        <section class="mobile-panel" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" hidden>
+          <div class="mobile-card">
+            <h2 class="mobile-card__title">Salden (offline)</h2>
+            <p class="mobile-card__text">Salden werden aus der letzten Synchronisation geladen.</p>
+          </div>
+        </section>
+
+        <section class="mobile-panel" id="mobile-panel-urlaub" data-tab-panel="urlaub" role="tabpanel" aria-labelledby="mobile-tab-urlaub" hidden>
+          <div class="mobile-card">
+            <h2 class="mobile-card__title">Urlaub offline erfassen</h2>
+            <form method="post" action="/vacations" class="mobile-form" data-offline="vacation">
+              <label>Von <input type="date" name="start_date" required></label>
+              <label>Bis <input type="date" name="end_date" required></label>
+              <label>Kommentar <input type="text" name="comment" placeholder="optional"></label>
+              <button type="submit" class="button button--primary">Urlaubsantrag speichern</button>
+            </form>
+            <div data-vacation-empty>Noch keine lokal gespeicherten Urlaubsanträge.</div>
+            <div data-vacation-list></div>
+          </div>
+        </section>
       </div>
     </section>
   </main>
