@@ -858,6 +858,12 @@ function registerModalHandling() {
     modal.classList.toggle('is-visible', visible);
     modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
     document.body.classList.toggle('modal-open', visible);
+    if (visible) {
+      const firstInput = modal.querySelector('select, input, button');
+      if (firstInput instanceof HTMLElement) {
+        firstInput.focus();
+      }
+    }
   };
 
   modalController = { open: () => setVisible(true), close: () => setVisible(false) };
