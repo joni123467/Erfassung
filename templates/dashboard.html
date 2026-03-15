@@ -172,7 +172,7 @@
                                         <span class="dashboard-timeline__company">{{ entry.company.name }}</span>
                                     {% endif %}
                                     {% if entry.status != 'approved' %}
-                                        <span class="dashboard-timeline__status">{{ entry.status|capitalize }}</span>
+                                        <span class="dashboard-timeline__status">{{ status_labels.get(entry.status, entry.status|capitalize) }}</span>
                                     {% endif %}
                                 </div>
                                 {% if entry.notes %}
@@ -297,7 +297,7 @@
                                 </div>
                             {% endif %}
                         {% endif %}
-                    </div>
+                    </dl>
                     {% if show_overtime_metrics and overtime_limit_minutes > 0 %}
                         <p class="dashboard-overtime-limit__message {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
                             {% if overtime_limit_exceeded %}
@@ -447,6 +447,53 @@ document.addEventListener('DOMContentLoaded', function () {
             setVisibility(false);
         }
     });
+
+    const registerCompanySearch = () => {
+        const searchInputs = document.querySelectorAll('[data-company-search-target]');
+        searchInputs.forEach((input) => {
+            if (!(input instanceof HTMLInputElement)) return;
+            const targetId = input.dataset.companySearchTarget || '';
+            if (!targetId) return;
+            const select = document.getElementById(targetId);
+            if (!(select instanceof HTMLSelectElement)) return;
+
+            const update = () => {
+                const query = (input.value || '').trim().toLocaleLowerCase('de-DE');
+                let visibleCount = 0;
+                Array.from(select.options).forEach((option, index) => {
+                    if (index === 0) {
+                        option.hidden = false;
+                        return;
+                    }
+                    const label = (option.textContent || '').toLocaleLowerCase('de-DE');
+                    const visible = !query || label.includes(query);
+                    option.hidden = !visible;
+                    if (visible) visibleCount += 1;
+                });
+
+                let hint = input.parentElement?.querySelector('.company-search-empty');
+                if (!hint) {
+                    hint = document.createElement('small');
+                    hint.className = 'company-search-empty';
+                    input.parentElement?.appendChild(hint);
+                }
+                hint.textContent = visibleCount === 0 && query
+                    ? 'Keine passende Firma gefunden. Du kannst unten eine neue Firma anlegen.'
+                    : '';
+                hint.hidden = !hint.textContent;
+
+                const selected = select.options[select.selectedIndex];
+                if (selected && selected.hidden) {
+                    select.value = '';
+                }
+            };
+
+            input.addEventListener('input', update);
+            update();
+        });
+    };
+
+    registerCompanySearch();
 });
 </script>
 {% endblock %}

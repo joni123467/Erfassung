@@ -26,7 +26,7 @@
                     <td>{{ entry.user.full_name }}</td>
                     <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
                     <td>{{ entry.start_time.strftime('%H:%M') }} – {{ entry.end_time.strftime('%H:%M') }}</td>
-                    <td>{{ entry.company.name if entry.company else 'Allgemeine Arbeitszeit' }}</td>
+                    <td>{{ entry.company_display_name }}</td>
                     <td>{{ entry.total_break_minutes|format_minutes }} Std</td>
                     <td>{{ entry.notes or '-' }}</td>
                     <td class="actions">

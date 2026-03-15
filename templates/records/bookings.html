@@ -110,7 +110,7 @@
             {% for entry in entries %}
                 <tr class="status-{{ entry.status }}">
                     <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
-                    <td>{{ entry.company.name if entry.company else 'Allgemeine Arbeitszeit' }}</td>
+                    <td>{{ entry.company_display_name }}</td>
                     <td>{{ entry.start_time.strftime('%H:%M') }}</td>
                     <td>{{ entry.end_time.strftime('%H:%M') }}</td>
                     <td>

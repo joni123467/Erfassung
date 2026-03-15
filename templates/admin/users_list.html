@@ -42,7 +42,7 @@
                     </td>
                     <td>{{ item.rfid_tag or '-' }}</td>
                     <td>
-                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=96x96&data={{ mobile_install_url | urlencode }}" alt="QR-Code für mobile App" width="96" height="96" loading="lazy" class="admin-user-qr">
+                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=96x96&data={{ mobile_quick_login_urls[item.id] | urlencode }}" alt="QR-Code für mobile App" width="96" height="96" loading="lazy" class="admin-user-qr">
                     </td>
                     <td>
                         <a class="button small" href="/admin/users/{{ item.id }}">Bearbeiten</a>
