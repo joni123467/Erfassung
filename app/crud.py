@@ -631,8 +631,20 @@ def delete_company(db: Session, company_id: int) -> bool:
     db_company = get_company(db, company_id)
     if not db_company:
         return False
-    if db_company.time_entries:
-        return False
+
+    company_name = db_company.name
+    (
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.company_id == company_id)
+        .update(
+            {
+                models.TimeEntry.company_id: None,
+                models.TimeEntry.deleted_company_name: company_name,
+            },
+            synchronize_session=False,
+        )
+    )
+
     db.delete(db_company)
     db.commit()
     return True

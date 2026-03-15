@@ -146,7 +146,7 @@
                             {% if companies %}
                                 <label>
                                     Firma suchen
-                                    <input type="search" placeholder="Firma suchen …" autocomplete="off" data-company-search-target="mobile-order-company-select">
+                                    <input type="search" placeholder="Firma suchen …" autocomplete="off" list="mobile-order-company-suggestions" data-company-search-target="mobile-order-company-select">
                                 </label>
                                 <label>
                                     Firma auswählen
@@ -156,6 +156,11 @@
                                             <option value="{{ company.id }}">{{ company.name }}</option>
                                         {% endfor %}
                                     </select>
+                                    <datalist id="mobile-order-company-suggestions">
+                                        {% for company in companies %}
+                                            <option value="{{ company.name }}"></option>
+                                        {% endfor %}
+                                    </datalist>
                                 </label>
                             {% endif %}
                             {% if can_create_companies %}
@@ -272,7 +277,7 @@
                     {% if overview_day.entries %}
                         <ul class="mobile-entry-list mobile-entry-list--compact">
                             {% for entry in overview_day.entries %}
-                                <li class="mobile-entry {% if entry.is_open %}is-active{% endif %}">
+                                <li class="mobile-entry {% if entry.is_open %}is-active{% endif %}{% if entry.deleted_company_name and not entry.company %} is-deleted-company{% endif %}">
                                     <div class="mobile-entry__times">
                                         <strong>{{ entry.start_time.strftime('%H:%M') }}</strong>
                                         <span>–</span>
@@ -291,8 +296,8 @@
                                         {% if entry.total_break_minutes %}
                                             <span>Pausen {{ entry.total_break_minutes|format_minutes }} Std</span>
                                         {% endif %}
-                                        {% if entry.company %}
-                                            <span>{{ entry.company.name }}</span>
+                                        {% if entry.company or entry.deleted_company_name %}
+                                            <span>{{ entry.company_display_name }}</span>
                                         {% endif %}
                                         {% if entry.notes %}
                                             <span class="mobile-entry__notes">{{ entry.notes }}</span>

@@ -104,7 +104,7 @@
                             {% if companies %}
                                 <label>
                                     Firma suchen
-                                    <input type="search" placeholder="Firma suchen …" autocomplete="off" data-company-search-target="dashboard-order-company-select">
+                                    <input type="search" placeholder="Firma suchen …" autocomplete="off" list="dashboard-order-company-suggestions" data-company-search-target="dashboard-order-company-select">
                                 </label>
                                 <label>
                                     Firma auswählen
@@ -114,6 +114,11 @@
                                             <option value="{{ company.id }}">{{ company.name }}</option>
                                         {% endfor %}
                                     </select>
+                                    <datalist id="dashboard-order-company-suggestions">
+                                        {% for company in companies %}
+                                            <option value="{{ company.name }}"></option>
+                                        {% endfor %}
+                                    </datalist>
                                 </label>
                             {% endif %}
                             {% if can_create_companies %}
@@ -168,11 +173,11 @@
                                             ({{ entry.required_break_minutes|format_minutes }} Std erforderlich)
                                         {% endif %}
                                     </span>
-                                    {% if entry.company %}
-                                        <span class="dashboard-timeline__company">{{ entry.company.name }}</span>
+                                    {% if entry.company or entry.deleted_company_name %}
+                                        <span class="dashboard-timeline__company">{{ entry.company_display_name }}</span>
                                     {% endif %}
                                     {% if entry.status != 'approved' %}
-                                        <span class="dashboard-timeline__status">{{ entry.status|capitalize }}</span>
+                                        <span class="dashboard-timeline__status">{{ status_labels.get(entry.status, entry.status|capitalize) }}</span>
                                     {% endif %}
                                 </div>
                                 {% if entry.notes %}
@@ -297,7 +302,7 @@
                                 </div>
                             {% endif %}
                         {% endif %}
-                    </div>
+                    </dl>
                     {% if show_overtime_metrics and overtime_limit_minutes > 0 %}
                         <p class="dashboard-overtime-limit__message {% if overtime_limit_exceeded %}is-exceeded{% endif %}">
                             {% if overtime_limit_exceeded %}
@@ -371,7 +376,7 @@
         </label>
         <label>
             Firma suchen
-            <input type="search" placeholder="Firma suchen …" autocomplete="off" data-company-search-target="dashboard-manual-company-select">
+            <input type="search" placeholder="Firma suchen …" autocomplete="off" list="dashboard-manual-company-suggestions" data-company-search-target="dashboard-manual-company-select">
         </label>
         <label>
             Firma
@@ -381,6 +386,11 @@
                     <option value="{{ company.id }}">{{ company.name }}</option>
                 {% endfor %}
             </select>
+            <datalist id="dashboard-manual-company-suggestions">
+                {% for company in companies %}
+                    <option value="{{ company.name }}"></option>
+                {% endfor %}
+            </datalist>
         </label>
         {% if can_create_companies %}
             <label>
@@ -447,6 +457,61 @@ document.addEventListener('DOMContentLoaded', function () {
             setVisibility(false);
         }
     });
+
+    const registerCompanySearch = () => {
+        const searchInputs = document.querySelectorAll('[data-company-search-target]');
+        searchInputs.forEach((input) => {
+            if (!(input instanceof HTMLInputElement)) return;
+            const targetId = input.dataset.companySearchTarget || '';
+            if (!targetId) return;
+            const select = document.getElementById(targetId);
+            if (!(select instanceof HTMLSelectElement)) return;
+
+            const update = () => {
+                const query = (input.value || '').trim().toLocaleLowerCase('de-DE');
+                let visibleCount = 0;
+                let exactMatchValue = '';
+                Array.from(select.options).forEach((option, index) => {
+                    if (index === 0) {
+                        option.hidden = false;
+                        return;
+                    }
+                    const label = (option.textContent || '').toLocaleLowerCase('de-DE');
+                    const visible = !query || label.includes(query);
+                    option.hidden = !visible;
+                    if (visible) visibleCount += 1;
+                    if (query && label === query) {
+                        exactMatchValue = option.value;
+                    }
+                });
+
+                if (exactMatchValue) {
+                    select.value = exactMatchValue;
+                }
+
+                let hint = input.parentElement?.querySelector('.company-search-empty');
+                if (!hint) {
+                    hint = document.createElement('small');
+                    hint.className = 'company-search-empty';
+                    input.parentElement?.appendChild(hint);
+                }
+                hint.textContent = visibleCount === 0 && query
+                    ? 'Keine passende Firma gefunden. Du kannst unten eine neue Firma anlegen.'
+                    : '';
+                hint.hidden = !hint.textContent;
+
+                const selected = select.options[select.selectedIndex];
+                if (selected && selected.hidden) {
+                    select.value = '';
+                }
+            };
+
+            input.addEventListener('input', update);
+            update();
+        });
+    };
+
+    registerCompanySearch();
 });
 </script>
 {% endblock %}

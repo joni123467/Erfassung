@@ -112,6 +112,7 @@ class TimeEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    deleted_company_name = Column(String, nullable=True)
     work_date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
@@ -183,6 +184,14 @@ class TimeEntry(Base):
                 end_dt += timedelta(days=1)
             minutes += max(int((end_dt - start_dt).total_seconds() // 60), 0)
         return minutes
+
+    @property
+    def company_display_name(self) -> str:
+        if self.company:
+            return self.company.name
+        if self.deleted_company_name:
+            return f"Gelöscht ({self.deleted_company_name})"
+        return "Allgemeine Arbeitszeit"
 
 
 class VacationStatus:

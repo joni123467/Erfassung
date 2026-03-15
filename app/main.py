@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import logging
+import base64
+import hashlib
+import hmac
 from calendar import monthrange
 from collections import Counter
 from datetime import date, datetime, time, timedelta
@@ -78,6 +81,39 @@ templates.env.filters["format_minutes"] = _format_minutes
 HOLIDAY_STATE_CHOICES = sorted(holiday_calculator.GERMAN_STATES.items(), key=lambda item: item[1])
 HOLIDAY_STATE_CODES = set(holiday_calculator.GERMAN_STATES.keys())
 
+
+MOBILE_AUTOLOGIN_TTL_SECONDS = 60 * 60 * 24 * 30
+
+
+def _mobile_autologin_secret() -> bytes:
+    return os.getenv("MOBILE_AUTOLOGIN_SECRET", "erfassung-mobile-autologin-secret").encode("utf-8")
+
+
+def _create_mobile_autologin_token(user_id: int, ttl_seconds: int = MOBILE_AUTOLOGIN_TTL_SECONDS) -> str:
+    expires = int(datetime.utcnow().timestamp()) + ttl_seconds
+    payload = f"{user_id}:{expires}"
+    signature = hmac.new(_mobile_autologin_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    raw = f"{payload}:{signature}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _verify_mobile_autologin_token(token: str) -> Optional[int]:
+    if not token:
+        return None
+    padded = token + "=" * (-len(token) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
+        user_id_text, expires_text, signature = decoded.split(":", 2)
+        payload = f"{user_id_text}:{expires_text}"
+        expected = hmac.new(_mobile_autologin_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return None
+        if int(expires_text) < int(datetime.utcnow().timestamp()):
+            return None
+        return int(user_id_text)
+    except (ValueError, TypeError):
+        return None
+
 TIME_ENTRY_STATUS_LABELS = {
     models.TimeEntryStatus.APPROVED: "Freigegeben",
     models.TimeEntryStatus.PENDING: "Wartet auf Freigabe",
@@ -141,6 +177,8 @@ def ensure_schema() -> None:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN status VARCHAR DEFAULT 'approved'"))
             if "is_manual" not in columns:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_manual INTEGER DEFAULT 0"))
+            if "deleted_company_name" not in columns:
+                connection.execute(text("ALTER TABLE time_entries ADD COLUMN deleted_company_name VARCHAR"))
             connection.execute(text("UPDATE time_entries SET is_open = 0 WHERE is_open IS NULL"))
         if "users" in table_names:
             columns = {column["name"] for column in inspector.get_columns("users")}
@@ -930,6 +968,7 @@ def _build_dashboard_context(db: Session, user: models.User):
         "weekly_summary": weekly_summary,
         "daily_target_minutes": daily_target_minutes,
         "show_overtime_metrics": show_overtime_metrics,
+        "status_labels": TIME_ENTRY_STATUS_LABELS,
     }
 
 
@@ -1041,6 +1080,19 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
     return templates.TemplateResponse("mobile/dashboard.html", context)
 
 
+@app.get("/mobile/quick-login")
+def mobile_quick_login(request: Request, token: str = "", db: Session = Depends(database.get_db)):
+    user_id = _verify_mobile_autologin_token(token)
+    if user_id is None:
+        return RedirectResponse(url="/login?error=Ung%C3%BCltiger+QR-Code", status_code=status.HTTP_303_SEE_OTHER)
+    user = crud.get_user(db, user_id)
+    if user is None:
+        return RedirectResponse(url="/login?error=Benutzer+nicht+gefunden", status_code=status.HTTP_303_SEE_OTHER)
+    request.session["user_id"] = user.id
+    return RedirectResponse(url="/mobile", status_code=status.HTTP_303_SEE_OTHER)
+
+
+
 @app.post("/time")
 def submit_time_entry(
     request: Request,
@@ -1125,7 +1177,7 @@ def _serialize_mobile_entry(entry: models.TimeEntry) -> dict[str, object]:
         "notes": entry.notes or "",
         "status": entry.status,
         "company_id": entry.company_id,
-        "company_name": entry.company.name if entry.company else "",
+        "company_name": entry.company_display_name if (entry.company or entry.deleted_company_name) else "",
         "worked_minutes": entry.worked_minutes,
         "total_break_minutes": entry.total_break_minutes,
         "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
@@ -1527,9 +1579,9 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
         user, vacations, start_date, end_date
     )
     effective_minutes = total_work_minutes + vacation_minutes
-    balance = effective_minutes - target_minutes
-    total_overtime_minutes = max(balance, 0)
-    total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
+    balance_minutes = effective_minutes - target_minutes
+    total_overtime_minutes = max(balance_minutes, 0)
+    total_undertime_minutes = max(-balance_minutes, 0)
     vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
 
     company_totals_all = _aggregate_company_totals(approved_month_entries)
@@ -1551,6 +1603,7 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
             "total_overtime_minutes": total_overtime_minutes,
             "total_undertime_minutes": total_undertime_minutes,
             "target_minutes": target_minutes,
+            "balance_minutes": balance_minutes,
             "overtime_taken_minutes": overtime_taken_minutes,
             "company_totals_all": company_totals_all,
             "company_totals_filtered": company_totals_filtered,
@@ -1624,9 +1677,9 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         user, vacations, start_date, end_date
     )
     effective_minutes = total_work_minutes + vacation_minutes
-    balance = effective_minutes - target_minutes
-    total_overtime_minutes = max(balance, 0)
-    total_undertime_minutes = max(-balance, 0) if user.time_account_enabled else 0
+    balance_minutes = effective_minutes - target_minutes
+    total_overtime_minutes = max(balance_minutes, 0)
+    total_undertime_minutes = max(-balance_minutes, 0)
     vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
     company_totals_all = _aggregate_company_totals(approved_month_entries)
     overtime_limit_minutes = int(user.monthly_overtime_limit_minutes or 0)
@@ -1781,6 +1834,10 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
     error = request.query_params.get("error")
     users = crud.get_users(db)
     mobile_install_url = str(request.url_for("mobile_dashboard"))
+    mobile_quick_login_urls = {
+        item.id: f"{request.url_for('mobile_quick_login')}?token={_create_mobile_autologin_token(item.id)}"
+        for item in users
+    }
     return _admin_template(
         "admin/users_list.html",
         request,
@@ -1789,6 +1846,7 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
         error=error,
         users=users,
         mobile_install_url=mobile_install_url,
+        mobile_quick_login_urls=mobile_quick_login_urls,
     )
 
 
@@ -2501,7 +2559,7 @@ def delete_company_html(request: Request, company_id: int, db: Session = Depends
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_company(db, company_id):
         return RedirectResponse(
-            url="/admin/companies?error=Firma+konnte+nicht+gelöscht+werden",
+            url="/admin/companies?error=Firma+konnte+nicht+gel%C3%B6scht+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     return RedirectResponse(url="/admin/companies?msg=Firma+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
