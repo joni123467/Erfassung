@@ -117,9 +117,6 @@
                         <input type="hidden" name="action" value="start_work">
                         <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
                     </form>
-                    {% if companies or can_create_companies %}
-                        <button type="button" class="mobile-button" data-open="mobile-order-modal" data-toggle-disabled="true">Auftrag starten</button>
-                    {% endif %}
                 </div>
                 <div class="mobile-action-grid" data-state="active" {% if not active_entry %}hidden{% endif %}>
                     {% if companies or can_create_companies %}
@@ -146,6 +143,11 @@
                         <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
                     </form>
                 </div>
+                {% if companies or can_create_companies %}
+                    <div class="mobile-card__section">
+                        <button type="button" class="mobile-button" data-open="mobile-order-modal">Auftrag starten</button>
+                    </div>
+                {% endif %}
             </div>
 
             {% if companies or can_create_companies %}

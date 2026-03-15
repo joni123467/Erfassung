@@ -857,8 +857,19 @@ function registerModalHandling() {
     document.body.classList.toggle('modal-open', visible);
   };
   modalController = { open: () => setVisible(true), close: () => setVisible(false) };
-  document.querySelectorAll(`[data-open="${MODAL_ID}"]`).forEach((el) => el.addEventListener('click', () => setVisible(true)));
-  modal.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', () => setVisible(false)));
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest(`[data-open="${MODAL_ID}"]`) : null;
+    if (target) {
+      event.preventDefault();
+      setVisible(true);
+      return;
+    }
+    const closer = event.target instanceof Element ? event.target.closest('[data-close]') : null;
+    if (closer && modal.contains(closer)) {
+      event.preventDefault();
+      setVisible(false);
+    }
+  });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && modal.classList.contains('is-visible')) setVisible(false);
   });
