@@ -743,6 +743,8 @@ async function processPunchSubmission(form, payload) {
     if (response.redirected) {
       window.location.href = response.url;
       return;
+    } catch {
+      // fallback queue
     }
     showFeedback('Buchung erfolgreich übertragen.', 'success');
     dispatchSyncStatus('Buchung wurde an den Server übertragen.', 'synced');
