@@ -32,10 +32,18 @@
         </p>
     </header>
 
-    <aside class="mobile-queue" id="mobile-queue-info" aria-live="polite" hidden>
-        <span class="mobile-badge mobile-badge--queued" aria-hidden="true">⏳</span>
-        <span id="mobile-sync-text">Offline-Aktionen werden synchronisiert.</span>
-        <strong class="mobile-queue__count"><span id="mobile-pending-count">0</span>x</strong>
+    <aside class="mobile-queue mobile-queue--status" id="mobile-queue-info" aria-live="polite">
+        <div class="mobile-queue__line">
+            <span class="mobile-badge" id="mobile-server-badge" data-state="online">Online</span>
+            <span id="mobile-local-data" data-state="empty">Noch keine lokalen Daten</span>
+        </div>
+        <div class="mobile-queue__line">
+            <span id="mobile-pending-actions">Keine ausstehenden Offline-Aktionen</span>
+        </div>
+        <div class="mobile-queue__line mobile-queue__line--muted">
+            <span>Zuletzt synchronisiert:</span>
+            <strong id="mobile-last-sync">Noch keine Synchronisation</strong>
+        </div>
     </aside>
 
     <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite" hidden></div>
@@ -109,9 +117,6 @@
                         <input type="hidden" name="action" value="start_work">
                         <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
                     </form>
-                    {% if companies or can_create_companies %}
-                        <button type="button" class="mobile-button" data-open="mobile-order-modal" data-toggle-disabled="true">Auftrag starten</button>
-                    {% endif %}
                 </div>
                 <div class="mobile-action-grid" data-state="active" {% if not active_entry %}hidden{% endif %}>
                     <form method="post" action="/punch" data-offline="punch" data-state="break-idle">
@@ -135,6 +140,11 @@
                         <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
                     </form>
                 </div>
+                {% if companies or can_create_companies %}
+                    <div class="mobile-card__section">
+                        <button type="button" class="mobile-button" id="mobile-order-launch" data-open="mobile-order-modal">Auftrag starten</button>
+                    </div>
+                {% endif %}
             </div>
 
             {% if companies or can_create_companies %}
@@ -485,6 +495,6 @@
 
 {% block scripts %}
 {{ super() }}
-<script type="module" src="/static/mobile.js"></script>
+<script type="module" src="/static/mobile.js?v={{ app_version }}"></script>
 {% endblock %}
 {% endblock %}
