@@ -1613,7 +1613,7 @@ tr.status-pending td {
 }
 
 tr.status-rejected td {
-    background: rgba(214, 40, 57, 0.08);
+    background: rgba(214, 40, 57, 0.16);
 }
 
 tr.company-deleted td {

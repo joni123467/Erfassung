@@ -59,6 +59,8 @@ class User(Base):
     standard_daily_minutes = Column(Integer, default=480)
     standard_weekly_hours = Column(Float, default=40.0)
     pin_code = Column(String(4), unique=True, nullable=False)
+    password_hash = Column(String, nullable=True)
+    must_change_password = Column(Boolean, default=True)
     group_id = Column(Integer, ForeignKey("groups.id"))
     time_account_enabled = Column(Boolean, default=False)
     overtime_vacation_enabled = Column(Boolean, default=False)

@@ -6,6 +6,7 @@ from typing import Iterable, List, Optional
 from sqlalchemy.orm import Session
 
 from . import models, schemas
+from . import security
 
 
 def get_group(db: Session, group_id: int) -> Optional[models.Group]:
@@ -36,12 +37,19 @@ def get_users(db: Session) -> List[models.User]:
     return db.query(models.User).order_by(models.User.full_name).all()
 
 
-def get_user_by_pin(db: Session, pin_code: str) -> Optional[models.User]:
-    return db.query(models.User).filter(models.User.pin_code == pin_code).first()
+def _allocate_internal_pin(db: Session) -> str:
+    used = {row[0] for row in db.query(models.User.pin_code).all() if row[0]}
+    for candidate in range(10000):
+        pin = f"{candidate:04d}"
+        if pin not in used:
+            return pin
+    raise ValueError("Keine interne PIN mehr verfügbar")
 
 
 def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     payload = user.model_dump()
+    raw_password = payload.pop("password")
+    security.validate_password_strength(raw_password)
     weekly_hours = float(payload.get("standard_weekly_hours", 0) or 0)
     payload["standard_weekly_hours"] = weekly_hours
     payload["standard_daily_minutes"] = int(round(max(weekly_hours, 0) * 60 / 5)) if weekly_hours else 0
@@ -53,6 +61,9 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
         payload["monthly_overtime_limit_minutes"] = max(limit_minutes, 0)
     if not payload.get("rfid_tag"):
         payload["rfid_tag"] = None
+    payload["password_hash"] = security.hash_password(raw_password)
+    payload["must_change_password"] = True
+    payload["pin_code"] = _allocate_internal_pin(db)
     db_user = models.User(**payload)
     db.add(db_user)
     db.commit()
@@ -79,6 +90,12 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
             db_user.monthly_overtime_limit_minutes = max(limit_minutes, 0)
     if "rfid_tag" in payload and not payload["rfid_tag"]:
         payload["rfid_tag"] = None
+    if "password" in payload:
+        raw_password = payload.pop("password")
+        if raw_password:
+            security.validate_password_strength(raw_password)
+            db_user.password_hash = security.hash_password(raw_password)
+            db_user.must_change_password = True
     for key, value in payload.items():
         setattr(db_user, key, value)
     db.commit()

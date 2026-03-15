@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.1.5-r4';
+const CACHE_VERSION = 'erfassung-mobile-v0.1.9-r1';
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
 const NAVIGATION_TIMEOUT_MS = 1500;
