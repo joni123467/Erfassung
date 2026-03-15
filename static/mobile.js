@@ -2,50 +2,37 @@ const TAB_SELECTOR = '.mobile-tab';
 const PANEL_SELECTOR = '[data-tab-panel]';
 const MODAL_ID = 'mobile-order-modal';
 const FORM_SELECTOR = 'form[data-offline]';
-const QUEUE_INFO_ID = 'mobile-queue-info';
-const QUEUE_COUNT_ID = 'mobile-pending-count';
 const FEEDBACK_ID = 'mobile-feedback';
-const SYNC_TEXT_ID = 'mobile-sync-text';
 const MOBILE_STATE_SELECTOR = '[data-mobile-state]';
 const VACATION_LIST_SELECTOR = '[data-vacation-list]';
 const VACATION_EMPTY_SELECTOR = '[data-vacation-empty]';
+
 const DB_NAME = 'erfassung-mobile';
-const DB_VERSION = 2;
-const PUNCH_STORE = 'pendingPunches';
-const VACATION_STORE = 'pendingVacations';
+const DB_VERSION = 4;
+const ACTION_STORE = 'pendingActions';
+const DATA_STORE = 'mobileData';
+const META_STORE = 'meta';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
+const SERVER_REACHABILITY_KEY = 'serverReachability';
+const SYNC_LOCK_KEY = 'syncLock';
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
+let mobileState = null;
+let workDurationTimerId = null;
+let modalController = null;
+let syncInFlight = false;
+let initialServerState = null;
 
 function setElementHidden(element, hidden) {
-  if (!element) {
-    return;
-  }
-  if (hidden) {
-    element.hidden = true;
-    element.setAttribute('hidden', 'hidden');
-  } else {
-    element.hidden = false;
-    element.removeAttribute('hidden');
-  }
-}
-
-function setButtonDisabled(element, disabled) {
-  if (!element) {
-    return;
-  }
-  if (disabled) {
-    element.setAttribute('disabled', 'disabled');
-  } else {
-    element.removeAttribute('disabled');
-  }
+  if (!element) return;
+  element.hidden = !!hidden;
+  if (hidden) element.setAttribute('hidden', 'hidden');
+  else element.removeAttribute('hidden');
 }
 
 function withLocalStorage(callback) {
-  if (localStorageUnavailable) {
-    return null;
-  }
+  if (localStorageUnavailable) return null;
   try {
     const storage = window.localStorage;
     if (!storage) {
@@ -55,93 +42,272 @@ function withLocalStorage(callback) {
     return callback(storage);
   } catch (error) {
     localStorageUnavailable = true;
-    console.warn('Lokaler Speicher nicht verfügbar', error);
     return null;
   }
+}
+
+function dispatchSyncStatus(message, state = 'default') {
+  document.dispatchEvent(new CustomEvent('offline-sync-status', { detail: { message, state } }));
+}
+
+function showFeedback(message, type = 'info') {
+  const element = document.getElementById(FEEDBACK_ID);
+  if (!element) return;
+  element.textContent = message;
+  element.dataset.state = type;
+  setElementHidden(element, !message);
+  if (!message) return;
+  const oldTimeout = Number(element.dataset.timeoutId || 0);
+  if (oldTimeout) window.clearTimeout(oldTimeout);
+  const timeoutId = window.setTimeout(() => {
+    element.textContent = '';
+    element.dataset.state = '';
+    setElementHidden(element, true);
+  }, 4200);
+  element.dataset.timeoutId = String(timeoutId);
+}
+
+function setStatusBadge(state) {
+  const badge = document.getElementById('mobile-server-badge');
+  if (!badge) return;
+  const labels = {
+    online: 'Server erreichbar',
+    offline: 'Offline',
+    unreachable: 'Server nicht erreichbar',
+    syncing: 'Synchronisiert …',
+  };
+  badge.textContent = labels[state] || labels.offline;
+  badge.dataset.state = state;
+}
+
+function updateLastSyncLabel(value) {
+  const element = document.getElementById('mobile-last-sync');
+  if (!element) return;
+  if (!value) {
+    element.textContent = 'Noch keine Synchronisation';
+    return;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    element.textContent = value;
+    return;
+  }
+  element.textContent = `${date.toLocaleDateString('de-DE')} ${date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function updateLocalDataBadge(hasData) {
+  const element = document.getElementById('mobile-local-data');
+  if (!element) return;
+  element.textContent = hasData ? 'Lokale Daten verfügbar' : 'Noch keine lokalen Daten';
+  element.dataset.state = hasData ? 'ready' : 'empty';
+}
+
+function updatePendingIndicator(total, detail) {
+  const element = document.getElementById('mobile-pending-actions');
+  if (!element) return;
+  if (total <= 0) {
+    element.textContent = 'Keine ausstehenden Offline-Aktionen';
+  } else if (total === 1) {
+    element.textContent = detail ? `1 Offline-Aktion wartet (${detail})` : '1 Offline-Aktion wartet';
+  } else {
+    element.textContent = detail ? `${total} Offline-Aktionen warten (${detail})` : `${total} Offline-Aktionen warten`;
+  }
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => window.clearTimeout(timeoutId));
+}
+
+function normalizeBreakLabel(minutes) {
+  const value = Number(minutes || 0);
+  const safe = Number.isFinite(value) ? value : 0;
+  const hours = Math.floor(safe / 60);
+  const remainder = Math.abs(Math.round(safe % 60));
+  return `${hours}:${String(remainder).padStart(2, '0')}`;
+}
+
+function buildStateFromEntry(entry) {
+  if (!entry) {
+    return {
+      isWorking: false,
+      onBreak: false,
+      hasCompany: false,
+      startedAtMs: null,
+      breakStartedAtMs: null,
+      totalBreakMs: 0,
+      startLabel: '',
+      breakLabel: '',
+      breakTotalLabel: '0:00',
+      companyName: '',
+      workedLabel: '0:00',
+      pendingPunchSync: false,
+    };
+  }
+  const startIso = `${entry.work_date}T${entry.start_time}`;
+  const breakIso = entry.break_started_at ? `${entry.work_date}T${entry.break_started_at}` : null;
+  const startedAtMs = Date.parse(startIso);
+  const breakStartedAtMs = breakIso ? Date.parse(breakIso) : null;
+  const breakMinutes = Number(entry.total_break_minutes || entry.break_minutes || 0);
+
+  return {
+    isWorking: !!entry.is_open,
+    onBreak: !!entry.break_started_at,
+    hasCompany: !!entry.company_id,
+    startedAtMs: Number.isNaN(startedAtMs) ? null : startedAtMs,
+    breakStartedAtMs: Number.isNaN(breakStartedAtMs) ? null : breakStartedAtMs,
+    totalBreakMs: Math.max(0, breakMinutes * 60000),
+    startLabel: entry.start_time ? entry.start_time.slice(0, 5) : '',
+    breakLabel: entry.break_started_at ? entry.break_started_at.slice(0, 5) : '',
+    breakTotalLabel: normalizeBreakLabel(breakMinutes),
+    companyName: entry.company_name || '',
+    workedLabel: normalizeBreakLabel(entry.worked_minutes || 0),
+    pendingPunchSync: false,
+  };
+}
+
+function cloneState(state) {
+  return {
+    isWorking: !!state.isWorking,
+    onBreak: !!state.onBreak,
+    hasCompany: !!state.hasCompany,
+    startedAtMs: state.startedAtMs || null,
+    breakStartedAtMs: state.breakStartedAtMs || null,
+    totalBreakMs: Number(state.totalBreakMs || 0),
+    startLabel: state.startLabel || '',
+    breakLabel: state.breakLabel || '',
+    breakTotalLabel: state.breakTotalLabel || '0:00',
+    companyName: state.companyName || '',
+    workedLabel: state.workedLabel || '0:00',
+    pendingPunchSync: !!state.pendingPunchSync,
+  };
+}
+
+function formatTime(ms) {
+  if (!ms) return '';
+  const date = new Date(ms);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatDuration(ms) {
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`;
+}
+
+function validatePunchActionAgainstState(state, action, payload = {}) {
+  const isWorking = !!state?.isWorking;
+  const onBreak = !!state?.onBreak;
+  const hasCompany = !!state?.hasCompany;
+
+  if (action === 'start_work') {
+    if (isWorking) return { allowed: false, duplicate: true, reason: 'Arbeitszeit läuft bereits' };
+    return { allowed: true };
+  }
+  if (action === 'start_company') {
+    const requestedName = ((payload.new_company_name || payload.company_name || '') + '').trim();
+    const currentName = ((state?.companyName || '') + '').trim();
+    if (isWorking && hasCompany && requestedName && currentName && requestedName === currentName) {
+      return { allowed: false, duplicate: true, reason: 'Auftrag läuft bereits' };
+    }
+    return { allowed: true };
+  }
+  if (action === 'end_work') {
+    if (!isWorking) return { allowed: false, duplicate: true, reason: 'Keine laufende Arbeitszeit' };
+    return { allowed: true };
+  }
+  if (action === 'start_break') {
+    if (!isWorking || onBreak) return { allowed: false, duplicate: true, reason: 'Pause kann nicht gestartet werden' };
+    return { allowed: true };
+  }
+  if (action === 'end_break') {
+    if (!isWorking || !onBreak) return { allowed: false, duplicate: true, reason: 'Keine laufende Pause' };
+    return { allowed: true };
+  }
+  if (action === 'end_company') {
+    if (!isWorking || !hasCompany) return { allowed: false, duplicate: true, reason: 'Kein laufender Auftrag' };
+    return { allowed: true };
+  }
+  return { allowed: true };
+}
+
+function applyPunchActionToState(state, action, payload = {}) {
+  const next = cloneState(state);
+  const now = Date.now();
+  if (action === 'start_work') {
+    next.isWorking = true;
+    next.onBreak = false;
+    next.hasCompany = false;
+    next.startedAtMs = now;
+    next.breakStartedAtMs = null;
+    next.totalBreakMs = 0;
+    next.startLabel = formatTime(now);
+    next.breakLabel = '';
+    next.breakTotalLabel = '0:00';
+    next.companyName = '';
+  } else if (action === 'end_work') {
+    return buildStateFromEntry(null);
+  } else if (action === 'start_break' && next.isWorking && !next.onBreak) {
+    next.onBreak = true;
+    next.breakStartedAtMs = now;
+    next.breakLabel = formatTime(now);
+  } else if (action === 'end_break' && next.isWorking && next.onBreak) {
+    if (next.breakStartedAtMs) {
+      next.totalBreakMs += Math.max(0, now - next.breakStartedAtMs);
+    }
+    next.onBreak = false;
+    next.breakStartedAtMs = null;
+    next.breakLabel = '';
+    next.breakTotalLabel = formatDuration(next.totalBreakMs);
+  } else if (action === 'start_company') {
+    next.isWorking = true;
+    next.onBreak = false;
+    next.hasCompany = true;
+    next.startedAtMs = now;
+    next.startLabel = formatTime(now);
+    next.breakStartedAtMs = null;
+    next.totalBreakMs = 0;
+    next.breakLabel = '';
+    next.breakTotalLabel = '0:00';
+    next.companyName = (payload.new_company_name || '').trim() || payload.company_name || '';
+  } else if (action === 'end_company') {
+    next.isWorking = true;
+    next.onBreak = false;
+    next.hasCompany = false;
+    next.startedAtMs = now;
+    next.startLabel = formatTime(now);
+    next.breakStartedAtMs = null;
+    next.totalBreakMs = 0;
+    next.breakLabel = '';
+    next.breakTotalLabel = '0:00';
+    next.companyName = '';
+  }
+  return next;
 }
 
 function loadStoredMobileState() {
   return withLocalStorage((storage) => {
     try {
-      const raw = storage.getItem(MOBILE_STATE_STORAGE_KEY);
-      if (!raw) {
-        return null;
-      }
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') {
-        return null;
-      }
-      return parsed;
-    } catch (error) {
-      console.warn('Konnte gespeicherten Arbeitsstatus nicht laden', error);
+      return JSON.parse(storage.getItem(MOBILE_STATE_STORAGE_KEY) || 'null');
+    } catch {
       return null;
     }
   });
 }
 
-function clearStoredMobileState() {
+function persistMobileState() {
+  if (!mobileState) return;
   withLocalStorage((storage) => {
-    try {
-      storage.removeItem(MOBILE_STATE_STORAGE_KEY);
-    } catch (error) {
-      console.warn('Konnte gespeicherten Arbeitsstatus nicht entfernen', error);
-    }
+    storage.setItem(MOBILE_STATE_STORAGE_KEY, JSON.stringify({ ...mobileState, version: 3, updatedAt: Date.now() }));
     return null;
   });
 }
 
-function setElementHidden(element, hidden) {
-  if (!element) {
-    return;
-  }
-  if (hidden) {
-    element.hidden = true;
-    element.setAttribute('hidden', 'hidden');
-  } else {
-    element.hidden = false;
-    element.removeAttribute('hidden');
-  }
-}
-
-function setButtonDisabled(element, disabled) {
-  if (!element) {
-    return;
-  }
-  if (disabled) {
-    element.setAttribute('disabled', 'disabled');
-  } else {
-    element.removeAttribute('disabled');
-  }
-}
-
-function dispatchSyncStatus(message, state = 'default') {
-  document.dispatchEvent(
-    new CustomEvent('offline-sync-status', {
-      detail: { message, state },
-    })
-  );
-}
-
-function showFeedback(message, type = 'info') {
-  const element = document.getElementById(FEEDBACK_ID);
-  if (!element) {
-    return;
-  }
-  element.textContent = message;
-  element.dataset.state = type;
-  setElementHidden(element, !message);
-  if (message) {
-    const existingTimeout = Number(element.dataset.timeoutId || 0);
-    if (existingTimeout) {
-      window.clearTimeout(existingTimeout);
-    }
-    const timeoutId = window.setTimeout(() => {
-      element.textContent = '';
-      element.dataset.state = '';
-      setElementHidden(element, true);
-    }, 3500);
-    element.dataset.timeoutId = String(timeoutId);
-  }
+function clearStoredMobileState() {
+  withLocalStorage((storage) => {
+    storage.removeItem(MOBILE_STATE_STORAGE_KEY);
+    return null;
+  });
 }
 
 function openDatabase() {
@@ -154,914 +320,621 @@ function openDatabase() {
     request.onerror = () => reject(request.error);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(PUNCH_STORE)) {
-        db.createObjectStore(PUNCH_STORE, { keyPath: 'id', autoIncrement: true });
+      if (!db.objectStoreNames.contains(ACTION_STORE)) {
+        const store = db.createObjectStore(ACTION_STORE, { keyPath: 'clientActionId' });
+        store.createIndex('createdAt', 'createdAt');
       }
-      if (!db.objectStoreNames.contains(VACATION_STORE)) {
-        db.createObjectStore(VACATION_STORE, { keyPath: 'id', autoIncrement: true });
+      if (!db.objectStoreNames.contains(DATA_STORE)) {
+        db.createObjectStore(DATA_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(META_STORE)) {
+        db.createObjectStore(META_STORE, { keyPath: 'key' });
       }
     };
     request.onsuccess = () => resolve(request.result);
   });
 }
 
-function createQueue(storeName, fallbackKey) {
-  if (!supportsIndexedDb) {
-    function read() {
-      try {
-        return JSON.parse(localStorage.getItem(fallbackKey) || '[]');
-      } catch (error) {
-        console.warn('Konnte Offline-Daten nicht laden', error);
-        return [];
-      }
-    }
-    function write(data) {
-      try {
-        localStorage.setItem(fallbackKey, JSON.stringify(data));
-      } catch (error) {
-        console.warn('Konnte Offline-Daten nicht speichern', error);
-      }
-    }
-    return {
-      async add(record) {
-        const data = read();
-        const entry = { id: Date.now() + Math.random(), createdAt: Date.now(), data: record };
-        data.push(entry);
-        write(data);
-        return entry.id;
-      },
-      async all() {
-        return read();
-      },
-      async remove(id) {
-        write(read().filter((item) => item.id !== id));
-      },
-      async count() {
-        return read().length;
-      },
-    };
-  }
-
-  async function withStore(mode, callback) {
-    const db = await openDatabase();
-    if (!db) {
-      return null;
-    }
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction(storeName, mode);
-      const store = transaction.objectStore(storeName);
-      const request = callback(store);
-      transaction.oncomplete = () => resolve(request?.result ?? null);
-      transaction.onerror = () => reject(transaction.error);
-    });
-  }
-
-  return {
-    async add(record) {
-      return withStore('readwrite', (store) => store.add({ createdAt: Date.now(), data: record }));
-    },
-    async all() {
-      return (await withStore('readonly', (store) => store.getAll())) || [];
-    },
-    async remove(id) {
-      await withStore('readwrite', (store) => store.delete(id));
-    },
-    async count() {
-      const keys = (await withStore('readonly', (store) => store.getAllKeys())) || [];
-      return keys.length;
-    },
-  };
-}
-
-const punchQueue = createQueue(PUNCH_STORE, 'erfassungPendingPunches');
-const vacationQueue = createQueue(VACATION_STORE, 'erfassungPendingVacations');
-
-function updateQueueIndicator({ punches = 0, vacations = 0, total = punches + vacations } = {}) {
-  const info = document.getElementById(QUEUE_INFO_ID);
-  const countElement = document.getElementById(QUEUE_COUNT_ID);
-  const syncText = document.getElementById(SYNC_TEXT_ID);
-  if (countElement) {
-    countElement.textContent = String(total);
-  }
-  if (syncText) {
-    const detailParts = [];
-    if (punches) {
-      detailParts.push(`${punches} Stempel`);
-    }
-    if (vacations) {
-      detailParts.push(`${vacations} Urlaub`);
-    }
-    const detail = detailParts.join(' · ');
-    if (total === 0) {
-      syncText.textContent = 'Offline-Aktionen werden synchronisiert.';
-    } else if (total === 1) {
-      syncText.textContent = detail ? `Eine Aktion wartet auf Synchronisation (${detail}).` : 'Eine Aktion wartet auf Synchronisation.';
-    } else {
-      syncText.textContent = detail ? `${total} Aktionen warten auf Synchronisation (${detail}).` : `${total} Aktionen warten auf Synchronisation.`;
-    }
-  }
-  setElementHidden(info, total === 0);
-}
-
-async function refreshQueueIndicator() {
-  const [punches, vacations] = await Promise.all([punchQueue.count(), vacationQueue.count()]);
-  const total = punches + vacations;
-  updateQueueIndicator({ punches, vacations, total });
-  return { punches, vacations, total };
-}
-
-async function flushPunchQueue() {
-  const records = await punchQueue.all();
-  if (!records.length) {
-    return { processed: 0, error: false };
-  }
-  let processed = 0;
-  let errorOccurred = false;
-  for (const record of records) {
-    const body = new URLSearchParams(record.data);
-    try {
-      const response = await fetch('/punch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-      });
-      if (!response.ok) {
-        throw new Error(`Serverfehler ${response.status}`);
-      }
-      await punchQueue.remove(record.id);
-      processed += 1;
-    } catch (error) {
-      console.warn('Synchronisation fehlgeschlagen', error);
-      errorOccurred = true;
-      break;
-    }
-  }
-  const counts = await refreshQueueIndicator();
-  if (counts.total === 0 && mobileState?.pendingPunchSync) {
-    mobileState.pendingPunchSync = false;
-    persistMobileState();
-  }
-  if (processed > 0 && counts.total === 0) {
-    dispatchSyncStatus('Alle zwischengespeicherten Aktionen wurden übertragen.', 'synced');
-    showFeedback('Offline-Buchungen erfolgreich übertragen.', 'success');
-  } else if (errorOccurred) {
-    dispatchSyncStatus('Synchronisation nicht möglich – verbleibende Aktionen werden später erneut gesendet.', 'error');
-    showFeedback('Synchronisation der Buchungen fehlgeschlagen. Bitte später erneut versuchen.', 'error');
-  } else if (counts.total > 0) {
-    const message = counts.total === 1
-      ? 'Synchronisation läuft – 1 Aktion verbleibend.'
-      : `Synchronisation läuft – ${counts.total} Aktionen verbleiben.`;
-    dispatchSyncStatus(message, 'queue');
-  }
-  return { processed, error: errorOccurred };
-}
-
-function markVacationRequestSynced(offlineId) {
-  const list = document.querySelector(VACATION_LIST_SELECTOR);
-  if (!list || !offlineId) {
-    return;
-  }
-  const item = list.querySelector(`[data-offline-id="${offlineId}"]`);
-  if (!item) {
-    return;
-  }
-  item.removeAttribute('data-offline-id');
-  const status = item.querySelector('.mobile-vacation__status');
-  if (status) {
-    status.textContent = 'Wartet auf Freigabe';
-    status.classList.remove('mobile-vacation__status--offline');
-    status.classList.add('mobile-vacation__status--pending');
-  }
-  const badge = item.querySelector('.mobile-vacation__badge');
-  if (badge) {
-    badge.remove();
-  }
-}
-
-async function flushVacationQueue() {
-  const records = await vacationQueue.all();
-  if (!records.length) {
-    return { processed: 0, error: false };
-  }
-  let processed = 0;
-  let errorOccurred = false;
-  for (const record of records) {
-    const body = new URLSearchParams(record.data);
-    try {
-      const response = await fetch('/vacations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-        redirect: 'follow',
-      });
-      if (!response.ok) {
-        throw new Error(`Serverfehler ${response.status}`);
-      }
-      await vacationQueue.remove(record.id);
-      markVacationRequestSynced(record.id);
-      processed += 1;
-    } catch (error) {
-      console.warn('Synchronisation der Urlaubsanträge fehlgeschlagen', error);
-      errorOccurred = true;
-      break;
-    }
-  }
-  const counts = await refreshQueueIndicator();
-  if (processed > 0 && counts.total === 0) {
-    dispatchSyncStatus('Alle zwischengespeicherten Aktionen wurden übertragen.', 'synced');
-    showFeedback('Offline-Urlaubsanträge erfolgreich übertragen.', 'success');
-  } else if (errorOccurred) {
-    dispatchSyncStatus('Synchronisation nicht möglich – verbleibende Aktionen werden später erneut gesendet.', 'error');
-    showFeedback('Synchronisation der Urlaubsanträge fehlgeschlagen. Bitte später erneut versuchen.', 'error');
-  }
-  return { processed, error: errorOccurred };
-}
-
-async function flushOfflineQueues() {
-  await flushPunchQueue();
-  await flushVacationQueue();
-}
-
-function serializeFormData(form) {
-  const formData = new FormData(form);
-  const entries = {};
-  for (const [key, value] of formData.entries()) {
-    entries[key] = typeof value === 'string' ? value : '';
-  }
-  return entries;
-}
-
-function formatTime(timestamp) {
-  if (!timestamp) {
-    return '';
-  }
-  const date = new Date(timestamp);
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${hours}:${minutes}`;
-}
-
-function formatDuration(ms) {
-  const totalMinutes = Math.max(0, Math.round(ms / 60000));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `${hours}:${String(minutes).padStart(2, '0')}`;
-}
-
-function formatDateLabel(value) {
-  if (!value) {
-    return '–';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    const parts = value.split('-');
-    if (parts.length === 3) {
-      return `${parts[2]}.${parts[1]}.${parts[0]}`;
-    }
-    return value;
-  }
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const year = date.getFullYear();
-  return `${day}.${month}.${year}`;
-}
-
-let mobileState = null;
-let workDurationTimerId = null;
-let modalController = null;
-
-function persistMobileState() {
-  if (!mobileState) {
-    clearStoredMobileState();
-    return;
-  }
-  if (!mobileState.isWorking && !mobileState.onBreak && !mobileState.hasCompany) {
-    clearStoredMobileState();
-    return;
-  }
-  const snapshot = {
-    version: 1,
-    isWorking: !!mobileState.isWorking,
-    onBreak: !!mobileState.onBreak,
-    hasCompany: !!mobileState.hasCompany,
-    startedAtMs: typeof mobileState.startedAtMs === 'number' ? mobileState.startedAtMs : null,
-    breakStartedAtMs: typeof mobileState.breakStartedAtMs === 'number' ? mobileState.breakStartedAtMs : null,
-    totalBreakMs: typeof mobileState.totalBreakMs === 'number' ? mobileState.totalBreakMs : 0,
-    startLabel: mobileState.startLabel || '',
-    breakLabel: mobileState.breakLabel || '',
-    breakTotalLabel: mobileState.breakTotalLabel || '0:00',
-    companyName: mobileState.companyName || '',
-    workedLabel: mobileState.workedLabel || '0:00',
-    pendingPunch: !!mobileState.pendingPunchSync,
-    updatedAt: Date.now(),
-  };
-  withLocalStorage((storage) => {
-    try {
-      storage.setItem(MOBILE_STATE_STORAGE_KEY, JSON.stringify(snapshot));
-    } catch (error) {
-      console.warn('Konnte Arbeitsstatus nicht zwischenspeichern', error);
-    }
-    return null;
+async function withStore(storeName, mode, callback) {
+  const db = await openDatabase();
+  if (!db) return null;
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(storeName, mode);
+    const store = transaction.objectStore(storeName);
+    const request = callback(store);
+    transaction.oncomplete = () => resolve(request?.result ?? null);
+    transaction.onerror = () => reject(transaction.error);
   });
 }
 
-function restoreMobileStateFromStorage() {
-  if (!mobileState) {
-    return;
-  }
-  const stored = loadStoredMobileState();
-  if (!stored) {
-    return;
-  }
-  if (stored.version && stored.version !== 1) {
-    return;
-  }
-  const storedWorking = stored.isWorking === undefined ? !!stored.startedAtMs : !!stored.isWorking;
-  const datasetWorking = !!mobileState.isWorking;
-  const storedPendingPunch = stored.pendingPunch === undefined ? false : !!stored.pendingPunch;
+async function putRecord(storeName, record) {
+  return withStore(storeName, 'readwrite', (store) => store.put(record));
+}
 
-  mobileState.pendingPunchSync = storedPendingPunch;
+async function getRecord(storeName, key) {
+  return withStore(storeName, 'readonly', (store) => store.get(key));
+}
 
-  const offlineLike = !navigator.onLine || storedPendingPunch;
+async function deleteRecord(storeName, key) {
+  return withStore(storeName, 'readwrite', (store) => store.delete(key));
+}
 
-  if (storedWorking && !datasetWorking && offlineLike) {
-    mobileState.isWorking = true;
+async function getAllRecords(storeName) {
+  return (await withStore(storeName, 'readonly', (store) => store.getAll())) || [];
+}
+
+function serializeFormData(form) {
+  const payload = {};
+  for (const [key, value] of new FormData(form).entries()) {
+    payload[key] = typeof value === 'string' ? value : '';
   }
+  return payload;
+}
 
-  if (storedWorking && (mobileState.isWorking || (!datasetWorking && offlineLike))) {
-    if (typeof stored.startedAtMs === 'number' && !Number.isNaN(stored.startedAtMs)) {
-      if (!mobileState.startedAtMs || mobileState.startedAtMs < stored.startedAtMs) {
-        mobileState.startedAtMs = stored.startedAtMs;
-      }
-    }
-    if (!mobileState.startLabel) {
-      if (stored.startLabel) {
-        mobileState.startLabel = stored.startLabel;
-      } else if (mobileState.startedAtMs) {
-        mobileState.startLabel = formatTime(mobileState.startedAtMs);
-      }
-    }
-    if (!mobileState.hasCompany && stored.hasCompany) {
-      mobileState.hasCompany = true;
-    }
-    if (!mobileState.companyName && typeof stored.companyName === 'string' && stored.companyName) {
-      mobileState.companyName = stored.companyName;
-    }
-  }
+function generateClientActionId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
-  const storedBreakMs = typeof stored.totalBreakMs === 'number' ? stored.totalBreakMs : Number(stored.totalBreakMs);
-  const currentBreakMs = typeof mobileState.totalBreakMs === 'number' ? mobileState.totalBreakMs : Number(mobileState.totalBreakMs);
-  if (!Number.isNaN(storedBreakMs) && (mobileState.isWorking || (!datasetWorking && offlineLike))) {
-    if (Number.isNaN(currentBreakMs) || storedBreakMs > currentBreakMs) {
-      mobileState.totalBreakMs = Math.max(0, storedBreakMs);
-      mobileState.breakTotalLabel = stored.breakTotalLabel || formatDuration(mobileState.totalBreakMs);
-    }
-  }
+async function queueAction(type, payload) {
+  const clientActionId = payload.client_action_id || generateClientActionId(type);
+  payload.client_action_id = clientActionId;
+  await putRecord(ACTION_STORE, {
+    clientActionId,
+    type,
+    endpoint: type === 'vacation' ? '/vacations' : '/punch',
+    payload,
+    createdAt: Date.now(),
+  });
+  return clientActionId;
+}
 
-  if (stored.onBreak && (mobileState.isWorking || (!datasetWorking && offlineLike))) {
-    mobileState.onBreak = true;
-    if (typeof stored.breakStartedAtMs === 'number' && !Number.isNaN(stored.breakStartedAtMs)) {
-      mobileState.breakStartedAtMs = stored.breakStartedAtMs;
-    }
-    if (stored.breakLabel) {
-      mobileState.breakLabel = stored.breakLabel;
-    } else if (mobileState.breakStartedAtMs) {
-      mobileState.breakLabel = formatTime(mobileState.breakStartedAtMs);
-    }
-  }
+async function readPendingActions() {
+  const all = await getAllRecords(ACTION_STORE);
+  return all.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
 
-  if (typeof stored.workedLabel === 'string' && stored.workedLabel && !mobileState.workedLabel) {
-    mobileState.workedLabel = stored.workedLabel;
-  }
+async function refreshQueueIndicator() {
+  const actions = await readPendingActions();
+  const punchCount = actions.filter((item) => item.type === 'punch').length;
+  const vacationCount = actions.filter((item) => item.type === 'vacation').length;
+  const total = actions.length;
+  const detail = [punchCount ? `${punchCount} Stempel` : '', vacationCount ? `${vacationCount} Urlaub` : '']
+    .filter(Boolean)
+    .join(' · ');
+  updatePendingIndicator(total, detail);
+  return { total, punchCount, vacationCount };
+}
+
+function applyStateVisibility(name, active) {
+  document.querySelectorAll(`[data-state="${name}"]`).forEach((element) => setElementHidden(element, !active));
 }
 
 function refreshControlStates() {
   document.querySelectorAll('[data-toggle-disabled]').forEach((element) => {
-    const isHidden = !!element.closest('[hidden]');
-    setButtonDisabled(element, isHidden);
-  });
-}
-
-function applyStateVisibility(stateName, active) {
-  document.querySelectorAll(`[data-state="${stateName}"]`).forEach((element) => {
-    setElementHidden(element, !active);
-    element.setAttribute('aria-hidden', active ? 'false' : 'true');
+    element.toggleAttribute('disabled', !!element.closest('[hidden]'));
   });
 }
 
 function updateWorkDuration() {
-  if (!mobileState) {
-    return;
-  }
+  if (!mobileState) return;
   if (!mobileState.isWorking || !mobileState.startedAtMs) {
     mobileState.workedLabel = '0:00';
   } else {
-    let total = Date.now() - mobileState.startedAtMs;
-    total -= mobileState.totalBreakMs;
+    let total = Date.now() - mobileState.startedAtMs - (mobileState.totalBreakMs || 0);
     if (mobileState.onBreak && mobileState.breakStartedAtMs) {
       total -= Date.now() - mobileState.breakStartedAtMs;
     }
     mobileState.workedLabel = formatDuration(total);
   }
-  const workedElement = document.querySelector('[data-field="worked-duration"]');
-  if (workedElement) {
-    workedElement.textContent = mobileState.workedLabel || '0:00';
-  }
+  const worked = document.querySelector('[data-field="worked-duration"]');
+  if (worked) worked.textContent = mobileState.workedLabel;
 }
 
 function startWorkTimer() {
-  if (workDurationTimerId) {
-    window.clearInterval(workDurationTimerId);
-    workDurationTimerId = null;
-  }
-  if (!mobileState || !mobileState.isWorking || !mobileState.startedAtMs) {
-    updateWorkDuration();
-    return;
-  }
+  if (workDurationTimerId) window.clearInterval(workDurationTimerId);
+  workDurationTimerId = null;
   updateWorkDuration();
+  if (!mobileState?.isWorking) return;
   workDurationTimerId = window.setInterval(updateWorkDuration, 30000);
 }
 
 function updateUiState() {
-  if (!mobileState) {
-    return;
-  }
+  if (!mobileState) return;
   applyStateVisibility('active', mobileState.isWorking);
   applyStateVisibility('idle', !mobileState.isWorking);
   applyStateVisibility('break-active', mobileState.isWorking && mobileState.onBreak);
   applyStateVisibility('break-idle', mobileState.isWorking && !mobileState.onBreak);
   applyStateVisibility('company-active', mobileState.isWorking && mobileState.hasCompany);
 
-  const headerStart = document.querySelector('[data-field="header-start"]');
-  if (headerStart) {
-    headerStart.textContent = mobileState.isWorking ? mobileState.startLabel || '--:--' : '';
-  }
-  const workStart = document.querySelector('[data-field="work-start"]');
-  if (workStart) {
-    workStart.textContent = mobileState.isWorking ? mobileState.startLabel || '--:--' : '';
-  }
-  const companyName = document.querySelector('[data-field="company-name"]');
-  if (companyName) {
-    companyName.textContent = mobileState.companyName || '';
-  }
-  const breakStart = document.querySelector('[data-field="break-start"]');
-  if (breakStart) {
-    breakStart.textContent = mobileState.onBreak ? mobileState.breakLabel || '--:--' : '';
-  }
-  const breakTotal = document.querySelector('[data-field="break-total"]');
-  if (breakTotal) {
-    breakTotal.textContent = mobileState.breakTotalLabel || '0:00';
-  }
+  const values = {
+    'header-start': mobileState.isWorking ? mobileState.startLabel || '--:--' : '',
+    'work-start': mobileState.isWorking ? mobileState.startLabel || '--:--' : '',
+    'company-name': mobileState.companyName || '',
+    'break-start': mobileState.onBreak ? mobileState.breakLabel || '--:--' : '',
+    'break-total': mobileState.breakTotalLabel || '0:00',
+  };
+  Object.entries(values).forEach(([key, value]) => {
+    const element = document.querySelector(`[data-field="${key}"]`);
+    if (element) element.textContent = value;
+  });
+
   refreshControlStates();
-  updateWorkDuration();
   startWorkTimer();
   persistMobileState();
 }
 
-function initializeMobileState() {
-  const root = document.querySelector(MOBILE_STATE_SELECTOR);
-  if (!root) {
-    return;
-  }
-  const data = root.dataset;
-  mobileState = {
-    isWorking: data.stateRunning === 'true',
-    onBreak: data.stateBreak === 'true',
-    hasCompany: data.stateCompany === 'true',
-    startedAtMs: data.startTimestamp ? Date.parse(data.startTimestamp) : null,
-    breakStartedAtMs: data.breakTimestamp ? Date.parse(data.breakTimestamp) : null,
-    totalBreakMs: Number(data.totalBreakMinutes || '0') * 60000,
-    startLabel: data.startLabel || '',
-    breakLabel: data.breakLabel || '',
-    breakTotalLabel: data.breakTotalLabel || (data.totalBreakMinutes ? formatDuration(Number(data.totalBreakMinutes) * 60000) : '0:00'),
-    companyName: data.companyName || '',
-    workedLabel: data.workedLabel || '0:00',
-    pendingPunchSync: false,
-  };
-  if (mobileState.isWorking && !mobileState.startedAtMs) {
-    mobileState.startedAtMs = Date.now();
-    mobileState.startLabel = formatTime(mobileState.startedAtMs);
-  }
-  restoreMobileStateFromStorage();
-  updateUiState();
-}
-
 function determineCompanyName(form, payload) {
-  const newCompany = (payload.new_company_name || '').trim();
-  if (newCompany) {
-    return newCompany;
-  }
-  const select = form?.querySelector('select[name="company_id"]');
-  if (select && select instanceof HTMLSelectElement) {
-    const option = select.options[select.selectedIndex];
-    if (option && option.value) {
-      return option.textContent.trim();
-    }
-  }
-  return '';
+  const typed = (payload.new_company_name || '').trim();
+  if (typed) return typed;
+  const select = form.querySelector('select[name="company_id"]');
+  if (!(select instanceof HTMLSelectElement)) return '';
+  return select.options[select.selectedIndex]?.textContent?.trim() || '';
 }
 
-function setWorkingState(startTimestamp, { hasCompany = false, companyName = '', resetBreak = true } = {}) {
-  if (!mobileState) {
-    return;
-  }
-  if (startTimestamp) {
-    mobileState.isWorking = true;
-    mobileState.startedAtMs = startTimestamp;
-    mobileState.startLabel = formatTime(startTimestamp);
-    if (resetBreak) {
-      mobileState.totalBreakMs = 0;
-      mobileState.breakTotalLabel = '0:00';
+async function recomputeEffectiveState() {
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const pending = await readPendingActions();
+
+  let base = initialServerState ? cloneState(initialServerState) : buildStateFromEntry(snapshot?.data?.active_entry || null);
+  if (!snapshot?.data?.active_entry && !initialServerState) {
+    const stored = loadStoredMobileState();
+    if (stored && stored.version >= 1) {
+      base = cloneState(stored);
     }
-    mobileState.onBreak = false;
-    mobileState.breakStartedAtMs = null;
-    mobileState.breakLabel = '';
-    mobileState.hasCompany = hasCompany;
-    mobileState.companyName = companyName;
-  } else {
-    mobileState.isWorking = false;
-    mobileState.startedAtMs = null;
-    mobileState.startLabel = '';
-    mobileState.totalBreakMs = 0;
-    mobileState.breakTotalLabel = '0:00';
-    mobileState.onBreak = false;
-    mobileState.breakStartedAtMs = null;
-    mobileState.breakLabel = '';
-    mobileState.hasCompany = false;
-    mobileState.companyName = '';
   }
+
+  for (const action of pending) {
+    if (action.type !== 'punch') continue;
+    const payload = action.payload || {};
+    if (payload.action === 'start_company' && !payload.company_name) {
+      payload.company_name = determineCompanyName(document, payload);
+    }
+    base = applyPunchActionToState(base, payload.action, payload);
+    base.pendingPunchSync = true;
+  }
+
+  if (!pending.some((entry) => entry.type === 'punch')) {
+    base.pendingPunchSync = false;
+  }
+
+  mobileState = base;
   updateUiState();
 }
 
-function appendVacationPreview(payload, { offline = false, offlineId = null, status = 'pending' } = {}) {
+async function appendVacationPreview(payload, offline = false) {
   const list = document.querySelector(VACATION_LIST_SELECTOR);
   const empty = document.querySelector(VACATION_EMPTY_SELECTOR);
-  if (!list) {
-    return;
-  }
+  if (!list) return;
   setElementHidden(list, false);
-  if (empty) {
-    setElementHidden(empty, true);
-  }
+  if (empty) setElementHidden(empty, true);
   const item = document.createElement('li');
   item.className = 'mobile-vacation';
-  if (offlineId) {
-    item.dataset.offlineId = String(offlineId);
-  }
-  const statusClass = offline ? 'offline' : status;
-  const statusLabels = {
-    approved: 'Genehmigt',
-    pending: 'Wartet auf Freigabe',
-    withdraw: 'Rücknahme angefragt',
-    cancelled: 'Zurückgezogen',
-    rejected: 'Abgelehnt',
-    offline: 'Offline gespeichert',
-  };
-  const statusLabel = statusLabels[statusClass] || 'Wartet auf Freigabe';
-
-  const header = document.createElement('header');
-  header.className = 'mobile-vacation__header';
-
+  const head = document.createElement('header');
+  head.className = 'mobile-vacation__header';
   const title = document.createElement('strong');
-  title.textContent = `${formatDateLabel(payload.start_date)} – ${formatDateLabel(payload.end_date)}`;
-  header.appendChild(title);
-
-  const statusElement = document.createElement('span');
-  statusElement.className = `mobile-vacation__status mobile-vacation__status--${statusClass}`;
-  statusElement.textContent = statusLabel;
-  header.appendChild(statusElement);
-  item.appendChild(header);
-
-  const meta = document.createElement('div');
-  meta.className = 'mobile-vacation__meta';
-  const type = document.createElement('span');
-  const useOvertime = payload.use_overtime === 'on' || payload.use_overtime === 'true';
-  type.textContent = useOvertime ? 'Überstundenabbau' : 'Urlaub';
-  meta.appendChild(type);
-  const comment = (payload.comment || '').trim();
-  if (comment) {
-    const commentElement = document.createElement('span');
-    commentElement.className = 'mobile-vacation__comment';
-    commentElement.textContent = comment;
-    meta.appendChild(commentElement);
-  }
-  item.appendChild(meta);
-
+  title.textContent = `${payload.start_date} – ${payload.end_date}`;
+  const status = document.createElement('span');
+  status.className = `mobile-vacation__status mobile-vacation__status--${offline ? 'offline' : 'pending'}`;
+  status.textContent = offline ? 'Offline gespeichert' : 'Wartet auf Freigabe';
+  head.append(title, status);
+  item.appendChild(head);
   if (offline) {
     const badge = document.createElement('span');
     badge.className = 'mobile-vacation__badge';
     badge.textContent = 'Synchronisation ausstehend';
     item.appendChild(badge);
   }
-
   list.prepend(item);
-  const maxItems = 8;
-  while (list.children.length > maxItems) {
-    list.removeChild(list.lastElementChild);
+}
+
+async function checkServerReachability(force = false) {
+  if (!navigator.onLine) {
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'offline', updatedAt: Date.now() });
+    setStatusBadge('offline');
+    return 'offline';
+  }
+
+  const last = await getRecord(META_STORE, SERVER_REACHABILITY_KEY);
+  if (!force && last?.value === 'online' && Date.now() - (last.updatedAt || 0) < 15000) {
+    setStatusBadge('online');
+    return 'online';
+  }
+
+  try {
+    const response = await fetchWithTimeout('/api/ping', {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }, 2500);
+    if (!response.ok) {
+      throw new Error(`Ping ${response.status}`);
+    }
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'online', updatedAt: Date.now() });
+    setStatusBadge('online');
+    return 'online';
+  } catch (error) {
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
+    setStatusBadge('unreachable');
+    return 'unreachable';
   }
 }
 
-function applyOfflinePunchAction(action, payload, form) {
-  if (!mobileState) {
-    return;
+async function hydrateCompaniesFromCache() {
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const companies = snapshot?.data?.companies;
+  if (!Array.isArray(companies) || companies.length === 0) return;
+
+  const selects = document.querySelectorAll('select[name="company_id"]');
+  selects.forEach((select) => {
+    if (!(select instanceof HTMLSelectElement)) return;
+    const selected = select.value;
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'Firma auswählen';
+    select.innerHTML = '';
+    select.appendChild(empty);
+    companies.forEach((company) => {
+      const option = document.createElement('option');
+      option.value = String(company.id);
+      option.textContent = company.name;
+      if (String(company.id) === String(selected)) option.selected = true;
+      select.appendChild(option);
+    });
+  });
+}
+
+async function syncServerData() {
+  const status = await checkServerReachability(true);
+  if (status !== 'online') {
+    return false;
   }
-  mobileState.pendingPunchSync = true;
-  const now = Date.now();
-  switch (action) {
-    case 'start_work':
-      setWorkingState(now, { hasCompany: false, companyName: '', resetBreak: true });
-      break;
-    case 'end_work':
-      setWorkingState(null);
-      break;
-    case 'start_break':
-      if (!mobileState.onBreak && mobileState.isWorking) {
-        mobileState.onBreak = true;
-        mobileState.breakStartedAtMs = now;
-        mobileState.breakLabel = formatTime(now);
-        updateUiState();
+  try {
+    const response = await fetchWithTimeout('/mobile/sync-data', {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    }, 5000);
+    if (!response.ok) throw new Error(`Sync HTTP ${response.status}`);
+    const payload = await response.json();
+    await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
+    await putRecord(META_STORE, { key: 'lastSyncAt', value: new Date().toISOString(), updatedAt: Date.now() });
+    await putRecord(META_STORE, { key: 'localDataReady', value: true, updatedAt: Date.now() });
+    updateLocalDataBadge(true);
+    updateLastSyncLabel(new Date().toISOString());
+    await hydrateCompaniesFromCache();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function postQueuedAction(entry) {
+  const body = new URLSearchParams(entry.payload);
+  const response = await fetchWithTimeout(entry.endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: body.toString(),
+    credentials: 'same-origin',
+    redirect: 'follow',
+    cache: 'no-store',
+  }, 8000);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response;
+}
+
+async function flushOfflineQueue() {
+  const pending = await readPendingActions();
+  if (!pending.length) {
+    return { processed: 0, failed: 0, skipped: 0 };
+  }
+
+  dispatchSyncStatus('Synchronisation läuft …', 'syncing');
+  setStatusBadge('syncing');
+
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  let projectedState = buildStateFromEntry(snapshot?.data?.active_entry || null);
+  let processed = 0;
+  let skipped = 0;
+
+  for (const entry of pending) {
+    if (entry.type === 'punch') {
+      const action = entry.payload?.action;
+      const validation = validatePunchActionAgainstState(projectedState, action, entry.payload || {});
+      if (!validation.allowed) {
+        await deleteRecord(ACTION_STORE, entry.clientActionId);
+        skipped += 1;
+        continue;
       }
-      break;
-    case 'end_break':
-      if (mobileState.onBreak && mobileState.isWorking) {
-        const diff = mobileState.breakStartedAtMs ? Math.max(0, now - mobileState.breakStartedAtMs) : 0;
-        mobileState.totalBreakMs += diff;
-        mobileState.breakTotalLabel = formatDuration(mobileState.totalBreakMs);
-        mobileState.onBreak = false;
-        mobileState.breakStartedAtMs = null;
-        mobileState.breakLabel = '';
-        updateUiState();
+    }
+
+    try {
+      await postQueuedAction(entry);
+      await deleteRecord(ACTION_STORE, entry.clientActionId);
+      if (entry.type === 'punch') {
+        projectedState = applyPunchActionToState(projectedState, entry.payload?.action, entry.payload || {});
       }
-      break;
-    case 'start_company': {
-      const companyName = determineCompanyName(form, payload);
-      setWorkingState(now, { hasCompany: true, companyName, resetBreak: true });
-      if (modalController?.close) {
-        modalController.close();
-      }
+      processed += 1;
+    } catch (error) {
       break;
     }
-    case 'end_company':
-      setWorkingState(now, { hasCompany: false, companyName: '', resetBreak: true });
-      break;
-    default:
-      break;
+  }
+
+  const remaining = await refreshQueueIndicator();
+  if (remaining.total === 0) {
+    dispatchSyncStatus('Synchronisation erfolgreich. Alle Aktionen wurden übertragen.', 'synced');
+    showFeedback('Synchronisation erfolgreich.', 'success');
+    return { processed, failed: 0, skipped };
+  }
+  if (processed > 0 || skipped > 0) {
+    dispatchSyncStatus('Synchronisation teilweise erfolgreich. Verbleibende Aktionen folgen automatisch.', 'queue');
+    showFeedback('Teilweise synchronisiert. Rest wird erneut versucht.', 'info');
+    return { processed, failed: remaining.total, skipped };
+  }
+  dispatchSyncStatus('Server aktuell nicht erreichbar. Aktionen bleiben sicher lokal gespeichert.', 'unreachable');
+  return { processed: 0, failed: remaining.total, skipped };
+}
+
+async function performReconnectSync(trigger = 'auto') {
+  if (syncInFlight) return;
+  syncInFlight = true;
+  await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: true, updatedAt: Date.now() });
+  try {
+    const status = await checkServerReachability(true);
+    if (status !== 'online') {
+      if (status === 'unreachable') {
+        dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar.', 'unreachable');
+      } else {
+        dispatchSyncStatus('Keine Verbindung. Du arbeitest offline.', 'offline');
+      }
+      await recomputeEffectiveState();
+      return;
+    }
+
+    await syncServerData();
+    await recomputeEffectiveState();
+    await flushOfflineQueue();
+    await syncServerData();
+    await recomputeEffectiveState();
+    await refreshQueueIndicator();
+
+    if (trigger !== 'background') {
+      dispatchSyncStatus('Server wieder erreichbar. Daten sind synchronisiert.', 'synced');
+    }
+  } finally {
+    await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: false, updatedAt: Date.now() });
+    syncInFlight = false;
+    await checkServerReachability();
   }
 }
 
 async function processPunchSubmission(form, payload) {
-  const action = payload.action;
-  const actionUrl = form?.getAttribute('action') || '/punch';
-  const body = new URLSearchParams(payload);
-
-  async function storeOffline(reason) {
-    try {
-      await punchQueue.add(payload);
-      await refreshQueueIndicator();
-      if (reason === 'server') {
-        dispatchSyncStatus('Server nicht erreichbar – Aktionen werden nachgereicht.', 'error');
-        showFeedback('Server nicht erreichbar. Buchung wurde zwischengespeichert.', 'error');
-      } else {
-        dispatchSyncStatus('Offline – Aktionen werden nachgereicht.', 'queue');
-        showFeedback('Buchung offline gespeichert. Wird synchronisiert, sobald eine Verbindung besteht.', 'info');
-      }
-      applyOfflinePunchAction(action, payload, form);
-      if (form instanceof HTMLFormElement) {
-        form.reset();
-      }
-    } catch (error) {
-      console.error('Konnte Buchung nicht offline speichern', error);
-      showFeedback('Fehler beim Zwischenspeichern. Bitte erneut versuchen.', 'error');
-    }
+  payload.client_action_id = payload.client_action_id || generateClientActionId('punch');
+  if (payload.action === 'start_company') {
+    payload.company_name = determineCompanyName(form, payload);
   }
 
-  if (navigator.onLine) {
-    try {
-      const response = await fetch(actionUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-        redirect: 'follow',
-      });
-      if (!response.ok) {
-        throw new Error(`Serverfehler ${response.status}`);
-      }
-      if (response.redirected) {
-        window.location.href = response.url;
-        return;
-      }
-      const nextUrl = payload.next_url;
-      if (typeof nextUrl === 'string' && nextUrl) {
-        window.location.href = nextUrl;
-        return;
-      }
-      dispatchSyncStatus('Buchung erfolgreich übertragen.', 'synced');
-      showFeedback('Buchung erfolgreich übertragen.', 'success');
-      if (form instanceof HTMLFormElement) {
-        form.reset();
-      }
-      return;
-    } catch (error) {
-      console.warn('Direkte Übertragung fehlgeschlagen, speichere offline', error);
-      await storeOffline('server');
-      return;
-    }
+  await recomputeEffectiveState();
+  const validation = validatePunchActionAgainstState(mobileState || buildStateFromEntry(null), payload.action, payload);
+  if (!validation.allowed) {
+    showFeedback(`Aktion übersprungen: ${validation.reason}.`, 'info');
+    dispatchSyncStatus('Aktion war bereits berücksichtigt und wurde nicht erneut gespeichert.', 'queue');
+    return;
   }
 
-  await storeOffline('offline');
+  const reachability = await checkServerReachability();
+  if (reachability !== 'online') {
+    await queueAction('punch', payload);
+    await recomputeEffectiveState();
+    await refreshQueueIndicator();
+    showFeedback('Offline-Aktion lokal gespeichert. Wird automatisch synchronisiert.', 'info');
+    dispatchSyncStatus('Offline gespeichert – Stempelung wurde lokal erfasst.', 'queue');
+    return;
+  }
+
+  try {
+    const response = await fetchWithTimeout(form.getAttribute('action') || '/punch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: new URLSearchParams(payload).toString(),
+      credentials: 'same-origin',
+      redirect: 'follow',
+      cache: 'no-store',
+    }, 5000);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (response.redirected) {
+      window.location.href = response.url;
+      return;
+    }
+    showFeedback('Buchung erfolgreich übertragen.', 'success');
+    dispatchSyncStatus('Buchung wurde an den Server übertragen.', 'synced');
+    await syncServerData();
+    await recomputeEffectiveState();
+  } catch (error) {
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
+    setStatusBadge('unreachable');
+    await queueAction('punch', payload);
+    await recomputeEffectiveState();
+    await refreshQueueIndicator();
+    showFeedback('Server nicht erreichbar. Aktion wurde lokal gespeichert.', 'info');
+    dispatchSyncStatus('Server nicht erreichbar – Aktion lokal gespeichert.', 'unreachable');
+  }
 }
 
 async function processVacationSubmission(form, payload) {
-  const actionUrl = form?.getAttribute('action') || '/vacations';
-  const body = new URLSearchParams(payload);
-
-  async function storeOffline(reason) {
-    try {
-      const id = await vacationQueue.add(payload);
-      await refreshQueueIndicator();
-      if (reason === 'server') {
-        dispatchSyncStatus('Server nicht erreichbar – Aktionen werden nachgereicht.', 'error');
-        showFeedback('Server nicht erreichbar. Urlaubsantrag wurde zwischengespeichert.', 'error');
-      } else {
-        dispatchSyncStatus('Offline – Aktionen werden nachgereicht.', 'queue');
-        showFeedback('Urlaubsantrag offline gespeichert. Wird synchronisiert, sobald eine Verbindung besteht.', 'info');
-      }
-      appendVacationPreview(payload, { offline: true, offlineId: id });
-      if (form instanceof HTMLFormElement) {
-        form.reset();
-      }
-    } catch (error) {
-      console.error('Konnte Urlaubsantrag nicht offline speichern', error);
-      showFeedback('Fehler beim Zwischenspeichern. Bitte erneut versuchen.', 'error');
-    }
+  payload.client_action_id = payload.client_action_id || generateClientActionId('vacation');
+  const reachability = await checkServerReachability();
+  if (reachability !== 'online') {
+    await queueAction('vacation', payload);
+    await appendVacationPreview(payload, true);
+    await refreshQueueIndicator();
+    showFeedback('Urlaubsantrag offline gespeichert.', 'info');
+    dispatchSyncStatus('Offline gespeichert – Urlaubsantrag wartet auf Synchronisation.', 'queue');
+    return;
   }
 
-  if (navigator.onLine) {
-    try {
-      const response = await fetch(actionUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: body.toString(),
-        credentials: 'same-origin',
-        redirect: 'follow',
-      });
-      if (!response.ok) {
-        throw new Error(`Serverfehler ${response.status}`);
-      }
-      const finalUrl = response.url ? new URL(response.url, window.location.origin) : null;
-      const errorMessage = finalUrl?.searchParams.get('error');
-      if (errorMessage) {
-        showFeedback(decodeURIComponent(errorMessage.replace(/\+/g, ' ')), 'error');
-        return;
-      }
-      appendVacationPreview(payload, { status: 'pending' });
-      showFeedback('Urlaubsantrag erfolgreich übertragen.', 'success');
-      if (form instanceof HTMLFormElement) {
-        form.reset();
-      }
-      return;
-    } catch (error) {
-      console.warn('Direkte Übertragung des Urlaubsantrags fehlgeschlagen, speichere offline', error);
-      await storeOffline('server');
-      return;
-    }
+  try {
+    const response = await fetchWithTimeout(form.getAttribute('action') || '/vacations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: new URLSearchParams(payload).toString(),
+      credentials: 'same-origin',
+      redirect: 'follow',
+      cache: 'no-store',
+    }, 5000);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    showFeedback('Urlaubsantrag erfolgreich übertragen.', 'success');
+    await syncServerData();
+  } catch (error) {
+    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
+    setStatusBadge('unreachable');
+    await queueAction('vacation', payload);
+    await appendVacationPreview(payload, true);
+    await refreshQueueIndicator();
+    showFeedback('Server nicht erreichbar. Antrag lokal gespeichert.', 'info');
+    dispatchSyncStatus('Server nicht erreichbar – Antrag lokal gespeichert.', 'unreachable');
   }
-
-  await storeOffline('offline');
 }
 
-function handleOfflineSubmission(event) {
+async function handleOfflineSubmission(event) {
   event.preventDefault();
   const form = event.target;
   const payload = serializeFormData(form);
-  const offlineType = form?.dataset.offline || 'punch';
-  if (offlineType === 'vacation') {
-    processVacationSubmission(form, payload);
+  if (form.dataset.offline === 'vacation') {
+    await processVacationSubmission(form, payload);
   } else {
-    processPunchSubmission(form, payload);
+    await processPunchSubmission(form, payload);
   }
-
-  await storeOffline('offline');
+  form.reset();
 }
 
 function registerTabHandling() {
   const tabs = Array.from(document.querySelectorAll(TAB_SELECTOR));
   const panels = Array.from(document.querySelectorAll(PANEL_SELECTOR));
-  const validTabs = new Set(tabs.map((tab) => tab.dataset.tab));
-  const defaultTab = tabs.find((tab) => tab.classList.contains('is-active'))?.dataset.tab || 'buchung';
+  if (!tabs.length || !panels.length) return;
+  const defaultTab = tabs.find((item) => item.classList.contains('is-active'))?.dataset.tab || 'buchung';
+  const valid = new Set(tabs.map((item) => item.dataset.tab));
 
-  function activateTab(tabName, updateHistory = true) {
-    if (!validTabs.has(tabName)) {
-      tabName = defaultTab;
-    }
+  const activate = (tabName, updateHistory = true) => {
+    const current = valid.has(tabName) ? tabName : defaultTab;
     tabs.forEach((tab) => {
-      const isActive = tab.dataset.tab === tabName;
-      tab.classList.toggle('is-active', isActive);
-      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      const active = tab.dataset.tab === current;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     panels.forEach((panel) => {
-      const isActive = panel.dataset.tabPanel === tabName;
-      panel.classList.toggle('is-active', isActive);
-      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
-      setElementHidden(panel, !isActive);
+      const active = panel.dataset.tabPanel === current;
+      panel.classList.toggle('is-active', active);
+      setElementHidden(panel, !active);
+      panel.setAttribute('aria-hidden', active ? 'false' : 'true');
     });
-    if (updateHistory) {
-      const newHash = `#${tabName}`;
-      if (history.replaceState) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('tab', tabName);
-        url.hash = newHash;
-        history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-      } else {
-        window.location.hash = newHash;
-      }
-    }
-  }
-
-  tabs.forEach((tab) =>
-    tab.addEventListener('click', (event) => {
-      try {
-        activateTab(tab.dataset.tab);
-        event.preventDefault();
-      } catch (error) {
-        console.error('Konnte mobilen Reiter nicht wechseln', error);
-      }
-    })
-  );
-  window.addEventListener('hashchange', () => activateTab(window.location.hash.replace('#', ''), false));
-  const initialHash = window.location.hash.replace('#', '');
-  let initialTab = initialHash;
-  if (!initialTab) {
-    try {
+    if (updateHistory && history.replaceState) {
       const url = new URL(window.location.href);
-      initialTab = url.searchParams.get('tab') || '';
-    } catch (error) {
-      initialTab = '';
+      url.searchParams.set('tab', current);
+      url.hash = `#${current}`;
+      history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     }
-  }
-  activateTab(initialTab || defaultTab, false);
+  };
+
+  tabs.forEach((tab) => tab.addEventListener('click', (event) => {
+    event.preventDefault();
+    activate(tab.dataset.tab || defaultTab);
+  }));
+  window.addEventListener('hashchange', () => activate(window.location.hash.replace('#', ''), false));
+  activate(window.location.hash.replace('#', ''), false);
 }
 
 function registerModalHandling() {
   const modal = document.getElementById(MODAL_ID);
-  if (!modal) {
-    return;
-  }
-  const openers = document.querySelectorAll(`[data-open="${MODAL_ID}"]`);
-  const closers = modal.querySelectorAll('[data-close]');
-
-  const setVisibility = (visible) => {
-    if (visible) {
-      modal.classList.add('is-visible');
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.classList.add('modal-open');
-      const firstInput = modal.querySelector('select, input, button');
-      if (firstInput instanceof HTMLElement) {
-        firstInput.focus();
-      }
-    } else {
-      modal.classList.remove('is-visible');
-      modal.setAttribute('aria-hidden', 'true');
-      document.body.classList.remove('modal-open');
+  if (!modal) return;
+  const setVisible = (visible) => {
+    modal.classList.toggle('is-visible', visible);
+    modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    document.body.classList.toggle('modal-open', visible);
+  };
+  modalController = { open: () => setVisible(true), close: () => setVisible(false) };
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest(`[data-open="${MODAL_ID}"]`) : null;
+    if (target) {
+      event.preventDefault();
+      setVisible(true);
+      return;
     }
-  };
-
-  modalController = {
-    open: () => setVisibility(true),
-    close: () => setVisibility(false),
-  };
-
-  openers.forEach((button) => button.addEventListener('click', () => setVisibility(true)));
-  closers.forEach((element) => element.addEventListener('click', () => setVisibility(false)));
+    const closer = event.target instanceof Element ? event.target.closest('[data-close]') : null;
+    if (closer && modal.contains(closer)) {
+      event.preventDefault();
+      setVisible(false);
+    }
+  });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && modal.classList.contains('is-visible')) {
-      setVisibility(false);
-    }
+    if (event.key === 'Escape' && modal.classList.contains('is-visible')) setVisible(false);
   });
 }
 
 function registerOfflineForms() {
-  const forms = document.querySelectorAll(FORM_SELECTOR);
-  forms.forEach((form) => form.addEventListener('submit', handleOfflineSubmission));
+  document.querySelectorAll(FORM_SELECTOR).forEach((form) => form.addEventListener('submit', handleOfflineSubmission));
+}
+
+function initializeServerStateFromDataset() {
+  const root = document.querySelector(MOBILE_STATE_SELECTOR);
+  if (!root) {
+    initialServerState = buildStateFromEntry(null);
+    mobileState = buildStateFromEntry(null);
+    return;
+  }
+
+  const data = root.dataset;
+  const entry = data.stateRunning === 'true' ? {
+    work_date: data.startTimestamp ? data.startTimestamp.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    start_time: data.startLabel ? `${data.startLabel}:00` : '00:00:00',
+    break_started_at: data.stateBreak === 'true' && data.breakLabel ? `${data.breakLabel}:00` : null,
+    company_id: data.stateCompany === 'true' ? 1 : null,
+    company_name: data.companyName || '',
+    is_open: true,
+    total_break_minutes: Number(data.totalBreakMinutes || 0),
+    worked_minutes: 0,
+    break_minutes: Number(data.totalBreakMinutes || 0),
+  } : null;
+
+  initialServerState = buildStateFromEntry(entry);
+  mobileState = cloneState(initialServerState);
+}
+
+async function initializeSyncMeta() {
+  const lastSync = await getRecord(META_STORE, 'lastSyncAt');
+  const localData = await getRecord(META_STORE, 'localDataReady');
+  updateLastSyncLabel(lastSync?.value || null);
+  updateLocalDataBadge(!!localData?.value);
+  await refreshQueueIndicator();
 }
 
 function setupConnectionHandlers() {
-  window.addEventListener('online', () => {
-    flushOfflineQueues();
+  window.addEventListener('online', () => performReconnectSync('online-event'));
+  window.addEventListener('offline', async () => {
+    setStatusBadge('offline');
+    dispatchSyncStatus('Keine Verbindung. Eingaben werden lokal gespeichert.', 'offline');
+    await checkServerReachability(true);
   });
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
   registerTabHandling();
   registerModalHandling();
-  initializeMobileState();
   registerOfflineForms();
   setupConnectionHandlers();
-  await refreshQueueIndicator();
-  if (navigator.onLine) {
-    flushOfflineQueues();
+  initializeServerStateFromDataset();
+  await initializeSyncMeta();
+  await hydrateCompaniesFromCache();
+  await recomputeEffectiveState();
+
+  const status = await checkServerReachability(true);
+  if (status === 'online') {
+    await performReconnectSync('startup');
+  } else if (status === 'unreachable') {
+    dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar. Lokale Daten werden genutzt.', 'unreachable');
+  } else {
+    dispatchSyncStatus('Offline-Modus aktiv. Lokale Daten werden verwendet.', 'offline');
   }
 });
