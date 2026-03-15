@@ -320,19 +320,21 @@
                         <dt>Soll</dt>
                         <dd>{{ metrics.target_minutes|format_minutes }} Std</dd>
                     </div>
-                    <div>
-                        <dt>Überstunden</dt>
-                        <dd>{{ metrics.total_overtime_minutes|format_minutes }} Std</dd>
-                    </div>
-                    <div>
-                        <dt>Genommene Überstd.</dt>
-                        <dd>{{ metrics.overtime_taken_minutes|format_minutes }} Std</dd>
-                    </div>
+                    {% if show_overtime_metrics %}
+                        <div>
+                            <dt>Überstunden</dt>
+                            <dd>{{ metrics.total_overtime_minutes|format_minutes }} Std</dd>
+                        </div>
+                        <div>
+                            <dt>Genommene Überstd.</dt>
+                            <dd>{{ metrics.overtime_taken_minutes|format_minutes }} Std</dd>
+                        </div>
+                    {% endif %}
                     <div>
                         <dt>Urlaub (Monat)</dt>
                         <dd>{{ metrics.vacation_minutes|format_minutes }} Std</dd>
                     </div>
-                    {% if metrics.overtime_limit_minutes %}
+                    {% if show_overtime_metrics and metrics.overtime_limit_minutes %}
                         <div>
                             <dt>Überstundenlimit</dt>
                             <dd>{{ metrics.overtime_limit_minutes|format_minutes }} Std</dd>

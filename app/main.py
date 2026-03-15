@@ -791,6 +791,7 @@ def logout(request: Request):
 
 def _build_daily_overview(db: Session, user_id: int, target_date: date) -> dict[str, object]:
     entries = crud.get_time_entries_for_user(db, user_id, start=target_date, end=target_date)
+    entries = [entry for entry in entries if entry.status != models.TimeEntryStatus.REJECTED]
     entries = sorted(entries, key=lambda entry: (entry.start_time, entry.id))
     total_minutes = sum(entry.worked_minutes for entry in entries)
     return {
@@ -810,6 +811,9 @@ def _build_weekly_overview(
     week_start = reference_date - timedelta(days=reference_date.weekday())
     week_end = week_start + timedelta(days=6)
     weekly_entries = crud.get_time_entries_for_user(db, user.id, start=week_start, end=week_end)
+    weekly_entries = [
+        entry for entry in weekly_entries if entry.status != models.TimeEntryStatus.REJECTED
+    ]
     weekly_vacations = crud.get_vacations_in_range(
         db,
         week_start,
@@ -903,6 +907,7 @@ def _build_dashboard_context(db: Session, user: models.User):
     daily_entries = daily_overview["entries"]
     daily_total_minutes = daily_overview["total_minutes"]
     daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
+    show_overtime_metrics = bool(user.time_account_enabled or user.overtime_vacation_enabled)
     return {
         "metrics": metrics,
         "holidays": holidays,
@@ -924,6 +929,7 @@ def _build_dashboard_context(db: Session, user: models.User):
         "today": today,
         "weekly_summary": weekly_summary,
         "daily_target_minutes": daily_target_minutes,
+        "show_overtime_metrics": show_overtime_metrics,
     }
 
 

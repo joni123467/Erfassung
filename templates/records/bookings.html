@@ -34,18 +34,22 @@
                 {% if total_overtime_minutes %}+{{ total_overtime_minutes|format_minutes }} Std{% elif total_undertime_minutes %}-{{ total_undertime_minutes|format_minutes }} Std{% else %}Ausgeglichen{% endif %}
             </dd>
         </div>
-        <div class="dashboard-summary-list__item">
-            <dt>Überstundenabbau</dt>
-            <dd>{{ overtime_taken_minutes|format_minutes }} Stunden</dd>
-        </div>
+        {% if user.time_account_enabled or user.overtime_vacation_enabled %}
+            <div class="dashboard-summary-list__item">
+                <dt>Überstundenabbau</dt>
+                <dd>{{ overtime_taken_minutes|format_minutes }} Stunden</dd>
+            </div>
+        {% endif %}
         <div class="dashboard-summary-list__item">
             <dt>Urlaubsstunden (Monat)</dt>
             <dd>{{ vacation_minutes|format_minutes }} Stunden</dd>
         </div>
-        <div class="dashboard-summary-list__item">
-            <dt>Überstunden (Monat)</dt>
-            <dd>{{ total_overtime_minutes|format_minutes }} Stunden</dd>
-        </div>
+        {% if user.time_account_enabled or user.overtime_vacation_enabled %}
+            <div class="dashboard-summary-list__item">
+                <dt>Überstunden (Monat)</dt>
+                <dd>{{ total_overtime_minutes|format_minutes }} Stunden</dd>
+            </div>
+        {% endif %}
         {% if user.time_account_enabled %}
             <div class="dashboard-summary-list__item">
                 <dt>Minusstunden (Monat)</dt>
