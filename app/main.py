@@ -1774,6 +1774,7 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     users = crud.get_users(db)
+    mobile_install_url = str(request.url_for("mobile_dashboard"))
     return _admin_template(
         "admin/users_list.html",
         request,
@@ -1781,6 +1782,7 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
         message=message,
         error=error,
         users=users,
+        mobile_install_url=mobile_install_url,
     )
 
 

@@ -103,8 +103,12 @@
                             <input type="hidden" name="action" value="start_company">
                             {% if companies %}
                                 <label>
+                                    Firma suchen
+                                    <input type="search" placeholder="Firma suchen …" autocomplete="off" data-company-search-target="dashboard-order-company-select">
+                                </label>
+                                <label>
                                     Firma auswählen
-                                    <select name="company_id">
+                                    <select name="company_id" id="dashboard-order-company-select" data-company-searchable="true">
                                         <option value="">Firma wählen</option>
                                         {% for company in companies %}
                                             <option value="{{ company.id }}">{{ company.name }}</option>
@@ -364,8 +368,12 @@
             <input type="number" name="break_minutes" value="0" min="0">
         </label>
         <label>
+            Firma suchen
+            <input type="search" placeholder="Firma suchen …" autocomplete="off" data-company-search-target="dashboard-manual-company-select">
+        </label>
+        <label>
             Firma
-            <select name="company_id">
+            <select name="company_id" id="dashboard-manual-company-select" data-company-searchable="true">
                 <option value="">– auswählen –</option>
                 {% for company in companies %}
                     <option value="{{ company.id }}">{{ company.name }}</option>

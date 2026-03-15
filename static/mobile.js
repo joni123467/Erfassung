@@ -452,6 +452,7 @@ function updateUiState() {
     'company-name': mobileState.companyName || '',
     'break-start': mobileState.onBreak ? mobileState.breakLabel || '--:--' : '',
     'break-total': mobileState.breakTotalLabel || '0:00',
+    'booking-mode': mobileState.hasCompany ? 'Auftrag läuft' : 'Nur Arbeitszeit',
   };
   Object.entries(values).forEach(([key, value]) => {
     const element = document.querySelector(`[data-field="${key}"]`);
@@ -887,6 +888,49 @@ function registerModalHandling() {
   });
 }
 
+function registerCompanySearch() {
+  const searchInputs = document.querySelectorAll('[data-company-search-target]');
+  searchInputs.forEach((input) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    const targetId = input.dataset.companySearchTarget || '';
+    if (!targetId) return;
+    const select = document.getElementById(targetId);
+    if (!(select instanceof HTMLSelectElement)) return;
+
+    const update = () => {
+      const query = (input.value || '').trim().toLocaleLowerCase('de-DE');
+      let visibleCount = 0;
+      Array.from(select.options).forEach((option, index) => {
+        if (index === 0) {
+          option.hidden = false;
+          return;
+        }
+        const label = (option.textContent || '').toLocaleLowerCase('de-DE');
+        const visible = !query || label.includes(query);
+        option.hidden = !visible;
+        if (visible) visibleCount += 1;
+      });
+
+      let hint = input.parentElement?.querySelector('.company-search-empty');
+      if (!hint) {
+        hint = document.createElement('small');
+        hint.className = 'company-search-empty';
+        input.parentElement?.appendChild(hint);
+      }
+      hint.textContent = visibleCount === 0 && query ? 'Keine passende Firma gefunden. Du kannst unten eine neue Firma anlegen.' : '';
+      hint.hidden = !hint.textContent;
+
+      const selected = select.options[select.selectedIndex];
+      if (selected && selected.hidden) {
+        select.value = '';
+      }
+    };
+
+    input.addEventListener('input', update);
+    update();
+  });
+}
+
 function registerOfflineForms() {
   document.querySelectorAll(FORM_SELECTOR).forEach((form) => form.addEventListener('submit', handleOfflineSubmission));
 }
@@ -937,6 +981,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   registerTabHandling();
   registerModalHandling();
   registerOfflineForms();
+  registerCompanySearch();
   setupConnectionHandlers();
   initializeServerStateFromDataset();
   await initializeSyncMeta();
