@@ -2,7 +2,7 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.1.6`
+**Version:** `0.1.7`
 
 ## Deployment-Standard (neu)
 
@@ -34,13 +34,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.1.6 .
+docker build -t erfassung:0.1.7 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.1.6
+  erfassung:0.1.7
 ```
 
 ## GHCR & GitHub Actions
@@ -50,20 +50,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.1.6`)
+- Push von Tags `v*` (z. B. `v0.1.7`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.1.6`)
+- Versions-Tag aus `VERSION` (hier `0.1.7`)
 - `latest` auf `main`
-- Git-Tag (`v0.1.6`)
+- Git-Tag (`v0.1.7`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.1.6`
+`ghcr.io/OWNER/erfassung:0.1.7`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -76,7 +76,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.1.6
+    image: ghcr.io/OWNER/erfassung:0.1.7
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -103,8 +103,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.1.6`)
-- optional Image-Name/Tag (`erfassung`, `0.1.6`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.1.7`)
+- optional Image-Name/Tag (`erfassung`, `0.1.7`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 
