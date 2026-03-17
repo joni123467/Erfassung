@@ -10,6 +10,7 @@
         <a href="/admin/groups" class="button ghost">Zur Übersicht</a>
     </div>
     <form method="post" action="{% if is_edit %}/admin/groups/{{ group.id }}/update{% else %}/admin/groups/create{% endif %}" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <label class="full-width">
             Gruppenname
             <input type="text" name="name" value="{{ group.name if is_edit else '' }}" required>
@@ -49,6 +50,7 @@
     </form>
     {% if is_edit %}
         <form method="post" action="/admin/groups/{{ group.id }}/delete" class="danger-zone" onsubmit="return confirm('Gruppe wirklich löschen? Zugeordnete Nutzer müssen vorher entfernt werden.');">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <button type="submit" class="button danger small">Gruppe löschen</button>
         </form>
     {% endif %}

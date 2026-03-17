@@ -11,6 +11,7 @@
     </div>
     <div class="card-body card-body--form card-body--wide">
         <form method="post" action="{% if is_edit %}/admin/users/{{ form_user.id }}/update{% else %}/admin/users/create{% endif %}" class="user-form">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <div class="user-form__columns">
                 <div class="user-form__column">
                     <fieldset class="user-form__section user-form__section--stacked">
@@ -113,6 +114,7 @@
         </form>
         {% if is_edit %}
             <form method="post" action="/admin/users/{{ form_user.id }}/delete" class="danger-zone" onsubmit="return confirm('Benutzer wirklich löschen?');">
+                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                 <button type="submit" class="button danger small">Benutzer löschen</button>
             </form>
         {% endif %}

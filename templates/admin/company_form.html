@@ -10,6 +10,7 @@
         <a href="/admin/companies" class="button ghost">Zur Übersicht</a>
     </div>
     <form method="post" action="{% if is_edit %}/admin/companies/{{ company.id }}/update{% else %}/admin/companies/create{% endif %}" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <label class="full-width">
             Firmenname
             <input type="text" name="name" value="{{ company.name if is_edit else '' }}" required>
@@ -24,6 +25,7 @@
     </form>
     {% if is_edit %}
         <form method="post" action="/admin/companies/{{ company.id }}/delete" class="danger-zone" onsubmit="return confirm('Firma wirklich löschen? Vorhandene Buchungen werden als gelöscht markiert und bleiben sichtbar.');">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <button type="submit" class="button danger small">Firma löschen</button>
         </form>
     {% endif %}

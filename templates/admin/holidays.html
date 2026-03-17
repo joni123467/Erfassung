@@ -29,6 +29,7 @@
         </form>
         <div class="holiday-actions">
             <form method="post" action="/admin/holidays/sync" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                 <input type="hidden" name="state" value="{{ selected_state }}">
                 <label>
                     Jahr synchronisieren
@@ -41,6 +42,7 @@
                 <button type="submit" class="button small">Feiertage laden</button>
             </form>
             <form method="post" action="/admin/holidays/create" class="holiday-form">
+                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                 <input type="hidden" name="state" value="{{ selected_state }}">
                 <div class="holiday-form__grid">
                     <label>
@@ -79,6 +81,7 @@
                     <td>{{ holiday.region }}</td>
                     <td>
                         <form method="post" action="/admin/holidays/{{ holiday.id }}/delete" class="inline-form" onsubmit="return confirm('Feiertag wirklich löschen?');">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="state" value="{{ selected_state }}">
                             <input type="hidden" name="year" value="{{ selected_year }}">
                             <button type="submit" class="button danger small">Löschen</button>

@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse
 
+import secrets
+
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 
 try:  # FastAPI <=0.75 did not re-export BackgroundTasks
@@ -24,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
@@ -34,18 +37,82 @@ from .pdf_export import export_team_overview_pdf, export_time_overview_pdf
 
 models.Base.metadata.create_all(bind=database.engine)
 
+_SESSION_SECRET = os.environ.get("SESSION_SECRET_KEY", "zeit-erfassung-secret-key")
+_HTTPS_ONLY_SESSION = os.environ.get("HTTPS_ONLY_SESSION", "false").lower() == "true"
+
+
+def get_csrf_token(request: Request) -> str:
+    """Return the CSRF token for the current session, creating it if absent."""
+    if "session" not in request.scope:
+        return ""
+    token = request.session.get("csrf_token")
+    if not token:
+        token = secrets.token_hex(32)
+        request.session["csrf_token"] = token
+    return token
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """Validate synchronizer CSRF tokens on all state-changing requests."""
+
+    _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+    _CSRF_ERROR_HTML = (
+        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+        "<title>Sitzungsfehler – Erfassung</title></head><body>"
+        "<h1>403 – Ungültige Sitzung</h1>"
+        "<p>Das Sicherheitstoken ist abgelaufen oder ungültig. "
+        "Bitte lade die Seite neu.</p>"
+        "<a href='/'>Zurück zur Startseite</a></body></html>"
+    )
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in self._SAFE_METHODS:
+            return await call_next(request)
+
+        session_token: str | None = None
+        if "session" in request.scope:
+            session_token = request.session.get("csrf_token")
+
+        if not session_token:
+            return HTMLResponse(content=self._CSRF_ERROR_HTML, status_code=403)
+
+        # Accept token from explicit header (fetch/XHR) or from form body
+        submitted_token: str | None = request.headers.get("x-csrf-token")
+        if not submitted_token:
+            content_type = request.headers.get("content-type", "")
+            if (
+                "application/x-www-form-urlencoded" in content_type
+                or "multipart/form-data" in content_type
+            ):
+                form_data = await request.form()
+                submitted_token = form_data.get("csrf_token")  # type: ignore[assignment]
+
+        if not submitted_token or not hmac.compare_digest(
+            session_token, str(submitted_token)
+        ):
+            return HTMLResponse(content=self._CSRF_ERROR_HTML, status_code=403)
+
+        return await call_next(request)
+
+
 app = FastAPI(
     title="Erfassung",
     description="Zeiterfassung mit Überstunden & Urlaub",
     version=APP_VERSION,
 )
 
-app.add_middleware(SessionMiddleware, secret_key="zeit-erfassung-secret-key")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_SESSION_SECRET,
+    https_only=_HTTPS_ONLY_SESSION,
+)
+app.add_middleware(CSRFMiddleware)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 templates.env.globals["app_version"] = APP_VERSION
+templates.env.globals["get_csrf_token"] = get_csrf_token
 
 def _parse_overtime_limit_hours(value: Optional[str]) -> Optional[int]:
     if value is None:
@@ -139,6 +206,12 @@ def _row_get(row: object, key: str, fallback_index: int | None = None):
 
 
 logger = logging.getLogger(__name__)
+
+if _SESSION_SECRET == "zeit-erfassung-secret-key":
+    logger.warning(
+        "SESSION_SECRET_KEY ist nicht gesetzt – unsicherer Standard wird verwendet. "
+        "Bitte SESSION_SECRET_KEY als Umgebungsvariable setzen."
+    )
 
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
