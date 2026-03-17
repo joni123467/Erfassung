@@ -7,7 +7,8 @@
   <!-- Empty at load; getCsrfToken() fills this from localStorage on first use -->
   <meta name="csrf-token" content="">
   <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
-  <link rel="apple-touch-icon" href="/static/icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-512.png">
   <link rel="manifest" href="/static/manifest.webmanifest">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -58,7 +59,6 @@
       <a href="#uebersicht" class="mobile-tab" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="false" role="tab">Übersicht</a>
       <a href="#salden" class="mobile-tab" data-tab="salden" id="mobile-tab-salden" aria-controls="mobile-panel-salden" aria-selected="false" role="tab">Salden</a>
       <a href="#urlaub" class="mobile-tab" data-tab="urlaub" id="mobile-tab-urlaub" aria-controls="mobile-panel-urlaub" aria-selected="false" role="tab">Urlaub</a>
-      <a href="#einstellungen" class="mobile-tab" data-tab="einstellungen" id="mobile-tab-einstellungen" aria-controls="mobile-panel-einstellungen" aria-selected="false" role="tab">Einstellungen</a>
     </nav>
 
     <div class="mobile-panels">
@@ -281,6 +281,17 @@
   <div class="mobile-account-footer__user">
     <span class="mobile-account-footer__name">Offline-Modus</span>
   </div>
+  <a
+    href="#einstellungen"
+    class="mobile-tab mobile-settings-btn"
+    data-tab="einstellungen"
+    id="mobile-tab-einstellungen"
+    aria-controls="mobile-panel-einstellungen"
+    aria-selected="false"
+    role="tab"
+    aria-label="Einstellungen"
+    title="Einstellungen"
+  >⚙</a>
   <a class="mobile-account-footer__logout" href="/logout">Abmelden</a>
 </footer>
 

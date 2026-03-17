@@ -42,7 +42,7 @@
     {% set tab = active_tab or 'buchung' %}
     <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
         <a
-            href="{{ tab_urls.buchung }}#buchung"
+            href="#buchung"
             class="mobile-tab {% if tab == 'buchung' %}is-active{% endif %}"
             data-tab="buchung"
             id="mobile-tab-buchung"
@@ -51,7 +51,7 @@
             role="tab"
         >Buchung</a>
         <a
-            href="{{ tab_urls.uebersicht }}#uebersicht"
+            href="#uebersicht"
             class="mobile-tab {% if tab == 'uebersicht' %}is-active{% endif %}"
             data-tab="uebersicht"
             id="mobile-tab-uebersicht"
@@ -60,7 +60,7 @@
             role="tab"
         >Übersicht</a>
         <a
-            href="{{ tab_urls.salden }}#salden"
+            href="#salden"
             class="mobile-tab {% if tab == 'salden' %}is-active{% endif %}"
             data-tab="salden"
             id="mobile-tab-salden"
@@ -69,7 +69,7 @@
             role="tab"
         >Salden</a>
         <a
-            href="{{ tab_urls.urlaub }}#urlaub"
+            href="#urlaub"
             class="mobile-tab {% if tab == 'urlaub' %}is-active{% endif %}"
             data-tab="urlaub"
             id="mobile-tab-urlaub"
@@ -77,15 +77,6 @@
             aria-selected="{{ 'true' if tab == 'urlaub' else 'false' }}"
             role="tab"
         >Urlaub</a>
-        <a
-            href="{{ tab_urls.einstellungen }}#einstellungen"
-            class="mobile-tab {% if tab == 'einstellungen' %}is-active{% endif %}"
-            data-tab="einstellungen"
-            id="mobile-tab-einstellungen"
-            aria-controls="mobile-panel-einstellungen"
-            aria-selected="{{ 'true' if tab == 'einstellungen' else 'false' }}"
-            role="tab"
-        >Einstellungen</a>
     </nav>
 
     <div class="mobile-panels">
