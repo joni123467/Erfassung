@@ -2045,14 +2045,40 @@ tr.company-deleted td {
     border-top: 1px solid var(--border);
     box-shadow: 0 -10px 25px rgba(18, 46, 108, 0.08);
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
     gap: 0.75rem;
 }
 
 .mobile-account-footer__user {
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
+}
+
+/* Small gear settings button in the footer */
+.mobile-settings-btn {
+    flex: none;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    font-size: 1.25rem;
+    border-radius: 50%;
+    background: rgba(29, 126, 208, 0.1);
+    color: var(--brand);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+}
+
+.mobile-settings-btn.is-active,
+.mobile-settings-btn:hover,
+.mobile-settings-btn:focus-visible {
+    background: var(--brand);
+    color: #fff;
 }
 
 .mobile-account-footer__name {

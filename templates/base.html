@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Erfassung{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg?v={{ app_version }}">
-    <link rel="apple-touch-icon" href="/static/icons/icon.svg?v={{ app_version }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png?v={{ app_version }}">
+    <link rel="apple-touch-icon" href="/static/icons/icon-512.png?v={{ app_version }}">
     <link rel="manifest" href="/static/manifest.webmanifest?v={{ app_version }}">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -69,6 +70,17 @@
         <span class="mobile-account-footer__name">{{ user.full_name }}</span>
         <small class="mobile-account-footer__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
     </div>
+    <a
+        href="#einstellungen"
+        class="mobile-tab mobile-settings-btn"
+        data-tab="einstellungen"
+        id="mobile-tab-einstellungen"
+        aria-controls="mobile-panel-einstellungen"
+        aria-selected="false"
+        role="tab"
+        aria-label="Einstellungen"
+        title="Einstellungen"
+    >⚙</a>
     <a class="mobile-account-footer__logout" href="/logout">Abmelden</a>
 </footer>
 {% elif not mobile %}
