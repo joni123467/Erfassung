@@ -1239,7 +1239,7 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
             "error": request.query_params.get("error"),
             "mobile": True,
             "active_tab": tab_param,
-            "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden", "urlaub")),
+            "tab_urls": _build_mobile_tab_urls(request, ("buchung", "uebersicht", "salden", "urlaub", "einstellungen")),
             "hide_navigation": True,
         }
     )

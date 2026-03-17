@@ -15,6 +15,7 @@ const META_STORE = 'meta';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
 const SERVER_REACHABILITY_KEY = 'serverReachability';
 const SYNC_LOCK_KEY = 'syncLock';
+const SETTINGS_DEFAULT = { cacheDurationHours: 24 };
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
@@ -116,7 +117,15 @@ function updatePendingIndicator(total, detail) {
 
 function getCsrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
-  return meta ? meta.getAttribute('content') || '' : '';
+  const token = meta ? meta.getAttribute('content') || '' : '';
+  if (token) {
+    // Cache in localStorage so the static offline shell can use it too
+    try { window.localStorage.setItem('erfassung_csrf_token', token); } catch {}
+    return token;
+  }
+  // Fallback: use the token cached from the last online page load
+  try { return window.localStorage.getItem('erfassung_csrf_token') || ''; } catch {}
+  return '';
 }
 
 function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
@@ -970,6 +979,114 @@ function initializeServerStateFromDataset() {
   mobileState = cloneState(initialServerState);
 }
 
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+async function loadSettings() {
+  const record = await getRecord(META_STORE, 'settings');
+  return { ...SETTINGS_DEFAULT, ...(record?.value || {}) };
+}
+
+async function saveSettings(settings) {
+  await putRecord(META_STORE, {
+    key: 'settings',
+    value: { ...SETTINGS_DEFAULT, ...settings },
+    updatedAt: Date.now(),
+  });
+}
+
+async function isCacheStale() {
+  const settings = await loadSettings();
+  const lastSync = await getRecord(META_STORE, 'lastSyncAt');
+  if (!lastSync?.value) return true;
+  const elapsed = Date.now() - new Date(lastSync.value).getTime();
+  return elapsed > settings.cacheDurationHours * 3600000;
+}
+
+async function updateSettingsTab() {
+  const settings = await loadSettings();
+
+  const select = document.getElementById('mobile-setting-cache-duration');
+  if (select) select.value = String(settings.cacheDurationHours);
+
+  const stale = await isCacheStale();
+  const cacheStatus = document.getElementById('mobile-cache-status');
+  if (cacheStatus) {
+    cacheStatus.textContent = stale
+      ? 'Offline-Daten möglicherweise veraltet – bitte mit Server verbinden.'
+      : 'Offline-Daten sind aktuell.';
+    cacheStatus.dataset.state = stale ? 'warning' : 'ok';
+  }
+
+  const staleWarning = document.getElementById('mobile-stale-warning');
+  if (staleWarning) {
+    staleWarning.hidden = !stale;
+  }
+}
+
+async function initSettingsTab() {
+  await updateSettingsTab();
+
+  const select = document.getElementById('mobile-setting-cache-duration');
+  if (select) {
+    select.addEventListener('change', async () => {
+      const hours = Number(select.value);
+      if (Number.isFinite(hours) && hours > 0) {
+        await saveSettings({ cacheDurationHours: hours });
+        showFeedback(
+          `Cache-Dauer gesetzt: ${select.options[select.selectedIndex].text}.`,
+          'info'
+        );
+      }
+    });
+  }
+
+  const syncBtn = document.getElementById('mobile-sync-now-btn');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', async () => {
+      syncBtn.disabled = true;
+      try {
+        const reachability = await checkServerReachability(true);
+        if (reachability !== 'online') {
+          showFeedback('Server nicht erreichbar. Bitte Internetverbindung prüfen.', 'info');
+          return;
+        }
+        await performReconnectSync('manual');
+        await updateSettingsTab();
+        showFeedback('Synchronisation abgeschlossen.', 'success');
+      } finally {
+        syncBtn.disabled = false;
+      }
+    });
+  }
+
+  const clearBtn = document.getElementById('mobile-clear-cache-btn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', async () => {
+      if (
+        !confirm(
+          'Alle lokal gespeicherten Daten und noch nicht synchronisierten Offline-Aktionen löschen?\n\nDaten auf dem Server bleiben erhalten.'
+        )
+      )
+        return;
+      // Keep settings, clear everything else
+      const settingsRecord = await getRecord(META_STORE, 'settings');
+      await withStore(ACTION_STORE, 'readwrite', (store) => store.clear());
+      await withStore(DATA_STORE, 'readwrite', (store) => store.clear());
+      await withStore(META_STORE, 'readwrite', (store) => store.clear());
+      if (settingsRecord) await putRecord(META_STORE, settingsRecord);
+      mobileState = buildStateFromEntry(null);
+      updateUiState();
+      updateLocalDataBadge(false);
+      updateLastSyncLabel(null);
+      await refreshQueueIndicator();
+      await updateSettingsTab();
+      showFeedback('Lokaler Cache wurde geleert.', 'success');
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function initializeSyncMeta() {
   const lastSync = await getRecord(META_STORE, 'lastSyncAt');
   const localData = await getRecord(META_STORE, 'localDataReady');
@@ -988,6 +1105,14 @@ function setupConnectionHandlers() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  // Set today's date in the offline shell (static HTML has no server-rendered date)
+  const offlineDateEl = document.getElementById('offline-shell-date');
+  if (offlineDateEl) {
+    offlineDateEl.textContent = new Date().toLocaleDateString('de-DE', {
+      weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric',
+    });
+  }
+
   registerTabHandling();
   registerModalHandling();
   registerOfflineForms();
@@ -995,15 +1120,20 @@ window.addEventListener('DOMContentLoaded', async () => {
   setupConnectionHandlers();
   initializeServerStateFromDataset();
   await initializeSyncMeta();
+  await initSettingsTab();
   await hydrateCompaniesFromCache();
   await recomputeEffectiveState();
 
   const status = await checkServerReachability(true);
   if (status === 'online') {
     await performReconnectSync('startup');
-  } else if (status === 'unreachable') {
-    dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar. Lokale Daten werden genutzt.', 'unreachable');
+    await updateSettingsTab();
   } else {
-    dispatchSyncStatus('Offline-Modus aktiv. Lokale Daten werden verwendet.', 'offline');
+    await updateSettingsTab();
+    if (status === 'unreachable') {
+      dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar. Lokale Daten werden genutzt.', 'unreachable');
+    } else {
+      dispatchSyncStatus('Offline-Modus aktiv. Lokale Daten werden verwendet.', 'offline');
+    }
   }
 });
