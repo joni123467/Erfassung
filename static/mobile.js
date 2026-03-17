@@ -1007,17 +1007,20 @@ async function updateSettingsTab() {
   if (select) select.value = String(settings.cacheDurationHours);
 
   const stale = await isCacheStale();
+  // Only show the stale-data warning when the device is actually offline.
+  // When online we are about to sync, so showing it would be misleading.
+  const showStaleWarning = stale && !navigator.onLine;
   const cacheStatus = document.getElementById('mobile-cache-status');
   if (cacheStatus) {
-    cacheStatus.textContent = stale
+    cacheStatus.textContent = showStaleWarning
       ? 'Offline-Daten möglicherweise veraltet – bitte mit Server verbinden.'
       : 'Offline-Daten sind aktuell.';
-    cacheStatus.dataset.state = stale ? 'warning' : 'ok';
+    cacheStatus.dataset.state = showStaleWarning ? 'warning' : 'ok';
   }
 
   const staleWarning = document.getElementById('mobile-stale-warning');
   if (staleWarning) {
-    staleWarning.hidden = !stale;
+    staleWarning.hidden = !showStaleWarning;
   }
 }
 
