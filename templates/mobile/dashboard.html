@@ -35,6 +35,9 @@
 
 
     <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite" hidden></div>
+    <div class="mobile-feedback" id="mobile-stale-warning" role="alert" hidden>
+        Offline-Daten möglicherweise veraltet – bitte mit Server verbinden.
+    </div>
 
     {% set tab = active_tab or 'buchung' %}
     <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
@@ -74,6 +77,15 @@
             aria-selected="{{ 'true' if tab == 'urlaub' else 'false' }}"
             role="tab"
         >Urlaub</a>
+        <a
+            href="{{ tab_urls.einstellungen }}#einstellungen"
+            class="mobile-tab {% if tab == 'einstellungen' %}is-active{% endif %}"
+            data-tab="einstellungen"
+            id="mobile-tab-einstellungen"
+            aria-controls="mobile-panel-einstellungen"
+            aria-selected="{{ 'true' if tab == 'einstellungen' else 'false' }}"
+            role="tab"
+        >Einstellungen</a>
     </nav>
 
     <div class="mobile-panels">
@@ -391,6 +403,51 @@
                 </dl>
             </div>
         </section>
+        <section class="mobile-panel {% if tab == 'einstellungen' %}is-active{% endif %}" id="mobile-panel-einstellungen" data-tab-panel="einstellungen" role="tabpanel" aria-labelledby="mobile-tab-einstellungen" {% if tab != 'einstellungen' %}hidden{% endif %}>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Synchronisation</h2>
+                <aside class="mobile-queue" aria-live="polite">
+                    <div class="mobile-queue__line">
+                        <span class="mobile-badge" id="mobile-server-badge" data-state="offline">Offline</span>
+                        <span id="mobile-local-data" data-state="empty">Keine lokalen Daten</span>
+                    </div>
+                    <div class="mobile-queue__line">
+                        <span id="mobile-pending-actions">Keine ausstehenden Offline-Aktionen</span>
+                    </div>
+                    <div class="mobile-queue__line mobile-queue__line--muted">
+                        <span>Zuletzt synchronisiert:</span>
+                        <strong id="mobile-last-sync">Noch keine Synchronisation</strong>
+                    </div>
+                </aside>
+                <p id="mobile-cache-status" class="form-hint" data-state="ok"></p>
+                <div class="mobile-action-grid">
+                    <button type="button" id="mobile-sync-now-btn" class="mobile-button">Jetzt synchronisieren</button>
+                </div>
+            </div>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Offline-Einstellungen</h2>
+                <label>
+                    Maximales Alter der Offline-Daten
+                    <select id="mobile-setting-cache-duration">
+                        <option value="1">1 Stunde</option>
+                        <option value="6">6 Stunden</option>
+                        <option value="12">12 Stunden</option>
+                        <option value="24">24 Stunden (Standard)</option>
+                        <option value="48">2 Tage</option>
+                        <option value="168">7 Tage</option>
+                    </select>
+                    <span class="form-hint">Zeigt eine Warnung wenn die lokalen Daten dieses Alter überschreiten und kein Server erreichbar ist.</span>
+                </label>
+            </div>
+            <div class="mobile-card">
+                <h2 class="mobile-card__title">Cache verwalten</h2>
+                <p class="mobile-card__text">Löscht alle lokal gespeicherten Buchungen und Offline-Aktionen. Daten auf dem Server bleiben erhalten.</p>
+                <div class="mobile-action-grid">
+                    <button type="button" id="mobile-clear-cache-btn" class="mobile-button danger">Lokalen Cache löschen</button>
+                </div>
+            </div>
+        </section>
+
         <section class="mobile-panel {% if tab == 'urlaub' %}is-active{% endif %}" id="mobile-panel-urlaub" data-tab-panel="urlaub" role="tabpanel" aria-labelledby="mobile-tab-urlaub" {% if tab != 'urlaub' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Urlaub beantragen</h2>

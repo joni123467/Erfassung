@@ -3,37 +3,317 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mobile Erfassung (Offline)</title>
+  <title>Mobile Erfassung</title>
+  <!-- Empty at load; getCsrfToken() fills this from localStorage on first use -->
+  <meta name="csrf-token" content="">
+  <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+  <link rel="apple-touch-icon" href="/static/icons/icon.svg">
   <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#1d7ed0">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body class="is-mobile">
-  <main class="page">
-    <section class="mobile-dashboard" data-mobile-state="true" data-state-running="false" data-state-break="false" data-state-company="false" data-total-break-minutes="0" data-worked-label="0:00">
-      <header class="mobile-dashboard__header">
-        <div>
-          <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
-          <p class="mobile-dashboard__date">Offline-Modus</p>
-        </div>
-      </header>
-      <aside class="mobile-queue mobile-queue--status" aria-live="polite">
-        <div class="mobile-queue__line">
-          <span class="mobile-badge" id="mobile-server-badge" data-state="offline">Offline</span>
-          <span id="mobile-local-data" data-state="empty">Lokale Daten werden geladen …</span>
-        </div>
-        <div class="mobile-queue__line">
-          <span id="mobile-pending-actions">Offline-Aktionen werden vorbereitet …</span>
-        </div>
-        <div class="mobile-queue__line mobile-queue__line--muted">
-          <span>Zuletzt synchronisiert:</span>
-          <strong id="mobile-last-sync">Noch keine Synchronisation</strong>
-        </div>
-      </aside>
-      <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite">
-        Die App wurde offline gestartet. Sobald du wieder online bist, werden Daten automatisch synchronisiert.
+<main class="page">
+  <section
+    class="mobile-dashboard"
+    aria-label="Mobile Zeiterfassung"
+    data-mobile-state="true"
+    data-state-running="false"
+    data-state-break="false"
+    data-state-company="false"
+    data-start-timestamp=""
+    data-start-label=""
+    data-worked-label="0:00"
+    data-total-break-minutes="0"
+    data-break-timestamp=""
+    data-break-label=""
+    data-break-total-label="0:00"
+    data-company-name=""
+  >
+    <header class="mobile-dashboard__header">
+      <div>
+        <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
+        <p class="mobile-dashboard__date" id="offline-shell-date">Wird geladen …</p>
       </div>
-    </section>
-  </main>
-  <script type="module" src="/static/mobile.js"></script>
+      <p class="mobile-dashboard__status" data-state="active" hidden>
+        <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
+        <span class="mobile-badge mobile-badge--mode" data-field="booking-mode">Nur Arbeitszeit</span>
+        seit <span data-field="header-start"></span> Uhr
+      </p>
+      <p class="mobile-dashboard__status mobile-dashboard__status--idle" data-state="idle">
+        <span class="mobile-badge">Bereit</span>
+        Du kannst deine Arbeitszeit jetzt starten.
+      </p>
+    </header>
+
+    <div class="mobile-feedback" id="mobile-feedback" role="status" aria-live="polite" hidden></div>
+    <div class="mobile-feedback" id="mobile-stale-warning" role="alert" hidden>
+      Offline-Daten möglicherweise veraltet – bitte mit Server verbinden.
+    </div>
+
+    <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
+      <a href="#buchung" class="mobile-tab is-active" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="true" role="tab">Buchung</a>
+      <a href="#uebersicht" class="mobile-tab" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="false" role="tab">Übersicht</a>
+      <a href="#salden" class="mobile-tab" data-tab="salden" id="mobile-tab-salden" aria-controls="mobile-panel-salden" aria-selected="false" role="tab">Salden</a>
+      <a href="#urlaub" class="mobile-tab" data-tab="urlaub" id="mobile-tab-urlaub" aria-controls="mobile-panel-urlaub" aria-selected="false" role="tab">Urlaub</a>
+      <a href="#einstellungen" class="mobile-tab" data-tab="einstellungen" id="mobile-tab-einstellungen" aria-controls="mobile-panel-einstellungen" aria-selected="false" role="tab">Einstellungen</a>
+    </nav>
+
+    <div class="mobile-panels">
+
+      <!-- ── Buchung ─────────────────────────────────────────────────────── -->
+      <section class="mobile-panel is-active" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung">
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Schnell stempeln</h2>
+
+          <div class="mobile-card__section" data-state="active" hidden>
+            <p class="mobile-card__text">
+              Gestartet um <span data-field="work-start"></span> Uhr.
+              <span data-state="company-active" hidden>
+                Auftrag: <strong data-field="company-name"></strong>.
+              </span>
+            </p>
+            <p class="mobile-card__text">Aktuelle Arbeitszeit: <span data-field="worked-duration">0:00</span> Std</p>
+            <p class="mobile-card__text" data-state="break-active" hidden>
+              <span class="mobile-badge mobile-badge--break">Pause läuft</span>
+              seit <span data-field="break-start"></span> Uhr
+            </p>
+            <p class="mobile-card__text" data-state="break-idle">
+              Erfasste Pausen: <span data-field="break-total">0:00</span> Std
+            </p>
+          </div>
+
+          <div class="mobile-card__section" data-state="idle">
+            <p class="mobile-card__text">Beginne deine Arbeitszeit mit einem Tipp.</p>
+          </div>
+
+          <!-- Idle actions -->
+          <div class="mobile-action-grid" data-state="idle">
+            <form method="post" action="/punch" data-offline="punch">
+              <input type="hidden" name="csrf_token" value="">
+              <input type="hidden" name="next_url" value="/mobile">
+              <input type="hidden" name="action" value="start_work">
+              <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
+            </form>
+            <button type="button" class="mobile-button" id="mobile-order-launch" data-open="mobile-order-modal">Auftrag starten</button>
+          </div>
+
+          <!-- Active actions -->
+          <div class="mobile-action-grid" data-state="active" hidden>
+            <form method="post" action="/punch" data-offline="punch" data-state="break-idle">
+              <input type="hidden" name="csrf_token" value="">
+              <input type="hidden" name="next_url" value="/mobile">
+              <input type="hidden" name="action" value="start_break">
+              <button type="submit" class="mobile-button ghost" data-toggle-disabled="true">Pause starten</button>
+            </form>
+            <form method="post" action="/punch" data-offline="punch" data-state="break-active" hidden>
+              <input type="hidden" name="csrf_token" value="">
+              <input type="hidden" name="next_url" value="/mobile">
+              <input type="hidden" name="action" value="end_break">
+              <button type="submit" class="mobile-button ghost" data-toggle-disabled="true">Pause beenden</button>
+            </form>
+            <form method="post" action="/punch" data-offline="punch" data-state="company-active" hidden>
+              <input type="hidden" name="csrf_token" value="">
+              <input type="hidden" name="next_url" value="/mobile">
+              <input type="hidden" name="action" value="end_company">
+              <button type="submit" class="mobile-button" data-toggle-disabled="true">Auftrag beenden</button>
+            </form>
+            <form method="post" action="/punch" data-offline="punch">
+              <input type="hidden" name="csrf_token" value="">
+              <input type="hidden" name="next_url" value="/mobile">
+              <input type="hidden" name="action" value="end_work">
+              <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Company / order modal -->
+        <div class="modal" id="mobile-order-modal" aria-hidden="true" role="dialog" aria-modal="true">
+          <div class="modal__backdrop" data-close></div>
+          <div class="modal__dialog">
+            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+            <h3>Auftrag starten</h3>
+            <p class="modal__hint">Wähle eine Firma oder lege einen neuen Auftrag an.</p>
+            <form method="post" action="/punch" class="modal__form" data-offline="punch">
+              <input type="hidden" name="csrf_token" value="">
+              <input type="hidden" name="next_url" value="/mobile">
+              <input type="hidden" name="action" value="start_company">
+              <label>
+                Firma suchen
+                <input type="search" placeholder="Firma suchen …" autocomplete="off"
+                       list="mobile-offline-company-suggestions"
+                       data-company-search-target="mobile-offline-company-select">
+              </label>
+              <label>
+                Firma auswählen
+                <select name="company_id" id="mobile-offline-company-select" data-company-searchable="true">
+                  <option value="">Firma wählen</option>
+                </select>
+                <datalist id="mobile-offline-company-suggestions"></datalist>
+              </label>
+              <label>
+                Neue Firma anlegen
+                <input type="text" name="new_company_name" placeholder="Name der neuen Firma">
+              </label>
+              <label>
+                Kommentar (optional)
+                <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
+              </label>
+              <div class="modal__actions modal-action-bar">
+                <button type="button" class="button ghost modal-action" data-close>
+                  <span class="modal-action__icon" aria-hidden="true">✕</span>
+                  <span>Abbrechen</span>
+                </button>
+                <button type="submit" class="button modal-action">
+                  <span class="modal-action__icon" aria-hidden="true">▶</span>
+                  <span>Auftrag starten</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="mobile-card mobile-card--hint">
+          <h2 class="mobile-card__title">Hinweis</h2>
+          <p class="mobile-card__text">Nach 6 Stunden Arbeit mindestens 30 Minuten Pause einlegen, nach 9 Stunden mindestens 45 Minuten (ArbZG).</p>
+        </div>
+      </section>
+
+      <!-- ── Übersicht ───────────────────────────────────────────────────── -->
+      <section class="mobile-panel" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" hidden>
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Übersicht</h2>
+          <p class="mobile-card__text">Die Tages- und Wochenübersicht ist verfügbar, sobald du mit dem Server verbunden bist.</p>
+        </div>
+      </section>
+
+      <!-- ── Salden ─────────────────────────────────────────────────────── -->
+      <section class="mobile-panel" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" hidden>
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Salden</h2>
+          <p class="mobile-card__text">Stunden- und Überstundensalden sind verfügbar, sobald du mit dem Server verbunden bist.</p>
+        </div>
+      </section>
+
+      <!-- ── Einstellungen ──────────────────────────────────────────────── -->
+      <section class="mobile-panel" id="mobile-panel-einstellungen" data-tab-panel="einstellungen" role="tabpanel" aria-labelledby="mobile-tab-einstellungen" hidden>
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Synchronisation</h2>
+          <aside class="mobile-queue" aria-live="polite">
+            <div class="mobile-queue__line">
+              <span class="mobile-badge" id="mobile-server-badge" data-state="offline">Offline</span>
+              <span id="mobile-local-data" data-state="empty">Keine lokalen Daten</span>
+            </div>
+            <div class="mobile-queue__line">
+              <span id="mobile-pending-actions">Keine ausstehenden Offline-Aktionen</span>
+            </div>
+            <div class="mobile-queue__line mobile-queue__line--muted">
+              <span>Zuletzt synchronisiert:</span>
+              <strong id="mobile-last-sync">Noch keine Synchronisation</strong>
+            </div>
+          </aside>
+          <p id="mobile-cache-status" class="form-hint" data-state="ok"></p>
+          <div class="mobile-action-grid">
+            <button type="button" id="mobile-sync-now-btn" class="mobile-button">Jetzt synchronisieren</button>
+          </div>
+        </div>
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Offline-Einstellungen</h2>
+          <label>
+            Maximales Alter der Offline-Daten
+            <select id="mobile-setting-cache-duration">
+              <option value="1">1 Stunde</option>
+              <option value="6">6 Stunden</option>
+              <option value="12">12 Stunden</option>
+              <option value="24">24 Stunden (Standard)</option>
+              <option value="48">2 Tage</option>
+              <option value="168">7 Tage</option>
+            </select>
+            <span class="form-hint">Zeigt eine Warnung wenn die lokalen Daten dieses Alter überschreiten und kein Server erreichbar ist.</span>
+          </label>
+        </div>
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Cache verwalten</h2>
+          <p class="mobile-card__text">Löscht alle lokal gespeicherten Buchungen und Offline-Aktionen. Daten auf dem Server bleiben erhalten.</p>
+          <div class="mobile-action-grid">
+            <button type="button" id="mobile-clear-cache-btn" class="mobile-button danger">Lokalen Cache löschen</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Urlaub ─────────────────────────────────────────────────────── -->
+      <section class="mobile-panel" id="mobile-panel-urlaub" data-tab-panel="urlaub" role="tabpanel" aria-labelledby="mobile-tab-urlaub" hidden>
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Urlaub beantragen</h2>
+          <form method="post" action="/vacations" class="mobile-form" data-offline="vacation">
+            <input type="hidden" name="csrf_token" value="">
+            <label>
+              Startdatum
+              <input type="date" name="start_date" required>
+            </label>
+            <label>
+              Enddatum
+              <input type="date" name="end_date" required>
+            </label>
+            <label class="full-width">
+              Kommentar
+              <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
+            </label>
+            <div class="form-actions full-width">
+              <button type="submit" class="mobile-button primary">Urlaubsantrag senden</button>
+            </div>
+          </form>
+        </div>
+        <div class="mobile-card">
+          <h2 class="mobile-card__title">Meine Anträge</h2>
+          <ul class="mobile-vacation-list" data-vacation-list></ul>
+          <p class="mobile-empty-state" data-vacation-empty>Bisher keine Urlaubsanträge erstellt.</p>
+        </div>
+      </section>
+
+    </div><!-- /.mobile-panels -->
+  </section>
+</main>
+
+<footer class="mobile-account-footer" aria-label="Konto">
+  <div class="mobile-account-footer__user">
+    <span class="mobile-account-footer__name">Offline-Modus</span>
+  </div>
+  <a class="mobile-account-footer__logout" href="/logout">Abmelden</a>
+</footer>
+
+<script>
+  (function () {
+    var modal = document.getElementById('mobile-order-modal');
+    if (!modal) return;
+    var openers = document.querySelectorAll('[data-open="mobile-order-modal"]');
+    var closers = modal.querySelectorAll('[data-close]');
+    function setVisible(v) {
+      if (v) {
+        modal.classList.add('is-visible');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('modal-open');
+        var f = modal.querySelector('select, input, button');
+        if (f && f.focus) f.focus();
+      } else {
+        modal.classList.remove('is-visible');
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('modal-open');
+      }
+    }
+    for (var i = 0; i < openers.length; i++) {
+      openers[i].addEventListener('click', function (e) { e.preventDefault(); setVisible(true); });
+    }
+    for (var j = 0; j < closers.length; j++) {
+      closers[j].addEventListener('click', function (e) { e.preventDefault(); setVisible(false); });
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modal.classList.contains('is-visible')) setVisible(false);
+    });
+  }());
+</script>
+<script type="module" src="/static/mobile.js"></script>
 </body>
 </html>
