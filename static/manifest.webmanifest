@@ -3,7 +3,7 @@
   "short_name": "Erfassung",
   "lang": "de-DE",
   "start_url": "/mobile",
-  "scope": "/mobile",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f2f6fb",

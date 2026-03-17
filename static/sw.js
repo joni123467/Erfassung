@@ -1,9 +1,7 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.3.0';
+const CACHE_VERSION = 'erfassung-mobile-v0.3.1';
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
 
-// All assets that must be available immediately after install – including the
-// offline shell so the app is usable without any prior online visit.
 const CORE_ASSETS = [
   OFFLINE_SHELL,
   '/static/styles.css',
@@ -17,10 +15,14 @@ const CORE_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE_VERSION)
-      .then((cache) => cache.addAll(CORE_ASSETS))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then(async (cache) => {
+      await cache.addAll(CORE_ASSETS);
+      // Pre-seed /mobile with the offline shell so the app always opens offline,
+      // even before the first authenticated online visit. This entry is silently
+      // replaced with the real page the first time the user loads /mobile online.
+      const shell = await cache.match(OFFLINE_SHELL);
+      if (shell) await cache.put(MOBILE_SHELL, shell.clone());
+    }).then(() => self.skipWaiting())
   );
 });
 
@@ -36,11 +38,9 @@ self.addEventListener('activate', (event) => {
 });
 
 // ── Cache-first for static assets ────────────────────────────────────────────
-// Serve from cache immediately; revalidate in the background.
 async function cacheFirstStatic(request) {
   const cache = await caches.open(CACHE_VERSION);
   const cached = await cache.match(request, { ignoreSearch: true });
-  // Background revalidation (fire-and-forget)
   const networkPromise = fetch(request)
     .then((response) => {
       if (response && response.ok) cache.put(request, response.clone());
@@ -51,50 +51,43 @@ async function cacheFirstStatic(request) {
 }
 
 // ── Offline-first navigation ──────────────────────────────────────────────────
-// Serve cached page immediately so the app opens instantly, even without
-// network. The authenticated /mobile page is cached on first successful load
-// and updated silently in the background on every subsequent online visit.
+// Always serve instantly from cache (guaranteed since we pre-seed /mobile on install).
+// The real authenticated page is written in the background on every online visit,
+// replacing the offline shell. Auth redirects are never cached.
 async function offlineFirstNavigation(request) {
   const cache = await caches.open(CACHE_VERSION);
 
-  // 1. Try the exact cached page first (covers /mobile with any query params)
-  const exactCached = await cache.match(request, { ignoreSearch: true });
-  if (exactCached) {
-    // Silently update the cache in the background
+  // Serve the cached page immediately (offline shell pre-seeded on install,
+  // or the real page from a previous online visit).
+  const cached = await cache.match(MOBILE_SHELL, { ignoreSearch: true });
+  if (cached) {
+    // Silently update in the background – but never cache an auth redirect.
     fetch(request)
       .then((response) => {
-        if (response && response.ok) cache.put(MOBILE_SHELL, response.clone());
+        if (response && response.ok && !response.redirected) {
+          cache.put(MOBILE_SHELL, response.clone());
+        }
       })
       .catch(() => {});
-    return exactCached;
+    return cached;
   }
 
-  // 2. Try the generic /mobile shell cached from a previous visit
-  const shellCached = await cache.match(MOBILE_SHELL, { ignoreSearch: true });
-  if (shellCached) {
-    fetch(request)
-      .then((response) => {
-        if (response && response.ok) cache.put(MOBILE_SHELL, response.clone());
-      })
-      .catch(() => {});
-    return shellCached;
-  }
-
-  // 3. No cached page yet – try the network (first-ever visit)
+  // Fallback: try network (shouldn't normally reach here after first install)
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     const response = await fetch(request, { signal: controller.signal });
     clearTimeout(timeoutId);
-    if (response && response.ok) {
+    if (response && response.ok && !response.redirected) {
       cache.put(MOBILE_SHELL, response.clone());
       return response;
     }
+    if (response) return response; // e.g. login redirect – pass through as-is
   } catch {
-    // Network unavailable on very first visit
+    // Network unavailable
   }
 
-  // 4. Ultimate fallback: static offline shell
+  // Last resort: offline shell (always in CORE_ASSETS)
   return (await cache.match(OFFLINE_SHELL)) || Response.error();
 }
 
@@ -124,25 +117,21 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Navigation requests (HTML pages)
   if (request.mode === 'navigate' || request.destination === 'document') {
     event.respondWith(offlineFirstNavigation(request));
     return;
   }
 
-  // Static assets – serve from cache immediately
   if (url.pathname.startsWith('/static/')) {
     event.respondWith(cacheFirstStatic(request));
     return;
   }
 
-  // Sync-data endpoint – cache last successful payload for offline use
   if (url.pathname === '/mobile/sync-data') {
     event.respondWith(syncDataHandler(request));
     return;
   }
 
-  // API ping – always network, no cache (used for reachability checks)
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(request).catch(() => Response.error())
