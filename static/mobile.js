@@ -114,6 +114,11 @@ function updatePendingIndicator(total, detail) {
   }
 }
 
+function getCsrfToken() {
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  return meta ? meta.getAttribute('content') || '' : '';
+}
+
 function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -612,6 +617,7 @@ async function syncServerData() {
 
 async function postQueuedAction(entry) {
   const body = new URLSearchParams(entry.payload);
+  body.set('csrf_token', getCsrfToken());
   const response = await fetchWithTimeout(entry.endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
@@ -736,10 +742,12 @@ async function processPunchSubmission(form, payload) {
   }
 
   try {
+    const punchParams = new URLSearchParams(payload);
+    punchParams.set('csrf_token', getCsrfToken());
     const response = await fetchWithTimeout(form.getAttribute('action') || '/punch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: new URLSearchParams(payload).toString(),
+      body: punchParams.toString(),
       credentials: 'same-origin',
       redirect: 'follow',
       cache: 'no-store',
@@ -779,10 +787,12 @@ async function processVacationSubmission(form, payload) {
   }
 
   try {
+    const vacationParams = new URLSearchParams(payload);
+    vacationParams.set('csrf_token', getCsrfToken());
     const response = await fetchWithTimeout(form.getAttribute('action') || '/vacations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: new URLSearchParams(payload).toString(),
+      body: vacationParams.toString(),
       credentials: 'same-origin',
       redirect: 'follow',
       cache: 'no-store',

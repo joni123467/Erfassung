@@ -10,6 +10,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="theme-color" content="#1d7ed0">
+    <meta name="csrf-token" content="{{ get_csrf_token(request) }}">
     <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}">
 </head>
 <body{% if mobile %} class="is-mobile"{% endif %}>

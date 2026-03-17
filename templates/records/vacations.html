@@ -45,6 +45,7 @@
         <h2>Urlaubsantrag stellen</h2>
     </div>
     <form method="post" action="/vacations" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <label>
             Startdatum
             <input type="date" name="start_date" required>
@@ -112,6 +113,7 @@
                     <td class="actions">
                         {% if vacation.status in ['pending', 'approved'] %}
                             <form method="post" action="/vacations/{{ vacation.id }}/withdraw" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                                 <button type="submit" class="button small ghost">Zurückziehen</button>
                             </form>
                         {% elif vacation.status == 'withdraw_requested' %}

@@ -34,6 +34,7 @@
                             <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/edit?next=/admin/approvals&user={{ entry.user_id }}">Bearbeiten</a>
                         {% endif %}
                         <form method="post" action="/admin/time-entries/{{ entry.id }}/status" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <button type="submit" name="action" value="approve" class="button small">Freigeben</button>
                             <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>
                         </form>
@@ -74,6 +75,7 @@
                         <td>{{ vacation.comment or '-' }}</td>
                         <td class="actions">
                             <form method="post" action="/admin/vacations/{{ vacation.id }}/status" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                                 <button type="submit" name="action" value="approve" class="button small">Genehmigen</button>
                                 <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>
                             </form>

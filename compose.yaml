@@ -1,11 +1,13 @@
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.1.4
+    image: ghcr.io/OWNER/erfassung:0.2.0
     container_name: erfassung
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: sqlite:////app/data/erfassung.db
+      # SESSION_SECRET_KEY: change-me-in-production
+      # HTTPS_ONLY_SESSION: "true"   # Setze auf true wenn hinter HTTPS-Proxy (z.B. Traefik)
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

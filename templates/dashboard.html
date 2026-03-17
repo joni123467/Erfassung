@@ -53,17 +53,20 @@
                     </div>
                     <div class="punch-actions">
                         <form method="post" action="/punch">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="next_url" value="/dashboard">
                             <input type="hidden" name="action" value="start_break">
                             <button type="submit" class="button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
                         </form>
                         <form method="post" action="/punch">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="next_url" value="/dashboard">
                             <input type="hidden" name="action" value="end_break">
                             <button type="submit" class="button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
                         </form>
                         {% if active_entry.company_id is not none %}
                             <form method="post" action="/punch">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                                 <input type="hidden" name="next_url" value="/dashboard">
                                 <input type="hidden" name="action" value="end_company">
                                 <button type="submit" class="button">Auftrag beenden</button>
@@ -73,6 +76,7 @@
                             <button type="button" class="button" data-open="order-modal">Auftrag starten</button>
                         {% endif %}
                         <form method="post" action="/punch">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="next_url" value="/dashboard">
                             <input type="hidden" name="action" value="end_work">
                             <button type="submit" class="button danger">Arbeitszeit beenden</button>
@@ -81,6 +85,7 @@
                 {% else %}
                     <div class="punch-start-options">
                         <form method="post" action="/punch" class="punch-start-quick">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="next_url" value="/dashboard">
                             <input type="hidden" name="action" value="start_work">
                             <button type="submit" class="button primary">Arbeitszeit starten</button>
@@ -99,6 +104,7 @@
                         <h3>Auftrag starten</h3>
                         <p class="modal__hint">Wähle eine bestehende Firma oder lege einen neuen Auftrag an.</p>
                         <form method="post" action="/punch" class="modal__form">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="next_url" value="/dashboard">
                             <input type="hidden" name="action" value="start_company">
                             {% if companies %}
@@ -357,6 +363,7 @@
 <section class="card">
     <h2>Manuelle Buchung</h2>
     <form method="post" action="/time" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <input type="hidden" name="next_url" value="/dashboard">
         <label>
             Datum

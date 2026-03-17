@@ -101,6 +101,7 @@
                 </div>
                 <div class="mobile-action-grid" data-state="idle" {% if active_entry %}hidden{% endif %}>
                     <form method="post" action="/punch" data-offline="punch">
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="start_work">
                         <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
@@ -111,21 +112,25 @@
                 </div>
                 <div class="mobile-action-grid" data-state="active" {% if not active_entry %}hidden{% endif %}>
                     <form method="post" action="/punch" data-offline="punch" data-state="break-idle">
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="start_break">
                         <button type="submit" class="mobile-button ghost" data-toggle-disabled="true" {% if active_entry and active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
                     </form>
                     <form method="post" action="/punch" data-offline="punch" data-state="break-active">
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="end_break">
                         <button type="submit" class="mobile-button ghost" data-toggle-disabled="true" {% if not (active_entry and active_entry.break_started_at) %}disabled{% endif %}>Pause beenden</button>
                     </form>
                     <form method="post" action="/punch" data-offline="punch" data-state="company-active" {% if not (active_entry and active_entry.company_id is not none) %}hidden{% endif %}>
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="end_company">
                         <button type="submit" class="mobile-button" data-toggle-disabled="true">Auftrag beenden</button>
                     </form>
                     <form method="post" action="/punch" data-offline="punch">
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="end_work">
                         <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
@@ -141,6 +146,7 @@
                         <h3>Auftrag starten</h3>
                         <p class="modal__hint">Wähle eine Firma oder lege einen neuen Auftrag an.</p>
                         <form method="post" action="/punch" class="modal__form" data-offline="punch">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="next_url" value="/mobile">
                             <input type="hidden" name="action" value="start_company">
                             {% if companies %}
@@ -389,6 +395,7 @@
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Urlaub beantragen</h2>
                 <form method="post" action="/vacations" class="mobile-form" data-offline="vacation">
+                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                     <label>
                         Startdatum
                         <input type="date" name="start_date" required>
@@ -476,6 +483,7 @@
                             </div>
                             {% if vacation.status in ['pending', 'approved'] %}
                                 <form method="post" action="/vacations/{{ vacation.id }}/withdraw" class="mobile-vacation__action">
+                                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                                     <button type="submit" class="mobile-link-button">Zurückziehen</button>
                                 </form>
                             {% elif vacation.status == 'withdraw_requested' %}

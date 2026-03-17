@@ -13,6 +13,7 @@
             hinterlegten Endpoints, um Benutzerkarten und Buchungen ohne Cloud-Dienst abzurufen.
         </p>
         <form method="post" action="/admin/integrations/timemoto" class="timemoto-config">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <div class="form-grid">
                 <label>
                     Hostname oder IP-Adresse
@@ -87,6 +88,7 @@
             {% if config.last_event_id %}<br>Letzte verarbeitete Ereignis-ID: {{ config.last_event_id }}{% endif %}
         </p>
         <form method="post" action="/admin/integrations/timemoto/sync" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <label class="checkbox">
                 <input type="checkbox" name="full_sync" value="1">
                 Alle Ereignisse erneut laden (ignoriert gespeicherte ID)

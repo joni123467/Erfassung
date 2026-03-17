@@ -9,6 +9,7 @@
         <a href="{{ next_url }}" class="button ghost">Zurück</a>
     </div>
     <form method="post" action="/admin/time-entries/{{ entry.id }}/update" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <input type="hidden" name="user_id" value="{{ entry.user_id }}">
         <input type="hidden" name="redirect_user" value="{{ redirect_user or '' }}">
         <input type="hidden" name="next_url" value="{{ next_url }}">
@@ -50,6 +51,7 @@
         </div>
     </form>
     <form method="post" action="/admin/time-entries/{{ entry.id }}/delete" class="danger-zone" onsubmit="return confirm('Buchung wirklich löschen?');">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <input type="hidden" name="redirect_user" value="{{ redirect_user or '' }}">
         <input type="hidden" name="next_url" value="{{ next_url }}">
         <button type="submit" class="button danger small">Buchung löschen</button>
