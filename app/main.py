@@ -14,7 +14,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 
 import secrets
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 
 try:  # FastAPI <=0.75 did not re-export BackgroundTasks
     from fastapi import BackgroundTasks
@@ -1328,10 +1328,6 @@ def submit_time_entry(
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
-def _mobile_sync_cutoff() -> date:
-    return date.today() - timedelta(days=183)
-
-
 def _serialize_mobile_entry(entry: models.TimeEntry) -> dict[str, object]:
     return {
         "id": entry.id,
@@ -1379,25 +1375,32 @@ def api_csrf(request: Request):
     return JSONResponse({"csrf_token": get_csrf_token(request)})
 
 @app.get("/mobile/sync-data")
-def mobile_sync_data(request: Request, db: Session = Depends(database.get_db)):
+def mobile_sync_data(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(database.get_db),
+):
     user = get_logged_in_user(request, db)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
 
-    cutoff = _mobile_sync_cutoff()
-    entries = crud.get_mobile_history_time_entries(db, user.id, cutoff)
-    vacations = crud.get_mobile_history_vacations(db, user.id, cutoff)
+    today = date.today()
+    since_date = today - timedelta(days=days)
+    until_date = today + timedelta(days=days)
+
+    entries = crud.get_mobile_history_time_entries(db, user.id, since_date)
+    vacations = crud.get_mobile_history_vacations(db, user.id, since_date)
     companies = crud.get_companies(db)
     active_entry = crud.get_open_time_entry(db, user.id)
-    metrics = services.calculate_dashboard_metrics(db, user.id, date.today().replace(day=1))
+    metrics = services.calculate_dashboard_metrics(db, user.id, today.replace(day=1))
 
     payload = {
         "version": APP_VERSION,
         "generated_at": datetime.utcnow().isoformat(),
         "period": {
-            "from": cutoff.isoformat(),
-            "to": date.today().isoformat(),
-            "days": 183,
+            "from": since_date.isoformat(),
+            "to": until_date.isoformat(),
+            "days": days,
         },
         "user": {
             "id": user.id,

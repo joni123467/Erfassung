@@ -15,7 +15,7 @@ const META_STORE = 'meta';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
 const SERVER_REACHABILITY_KEY = 'serverReachability';
 const SYNC_LOCK_KEY = 'syncLock';
-const SETTINGS_DEFAULT = { cacheDurationHours: 24 };
+const SETTINGS_DEFAULT = { syncDays: 30 };
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
@@ -646,26 +646,34 @@ async function hydrateCompaniesFromCache() {
 }
 
 async function syncServerData() {
-  const status = await checkServerReachability(true);
-  if (status !== 'online') {
-    return false;
-  }
   try {
-    const response = await fetchWithTimeout('/mobile/sync-data', {
+    const settings = await loadSettings();
+    const days = Math.max(1, settings.syncDays || 30);
+    const response = await fetchWithTimeout(`/mobile/sync-data?days=${days}`, {
       method: 'GET',
       credentials: 'same-origin',
       cache: 'no-store',
-    }, 5000);
-    if (!response.ok) throw new Error(`Sync HTTP ${response.status}`);
+      headers: { Accept: 'application/json' },
+    }, 12000);
+    if (!response.ok) {
+      const msg = `Sync fehlgeschlagen (HTTP ${response.status}). Bitte erneut versuchen.`;
+      dispatchSyncStatus(msg, 'error');
+      showFeedback(msg, 'error');
+      return false;
+    }
     const payload = await response.json();
     await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
-    await putRecord(META_STORE, { key: 'lastSyncAt', value: new Date().toISOString(), updatedAt: Date.now() });
+    const nowIso = new Date().toISOString();
+    await putRecord(META_STORE, { key: 'lastSyncAt', value: nowIso, updatedAt: Date.now() });
     await putRecord(META_STORE, { key: 'localDataReady', value: true, updatedAt: Date.now() });
     updateLocalDataBadge(true);
-    updateLastSyncLabel(new Date().toISOString());
+    updateLastSyncLabel(nowIso);
     await hydrateCompaniesFromCache();
     return true;
   } catch (error) {
+    const msg = `Sync fehlgeschlagen: ${error?.message || 'Netzwerkfehler'}. Bitte erneut versuchen.`;
+    dispatchSyncStatus(msg, 'error');
+    showFeedback(msg, 'error');
     return false;
   }
 }
@@ -1116,7 +1124,7 @@ function _renderDayView(container, allEntries, dailyTarget, today) {
     <dl class="mobile-overview-summary">
       <div><dt>Arbeitszeit</dt><dd>${fmtMins(totalWorked)} Std</dd></div>
       <div><dt>Soll</dt><dd>${fmtMins(dailyTarget)} Std</dd></div>
-      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${fmtMins(Math.abs(balance))} Std</dd></div>
+      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${balance < 0 ? '-' : ''}${fmtMins(Math.abs(balance))} Std</dd></div>
     </dl>`;
 
   if (dayEntries.length > 0) {
@@ -1194,7 +1202,7 @@ function _renderWeekView(container, allEntries, weeklyTarget, today) {
     <dl class="mobile-overview-summary">
       <div><dt>Arbeitszeit</dt><dd>${fmtMins(totalWorked)} Std</dd></div>
       <div><dt>Soll</dt><dd>${fmtMins(weeklyTarget)} Std</dd></div>
-      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${fmtMins(Math.abs(balance))} Std</dd></div>
+      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${balance < 0 ? '-' : ''}${fmtMins(Math.abs(balance))} Std</dd></div>
     </dl>
     <ul class="mobile-week-list mobile-week-list--grid">`;
 
@@ -1255,7 +1263,12 @@ async function renderSalden() {
 
 async function loadSettings() {
   const record = await getRecord(META_STORE, 'settings');
-  return { ...SETTINGS_DEFAULT, ...(record?.value || {}) };
+  const saved = record?.value || {};
+  // Backward compat: migrate old cacheDurationHours → syncDays
+  if (saved.cacheDurationHours && !saved.syncDays) {
+    saved.syncDays = Math.max(1, Math.round(saved.cacheDurationHours / 24)) || 30;
+  }
+  return { ...SETTINGS_DEFAULT, ...saved };
 }
 
 async function saveSettings(settings) {
@@ -1271,14 +1284,14 @@ async function isCacheStale() {
   const lastSync = await getRecord(META_STORE, 'lastSyncAt');
   if (!lastSync?.value) return true;
   const elapsed = Date.now() - new Date(lastSync.value).getTime();
-  return elapsed > settings.cacheDurationHours * 3600000;
+  return elapsed > settings.syncDays * 86400000;
 }
 
 async function updateSettingsTab() {
   const settings = await loadSettings();
 
   const select = document.getElementById('mobile-setting-cache-duration');
-  if (select) select.value = String(settings.cacheDurationHours);
+  if (select) select.value = String(settings.syncDays);
 
   const stale = await isCacheStale();
   // Only show the stale-data warning when the device is actually offline.
@@ -1304,11 +1317,11 @@ async function initSettingsTab() {
   const select = document.getElementById('mobile-setting-cache-duration');
   if (select) {
     select.addEventListener('change', async () => {
-      const hours = Number(select.value);
-      if (Number.isFinite(hours) && hours > 0) {
-        await saveSettings({ cacheDurationHours: hours });
+      const days = Number(select.value);
+      if (Number.isFinite(days) && days > 0) {
+        await saveSettings({ syncDays: days });
         showFeedback(
-          `Cache-Dauer gesetzt: ${select.options[select.selectedIndex].text}.`,
+          `Datenzeitraum gesetzt: ${select.options[select.selectedIndex].text}.`,
           'info'
         );
       }
@@ -1322,12 +1335,21 @@ async function initSettingsTab() {
       try {
         const reachability = await checkServerReachability(true);
         if (reachability !== 'online') {
-          showFeedback('Server nicht erreichbar. Bitte Internetverbindung prüfen.', 'info');
+          showFeedback('Server nicht erreichbar. Bitte Internetverbindung prüfen.', 'error');
           return;
         }
-        await performReconnectSync('manual');
-        await updateSettingsTab();
-        showFeedback('Synchronisation abgeschlossen.', 'success');
+        const syncOk = await syncServerData();
+        if (syncOk) {
+          await flushOfflineQueue();
+          await syncServerData(); // second pass after queue flush
+          renderOverview().catch(() => {});
+          renderSalden().catch(() => {});
+          await updateSettingsTab();
+          dispatchSyncStatus('Synchronisation erfolgreich abgeschlossen.', 'synced');
+          showFeedback('Synchronisation abgeschlossen.', 'success');
+        } else {
+          await updateSettingsTab();
+        }
       } finally {
         syncBtn.disabled = false;
       }
