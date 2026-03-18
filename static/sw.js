@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.3.2';
+const CACHE_VERSION = 'erfassung-mobile-v0.3.2b';
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
 
@@ -91,25 +91,6 @@ async function offlineFirstNavigation(request) {
   return (await cache.match(OFFLINE_SHELL)) || Response.error();
 }
 
-// ── Sync-data: cache last successful response ─────────────────────────────────
-async function syncDataHandler(request) {
-  const cache = await caches.open(CACHE_VERSION);
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-    const response = await fetch(request, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (response && response.ok) {
-      cache.put(request, response.clone());
-      return response;
-    }
-    throw new Error(`HTTP ${response.status}`);
-  } catch {
-    const cached = await cache.match(request, { ignoreSearch: true });
-    return cached || Response.error();
-  }
-}
-
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -127,12 +108,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname === '/mobile/sync-data') {
-    event.respondWith(syncDataHandler(request));
-    return;
-  }
-
-  if (url.pathname.startsWith('/api/')) {
+  // API routes (including /mobile/sync-data) go directly to the network.
+  // Sync data is persisted in IndexedDB by mobile.js; no SW caching needed.
+  if (url.pathname.startsWith('/api/') || url.pathname === '/mobile/sync-data') {
     event.respondWith(
       fetch(request).catch(() => Response.error())
     );

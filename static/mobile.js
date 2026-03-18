@@ -646,26 +646,32 @@ async function hydrateCompaniesFromCache() {
 }
 
 async function syncServerData() {
-  const status = await checkServerReachability(true);
-  if (status !== 'online') {
-    return false;
-  }
   try {
     const response = await fetchWithTimeout('/mobile/sync-data', {
       method: 'GET',
       credentials: 'same-origin',
       cache: 'no-store',
-    }, 5000);
-    if (!response.ok) throw new Error(`Sync HTTP ${response.status}`);
+      headers: { Accept: 'application/json' },
+    }, 12000);
+    if (!response.ok) {
+      const msg = `Sync fehlgeschlagen (HTTP ${response.status}). Bitte erneut versuchen.`;
+      dispatchSyncStatus(msg, 'error');
+      showFeedback(msg, 'error');
+      return false;
+    }
     const payload = await response.json();
     await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
-    await putRecord(META_STORE, { key: 'lastSyncAt', value: new Date().toISOString(), updatedAt: Date.now() });
+    const nowIso = new Date().toISOString();
+    await putRecord(META_STORE, { key: 'lastSyncAt', value: nowIso, updatedAt: Date.now() });
     await putRecord(META_STORE, { key: 'localDataReady', value: true, updatedAt: Date.now() });
     updateLocalDataBadge(true);
-    updateLastSyncLabel(new Date().toISOString());
+    updateLastSyncLabel(nowIso);
     await hydrateCompaniesFromCache();
     return true;
   } catch (error) {
+    const msg = `Sync fehlgeschlagen: ${error?.message || 'Netzwerkfehler'}. Bitte erneut versuchen.`;
+    dispatchSyncStatus(msg, 'error');
+    showFeedback(msg, 'error');
     return false;
   }
 }
@@ -1116,7 +1122,7 @@ function _renderDayView(container, allEntries, dailyTarget, today) {
     <dl class="mobile-overview-summary">
       <div><dt>Arbeitszeit</dt><dd>${fmtMins(totalWorked)} Std</dd></div>
       <div><dt>Soll</dt><dd>${fmtMins(dailyTarget)} Std</dd></div>
-      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${fmtMins(Math.abs(balance))} Std</dd></div>
+      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${balance < 0 ? '-' : ''}${fmtMins(Math.abs(balance))} Std</dd></div>
     </dl>`;
 
   if (dayEntries.length > 0) {
@@ -1194,7 +1200,7 @@ function _renderWeekView(container, allEntries, weeklyTarget, today) {
     <dl class="mobile-overview-summary">
       <div><dt>Arbeitszeit</dt><dd>${fmtMins(totalWorked)} Std</dd></div>
       <div><dt>Soll</dt><dd>${fmtMins(weeklyTarget)} Std</dd></div>
-      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${fmtMins(Math.abs(balance))} Std</dd></div>
+      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${balance < 0 ? '-' : ''}${fmtMins(Math.abs(balance))} Std</dd></div>
     </dl>
     <ul class="mobile-week-list mobile-week-list--grid">`;
 
@@ -1322,12 +1328,21 @@ async function initSettingsTab() {
       try {
         const reachability = await checkServerReachability(true);
         if (reachability !== 'online') {
-          showFeedback('Server nicht erreichbar. Bitte Internetverbindung prüfen.', 'info');
+          showFeedback('Server nicht erreichbar. Bitte Internetverbindung prüfen.', 'error');
           return;
         }
-        await performReconnectSync('manual');
-        await updateSettingsTab();
-        showFeedback('Synchronisation abgeschlossen.', 'success');
+        const syncOk = await syncServerData();
+        if (syncOk) {
+          await flushOfflineQueue();
+          await syncServerData(); // second pass after queue flush
+          renderOverview().catch(() => {});
+          renderSalden().catch(() => {});
+          await updateSettingsTab();
+          dispatchSyncStatus('Synchronisation erfolgreich abgeschlossen.', 'synced');
+          showFeedback('Synchronisation abgeschlossen.', 'success');
+        } else {
+          await updateSettingsTab();
+        }
       } finally {
         syncBtn.disabled = false;
       }
