@@ -15,7 +15,7 @@ const META_STORE = 'meta';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
 const SERVER_REACHABILITY_KEY = 'serverReachability';
 const SYNC_LOCK_KEY = 'syncLock';
-const SETTINGS_DEFAULT = { cacheDurationHours: 24 };
+const SETTINGS_DEFAULT = { syncDays: 30 };
 
 const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
@@ -647,7 +647,9 @@ async function hydrateCompaniesFromCache() {
 
 async function syncServerData() {
   try {
-    const response = await fetchWithTimeout('/mobile/sync-data', {
+    const settings = await loadSettings();
+    const days = Math.max(1, settings.syncDays || 30);
+    const response = await fetchWithTimeout(`/mobile/sync-data?days=${days}`, {
       method: 'GET',
       credentials: 'same-origin',
       cache: 'no-store',
@@ -1261,7 +1263,12 @@ async function renderSalden() {
 
 async function loadSettings() {
   const record = await getRecord(META_STORE, 'settings');
-  return { ...SETTINGS_DEFAULT, ...(record?.value || {}) };
+  const saved = record?.value || {};
+  // Backward compat: migrate old cacheDurationHours → syncDays
+  if (saved.cacheDurationHours && !saved.syncDays) {
+    saved.syncDays = Math.max(1, Math.round(saved.cacheDurationHours / 24)) || 30;
+  }
+  return { ...SETTINGS_DEFAULT, ...saved };
 }
 
 async function saveSettings(settings) {
@@ -1277,14 +1284,14 @@ async function isCacheStale() {
   const lastSync = await getRecord(META_STORE, 'lastSyncAt');
   if (!lastSync?.value) return true;
   const elapsed = Date.now() - new Date(lastSync.value).getTime();
-  return elapsed > settings.cacheDurationHours * 3600000;
+  return elapsed > settings.syncDays * 86400000;
 }
 
 async function updateSettingsTab() {
   const settings = await loadSettings();
 
   const select = document.getElementById('mobile-setting-cache-duration');
-  if (select) select.value = String(settings.cacheDurationHours);
+  if (select) select.value = String(settings.syncDays);
 
   const stale = await isCacheStale();
   // Only show the stale-data warning when the device is actually offline.
@@ -1310,11 +1317,11 @@ async function initSettingsTab() {
   const select = document.getElementById('mobile-setting-cache-duration');
   if (select) {
     select.addEventListener('change', async () => {
-      const hours = Number(select.value);
-      if (Number.isFinite(hours) && hours > 0) {
-        await saveSettings({ cacheDurationHours: hours });
+      const days = Number(select.value);
+      if (Number.isFinite(days) && days > 0) {
+        await saveSettings({ syncDays: days });
         showFeedback(
-          `Cache-Dauer gesetzt: ${select.options[select.selectedIndex].text}.`,
+          `Datenzeitraum gesetzt: ${select.options[select.selectedIndex].text}.`,
           'info'
         );
       }

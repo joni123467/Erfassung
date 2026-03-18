@@ -220,16 +220,15 @@
         <div class="mobile-card">
           <h2 class="mobile-card__title">Offline-Einstellungen</h2>
           <label>
-            Maximales Alter der Offline-Daten
+            Offline-Datenzeitraum
             <select id="mobile-setting-cache-duration">
-              <option value="1">1 Stunde</option>
-              <option value="6">6 Stunden</option>
-              <option value="12">12 Stunden</option>
-              <option value="24">24 Stunden (Standard)</option>
-              <option value="48">2 Tage</option>
-              <option value="168">7 Tage</option>
+              <option value="7">7 Tage</option>
+              <option value="14">14 Tage</option>
+              <option value="30">30 Tage (Standard)</option>
+              <option value="60">60 Tage</option>
+              <option value="90">90 Tage</option>
             </select>
-            <span class="form-hint">Zeigt eine Warnung wenn die lokalen Daten dieses Alter überschreiten und kein Server erreichbar ist.</span>
+            <span class="form-hint">Legt fest, wie viele Tage Vergangenheit und Zukunft lokal gespeichert werden. Mehr Tage = mehr Speicher, aber bessere Offline-Verfügbarkeit.</span>
           </label>
         </div>
         <div class="mobile-card">
