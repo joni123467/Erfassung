@@ -1421,9 +1421,10 @@ def mobile_sync_data(
         "vacations": [_serialize_mobile_vacation(vacation) for vacation in vacations],
         "active_entry": _serialize_mobile_entry(active_entry) if active_entry else None,
         "metrics": {
-            "worked_minutes": metrics.worked_minutes,
+            "worked_minutes": metrics.total_work_minutes + metrics.vacation_minutes,
             "target_minutes": metrics.target_minutes,
-            "balance_minutes": metrics.balance_minutes,
+            "balance_minutes": (metrics.total_work_minutes + metrics.vacation_minutes) - metrics.target_minutes,
+            "vacation_minutes": metrics.vacation_minutes,
             "vacation_summary": {
                 "total_days": metrics.vacation_summary.total_days,
                 "used_days": metrics.vacation_summary.used_days,
