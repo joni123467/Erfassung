@@ -2276,6 +2276,8 @@ tr.company-deleted td {
 .mobile-form {
     display: grid;
     gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
 }
 
 .mobile-form label {
@@ -2289,6 +2291,7 @@ tr.company-deleted td {
 .mobile-form input,
 .mobile-form textarea {
     width: 100%;
+    max-width: 100%;
     border-radius: 10px;
     border: 1px solid var(--border);
     padding: 0.65rem;
