@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.3.1';
+const CACHE_VERSION = 'erfassung-mobile-v0.3.2';
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
 

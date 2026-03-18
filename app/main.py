@@ -1372,6 +1372,12 @@ def api_ping(request: Request, db: Session = Depends(database.get_db)):
     return JSONResponse({"status": "ok", "version": APP_VERSION, "timestamp": datetime.utcnow().isoformat()})
 
 
+@app.get("/api/csrf")
+def api_csrf(request: Request):
+    """Return a fresh CSRF token for the current session.
+    Used by the mobile app to refresh the token before syncing offline actions."""
+    return JSONResponse({"csrf_token": get_csrf_token(request)})
+
 @app.get("/mobile/sync-data")
 def mobile_sync_data(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
