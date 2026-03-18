@@ -134,6 +134,52 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
   return fetch(url, { ...options, signal: controller.signal }).finally(() => window.clearTimeout(timeoutId));
 }
 
+function escHtml(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtMins(minutes) {
+  const m = Math.max(0, Math.round(Number(minutes || 0)));
+  return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+}
+
+function isoDateStr(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function getMondayOf(date) {
+  const d = new Date(date);
+  const day = d.getDay() || 7;
+  d.setDate(d.getDate() - (day - 1));
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function getISOWeekNumber(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+async function refreshCsrfToken() {
+  try {
+    const response = await fetchWithTimeout('/api/csrf', {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }, 3000);
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!data.csrf_token) return;
+    try { window.localStorage.setItem('erfassung_csrf_token', data.csrf_token); } catch { /* ignore */ }
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) meta.setAttribute('content', data.csrf_token);
+  } catch { /* non-fatal */ }
+}
+
 function normalizeBreakLabel(minutes) {
   const value = Number(minutes || 0);
   const safe = Number.isFinite(value) ? value : 0;
@@ -655,27 +701,38 @@ async function flushOfflineQueue() {
   let processed = 0;
   let skipped = 0;
 
+  let punchBlocked = false; // stop further punch actions if one fails (ordering matters)
+
   for (const entry of pending) {
     if (entry.type === 'punch') {
+      if (punchBlocked) continue; // skip remaining punch actions after a failure
+
       const action = entry.payload?.action;
       const validation = validatePunchActionAgainstState(projectedState, action, entry.payload || {});
       if (!validation.allowed) {
+        // Action is already reflected on server – safe to remove from queue
         await deleteRecord(ACTION_STORE, entry.clientActionId);
         skipped += 1;
         continue;
       }
+
+      try {
+        await postQueuedAction(entry);
+        await deleteRecord(ACTION_STORE, entry.clientActionId);
+        projectedState = applyPunchActionToState(projectedState, action, entry.payload || {});
+        processed += 1;
+      } catch {
+        punchBlocked = true; // don't attempt dependent punch actions
+      }
+      continue;
     }
 
+    // Non-punch actions (vacation etc.) are independent – always attempt
     try {
       await postQueuedAction(entry);
       await deleteRecord(ACTION_STORE, entry.clientActionId);
-      if (entry.type === 'punch') {
-        projectedState = applyPunchActionToState(projectedState, entry.payload?.action, entry.payload || {});
-      }
       processed += 1;
-    } catch (error) {
-      break;
-    }
+    } catch { /* leave in queue for next sync */ }
   }
 
   const remaining = await refreshQueueIndicator();
@@ -711,10 +768,15 @@ async function performReconnectSync(trigger = 'auto') {
 
     await syncServerData();
     await recomputeEffectiveState();
+    // Refresh CSRF token from server so queued actions use a valid token
+    await refreshCsrfToken();
     await flushOfflineQueue();
     await syncServerData();
     await recomputeEffectiveState();
     await refreshQueueIndicator();
+    // Re-render client-side tabs with fresh data
+    renderOverview().catch(() => {});
+    renderSalden().catch(() => {});
 
     if (trigger !== 'background') {
       dispatchSyncStatus('Server wieder erreichbar. Daten sind synchronisiert.', 'synced');
@@ -860,7 +922,10 @@ function registerTabHandling() {
 
   tabs.forEach((tab) => tab.addEventListener('click', (event) => {
     event.preventDefault();
-    activate(tab.dataset.tab || defaultTab);
+    const tabName = tab.dataset.tab || defaultTab;
+    activate(tabName);
+    if (tabName === 'uebersicht') renderOverview().catch(() => {});
+    if (tabName === 'salden') renderSalden().catch(() => {});
   }));
   window.addEventListener('hashchange', () => activate(window.location.hash.replace('#', ''), false));
   activate(window.location.hash.replace('#', ''), false);
@@ -975,6 +1040,215 @@ function initializeServerStateFromDataset() {
 
   initialServerState = buildStateFromEntry(entry);
   mobileState = cloneState(initialServerState);
+}
+
+// ── Client-side Übersicht (offline-capable day/week view) ────────────────────
+
+let overviewMode = 'day';
+let overviewDate = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+
+function _overviewAttachNav(container, onPrev, onNext, onMode) {
+  container.querySelector('[data-ov-prev]')?.addEventListener('click', () => { onPrev(); renderOverview().catch(() => {}); });
+  container.querySelector('[data-ov-next]')?.addEventListener('click', () => { onNext(); renderOverview().catch(() => {}); });
+  container.querySelectorAll('[data-ov-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => { onMode(btn.dataset.ovMode); renderOverview().catch(() => {}); });
+  });
+}
+
+function _modeToggleHtml() {
+  return `
+    <div class="mobile-segmented" role="group" aria-label="Darstellung wählen">
+      <button class="mobile-segmented__button${overviewMode === 'day' ? ' is-active' : ''}" data-ov-mode="day">Tag</button>
+      <button class="mobile-segmented__button${overviewMode === 'week' ? ' is-active' : ''}" data-ov-mode="week">Woche</button>
+    </div>`;
+}
+
+async function renderOverview() {
+  const container = document.getElementById('overview-card');
+  if (!container) return;
+
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  if (!snapshot?.data) {
+    container.innerHTML = '<p class="mobile-empty-state">Keine lokalen Daten vorhanden. Bitte online verbinden.</p>';
+    return;
+  }
+
+  const allEntries = snapshot.data.entries || [];
+  const dailyTarget = snapshot.data.user?.daily_target_minutes || 480;
+  const weeklyTarget = snapshot.data.user?.weekly_target_minutes || dailyTarget * 5;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  if (overviewMode === 'week') {
+    _renderWeekView(container, allEntries, weeklyTarget, today);
+  } else {
+    _renderDayView(container, allEntries, dailyTarget, today);
+  }
+}
+
+function _renderDayView(container, allEntries, dailyTarget, today) {
+  const dateStr = isoDateStr(overviewDate);
+  const isToday = dateStr === isoDateStr(today);
+  const dayEntries = allEntries.filter((e) => e.work_date === dateStr);
+  const totalWorked = dayEntries.reduce((s, e) => s + (e.worked_minutes || 0), 0);
+  const balance = totalWorked - dailyTarget;
+
+  const prevDate = new Date(overviewDate); prevDate.setDate(prevDate.getDate() - 1);
+  const nextDate = new Date(overviewDate); nextDate.setDate(nextDate.getDate() + 1);
+  const canNext = nextDate <= today;
+
+  const dateLabel = overviewDate.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  let html = `
+    <div class="mobile-card__header">
+      <h2 class="mobile-card__title">Übersicht</h2>
+      ${_modeToggleHtml()}
+    </div>
+    <div class="mobile-overview-nav" aria-label="Tag wechseln">
+      <button class="mobile-nav-button" data-ov-prev aria-label="Vorheriger Tag">&lsaquo;</button>
+      <span class="mobile-overview-nav__label">
+        <strong>${escHtml(dateLabel)}</strong>
+        ${isToday ? '<small>(Heute)</small>' : ''}
+      </span>
+      ${canNext
+        ? '<button class="mobile-nav-button" data-ov-next aria-label="Nächster Tag">&rsaquo;</button>'
+        : '<span class="mobile-nav-button is-disabled" aria-hidden="true">&rsaquo;</span>'}
+    </div>
+    <dl class="mobile-overview-summary">
+      <div><dt>Arbeitszeit</dt><dd>${fmtMins(totalWorked)} Std</dd></div>
+      <div><dt>Soll</dt><dd>${fmtMins(dailyTarget)} Std</dd></div>
+      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${fmtMins(Math.abs(balance))} Std</dd></div>
+    </dl>`;
+
+  if (dayEntries.length > 0) {
+    html += '<ul class="mobile-entry-list mobile-entry-list--compact">';
+    for (const entry of dayEntries) {
+      const endTime = entry.is_open ? 'läuft' : (entry.end_time ? entry.end_time.slice(0, 5) : '–');
+      html += `
+        <li class="mobile-entry${entry.is_open ? ' is-active' : ''}">
+          <div class="mobile-entry__times">
+            <strong>${escHtml(entry.start_time.slice(0, 5))}</strong>
+            <span>–</span>
+            <strong>${escHtml(endTime)}</strong>
+          </div>
+          <div class="mobile-entry__meta">
+            <span>Arbeitszeit ${fmtMins(entry.worked_minutes)} Std</span>
+            ${entry.total_break_minutes ? `<span>Pausen ${fmtMins(entry.total_break_minutes)} Std</span>` : ''}
+            ${entry.company_name ? `<span>${escHtml(entry.company_name)}</span>` : ''}
+            ${entry.notes ? `<span class="mobile-entry__notes">${escHtml(entry.notes)}</span>` : ''}
+          </div>
+        </li>`;
+    }
+    html += '</ul>';
+  } else {
+    html += '<p class="mobile-empty-state">Für diesen Tag wurden keine Buchungen erfasst.</p>';
+  }
+
+  container.innerHTML = html;
+  _overviewAttachNav(
+    container,
+    () => { overviewDate = prevDate; },
+    () => { if (canNext) overviewDate = nextDate; },
+    (mode) => { overviewMode = mode; if (mode === 'day') { overviewDate = new Date(today); } }
+  );
+}
+
+function _renderWeekView(container, allEntries, weeklyTarget, today) {
+  const monday = getMondayOf(overviewDate);
+  const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6);
+  const weekNum = getISOWeekNumber(monday);
+  const prevMonday = new Date(monday); prevMonday.setDate(prevMonday.getDate() - 7);
+  const nextMonday = new Date(monday); nextMonday.setDate(nextMonday.getDate() + 7);
+  const canNext = nextMonday <= today;
+
+  const dayMap = {};
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday); d.setDate(d.getDate() + i);
+    dayMap[isoDateStr(d)] = { date: d, minutes: 0 };
+  }
+  let totalWorked = 0;
+  for (const entry of allEntries) {
+    if (dayMap[entry.work_date]) {
+      dayMap[entry.work_date].minutes += entry.worked_minutes || 0;
+      totalWorked += entry.worked_minutes || 0;
+    }
+  }
+  const balance = totalWorked - weeklyTarget;
+  const sundayStr = sunday.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const mondayStr = monday.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+
+  let html = `
+    <div class="mobile-card__header">
+      <h2 class="mobile-card__title">Übersicht</h2>
+      ${_modeToggleHtml()}
+    </div>
+    <div class="mobile-overview-nav" aria-label="Woche wechseln">
+      <button class="mobile-nav-button" data-ov-prev aria-label="Vorherige Woche">&lsaquo;</button>
+      <span class="mobile-overview-nav__label">
+        <strong>KW ${weekNum}</strong>
+        <small>${mondayStr} – ${sundayStr}</small>
+      </span>
+      ${canNext
+        ? '<button class="mobile-nav-button" data-ov-next aria-label="Nächste Woche">&rsaquo;</button>'
+        : '<span class="mobile-nav-button is-disabled" aria-hidden="true">&rsaquo;</span>'}
+    </div>
+    <dl class="mobile-overview-summary">
+      <div><dt>Arbeitszeit</dt><dd>${fmtMins(totalWorked)} Std</dd></div>
+      <div><dt>Soll</dt><dd>${fmtMins(weeklyTarget)} Std</dd></div>
+      <div><dt>Saldo</dt><dd class="${balance < 0 ? 'is-negative' : ''}">${fmtMins(Math.abs(balance))} Std</dd></div>
+    </dl>
+    <ul class="mobile-week-list mobile-week-list--grid">`;
+
+  for (const ds of Object.keys(dayMap).sort()) {
+    const { date, minutes } = dayMap[ds];
+    const isToday = ds === isoDateStr(today);
+    const label = date.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+    html += `
+      <li class="mobile-week-day${isToday ? ' is-today' : ''}">
+        <span class="mobile-week-day__label">${escHtml(label)}</span>
+        <span class="mobile-week-day__minutes">${fmtMins(minutes)} Std</span>
+      </li>`;
+  }
+  html += '</ul>';
+
+  container.innerHTML = html;
+  _overviewAttachNav(
+    container,
+    () => { overviewDate = new Date(prevMonday); },
+    () => { if (canNext) overviewDate = new Date(nextMonday); },
+    (mode) => { overviewMode = mode; if (mode === 'day') { overviewDate = new Date(today); } }
+  );
+}
+
+// ── Client-side Salden (from cached metrics) ──────────────────────────────────
+
+async function renderSalden() {
+  const container = document.getElementById('salden-card');
+  if (!container) return;
+
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const m = snapshot?.data?.metrics;
+  const vs = m?.vacation_summary;
+  if (!m) {
+    container.innerHTML = '<p class="mobile-empty-state">Keine lokalen Daten. Bitte online verbinden.</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <h2 class="mobile-card__title">Monatswerte</h2>
+    <dl class="mobile-stats-grid">
+      <div><dt>Ist</dt><dd>${fmtMins(m.worked_minutes)} Std</dd></div>
+      <div><dt>Soll</dt><dd>${fmtMins(m.target_minutes)} Std</dd></div>
+      <div><dt>Saldo</dt><dd class="${m.balance_minutes < 0 ? 'is-negative' : ''}">${fmtMins(m.balance_minutes)} Std</dd></div>
+    </dl>
+    ${vs ? `
+    <h2 class="mobile-card__title" style="margin-top:0.75rem">Urlaubskonto</h2>
+    <dl class="mobile-stats-grid">
+      <div><dt>Jahresurlaub</dt><dd>${Number(vs.total_days || 0).toFixed(1)} Tage</dd></div>
+      ${vs.carryover_days > 0 ? `<div><dt>Übertrag</dt><dd>${Number(vs.carryover_days).toFixed(1)} Tage</dd></div>` : ''}
+      <div><dt>Genommen</dt><dd>${Number(vs.used_days || 0).toFixed(1)} Tage</dd></div>
+      <div><dt>Geplant</dt><dd>${Number(vs.planned_days || 0).toFixed(1)} Tage</dd></div>
+      <div><dt>Rest</dt><dd>${Number(vs.remaining_days || 0).toFixed(1)} Tage</dd></div>
+    </dl>` : ''}`;
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -1124,6 +1398,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   await initSettingsTab();
   await hydrateCompaniesFromCache();
   await recomputeEffectiveState();
+  renderOverview().catch(() => {});
+  renderSalden().catch(() => {});
 
   const status = await checkServerReachability(true);
   if (status === 'online') {
