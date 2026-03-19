@@ -686,9 +686,17 @@ async function postQueuedAction(entry) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
     body: body.toString(),
     credentials: 'same-origin',
-    redirect: 'follow',
+    redirect: 'manual',
     cache: 'no-store',
   }, 8000);
+  // redirect: 'manual' means redirects come back as opaque-redirect (type 'opaqueredirect')
+  // or status 0. Detect auth redirects so we don't lose queued actions.
+  if (response.type === 'opaqueredirect' || response.status === 0) {
+    throw new Error('Auth redirect detected – session expired');
+  }
+  if (response.redirected && /\/login/i.test(response.url)) {
+    throw new Error('Auth redirect to login – session expired');
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -770,23 +778,33 @@ async function performReconnectSync(trigger = 'auto') {
       } else {
         dispatchSyncStatus('Keine Verbindung. Du arbeitest offline.', 'offline');
       }
+      // Still render from whatever local data we have
       await recomputeEffectiveState();
+      renderOverview().catch(() => {});
+      renderSalden().catch(() => {});
       return;
     }
 
-    await syncServerData();
+    // 1. Pull latest data from server
+    const syncOk = await syncServerData();
     await recomputeEffectiveState();
-    // Refresh CSRF token from server so queued actions use a valid token
-    await refreshCsrfToken();
-    await flushOfflineQueue();
-    await syncServerData();
-    await recomputeEffectiveState();
+
+    if (syncOk) {
+      // 2. Refresh CSRF token so queued actions use a valid token
+      await refreshCsrfToken();
+      // 3. Flush offline queue (push local actions to server)
+      await flushOfflineQueue();
+      // 4. Pull again to get server state after our pushed actions
+      await syncServerData();
+      await recomputeEffectiveState();
+    }
+
     await refreshQueueIndicator();
     // Re-render client-side tabs with fresh data
     renderOverview().catch(() => {});
     renderSalden().catch(() => {});
 
-    if (trigger !== 'background') {
+    if (trigger !== 'background' && syncOk) {
       dispatchSyncStatus('Server wieder erreichbar. Daten sind synchronisiert.', 'synced');
     }
   } finally {
@@ -810,82 +828,31 @@ async function processPunchSubmission(form, payload) {
     return;
   }
 
-  const reachability = await checkServerReachability();
-  if (reachability !== 'online') {
-    await queueAction('punch', payload);
-    await recomputeEffectiveState();
-    await refreshQueueIndicator();
-    showFeedback('Offline-Aktion lokal gespeichert. Wird automatisch synchronisiert.', 'info');
-    dispatchSyncStatus('Offline gespeichert – Stempelung wurde lokal erfasst.', 'queue');
-    return;
-  }
+  // ── Queue-first: always save locally, then attempt sync ──
+  await queueAction('punch', payload);
+  await recomputeEffectiveState();
+  await refreshQueueIndicator();
+  showFeedback('Buchung lokal erfasst. Synchronisiere …', 'info');
 
+  // Attempt immediate sync in background (non-blocking for UI)
   try {
-    const punchParams = new URLSearchParams(payload);
-    punchParams.set('csrf_token', getCsrfToken());
-    const response = await fetchWithTimeout(form.getAttribute('action') || '/punch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: punchParams.toString(),
-      credentials: 'same-origin',
-      redirect: 'follow',
-      cache: 'no-store',
-    }, 5000);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    if (response.redirected) {
-      window.location.href = response.url;
-      return;
-    }
-    showFeedback('Buchung erfolgreich übertragen.', 'success');
-    dispatchSyncStatus('Buchung wurde an den Server übertragen.', 'synced');
-    await syncServerData();
-    await recomputeEffectiveState();
-  } catch (error) {
-    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
-    setStatusBadge('unreachable');
-    await queueAction('punch', payload);
-    await recomputeEffectiveState();
-    await refreshQueueIndicator();
-    showFeedback('Server nicht erreichbar. Aktion wurde lokal gespeichert.', 'info');
-    dispatchSyncStatus('Server nicht erreichbar – Aktion lokal gespeichert.', 'unreachable');
-  }
+    await performReconnectSync('punch');
+  } catch { /* sync failure is non-fatal – action stays in queue */ }
 }
 
 async function processVacationSubmission(form, payload) {
   payload.client_action_id = payload.client_action_id || generateClientActionId('vacation');
-  const reachability = await checkServerReachability();
-  if (reachability !== 'online') {
-    await queueAction('vacation', payload);
-    await appendVacationPreview(payload, true);
-    await refreshQueueIndicator();
-    showFeedback('Urlaubsantrag offline gespeichert.', 'info');
-    dispatchSyncStatus('Offline gespeichert – Urlaubsantrag wartet auf Synchronisation.', 'queue');
-    return;
-  }
 
+  // ── Queue-first: always save locally, then attempt sync ──
+  await queueAction('vacation', payload);
+  await appendVacationPreview(payload, true);
+  await refreshQueueIndicator();
+  showFeedback('Urlaubsantrag lokal erfasst. Synchronisiere …', 'info');
+
+  // Attempt immediate sync in background
   try {
-    const vacationParams = new URLSearchParams(payload);
-    vacationParams.set('csrf_token', getCsrfToken());
-    const response = await fetchWithTimeout(form.getAttribute('action') || '/vacations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: vacationParams.toString(),
-      credentials: 'same-origin',
-      redirect: 'follow',
-      cache: 'no-store',
-    }, 5000);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    showFeedback('Urlaubsantrag erfolgreich übertragen.', 'success');
-    await syncServerData();
-  } catch (error) {
-    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
-    setStatusBadge('unreachable');
-    await queueAction('vacation', payload);
-    await appendVacationPreview(payload, true);
-    await refreshQueueIndicator();
-    showFeedback('Server nicht erreichbar. Antrag lokal gespeichert.', 'info');
-    dispatchSyncStatus('Server nicht erreichbar – Antrag lokal gespeichert.', 'unreachable');
-  }
+    await performReconnectSync('vacation');
+  } catch { /* sync failure is non-fatal – action stays in queue */ }
 }
 
 async function handleOfflineSubmission(event) {
@@ -1340,6 +1307,7 @@ async function initSettingsTab() {
         }
         const syncOk = await syncServerData();
         if (syncOk) {
+          await refreshCsrfToken();
           await flushOfflineQueue();
           await syncServerData(); // second pass after queue flush
           renderOverview().catch(() => {});
@@ -1410,6 +1378,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // ── Phase 1: Immediate local rendering (works offline) ─────────────────────
   registerTabHandling();
   registerModalHandling();
   registerOfflineForms();
@@ -1420,19 +1389,21 @@ window.addEventListener('DOMContentLoaded', async () => {
   await initSettingsTab();
   await hydrateCompaniesFromCache();
   await recomputeEffectiveState();
+  // Render from whatever data is already in IndexedDB (possibly from a previous session)
   renderOverview().catch(() => {});
   renderSalden().catch(() => {});
 
-  const status = await checkServerReachability(true);
-  if (status === 'online') {
+  // ── Phase 2: Attempt server sync (non-blocking for app startup) ────────────
+  try {
     await performReconnectSync('startup');
-    await updateSettingsTab();
-  } else {
-    await updateSettingsTab();
-    if (status === 'unreachable') {
-      dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar. Lokale Daten werden genutzt.', 'unreachable');
-    } else {
-      dispatchSyncStatus('Offline-Modus aktiv. Lokale Daten werden verwendet.', 'offline');
-    }
+  } catch { /* sync failure is non-fatal */ }
+  await updateSettingsTab();
+
+  // Show status based on current reachability
+  const status = await checkServerReachability();
+  if (status === 'unreachable') {
+    dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar. Lokale Daten werden genutzt.', 'unreachable');
+  } else if (status !== 'online') {
+    dispatchSyncStatus('Offline-Modus aktiv. Lokale Daten werden verwendet.', 'offline');
   }
 });
