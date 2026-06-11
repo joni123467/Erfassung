@@ -5,6 +5,28 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.3.7] – 2026-06-11
+
+### Fixed
+
+- **Docker-Image in Portainer deploybar (behebt „error 500" beim Deploy):**
+  Der Build (`docker/build-push-action@v6`) hängte standardmäßig
+  Provenance-/SBOM-Attestations an das Image. Dadurch wurde das Image als
+  **OCI Image Index** veröffentlicht, der zusätzlich ein Attestation-Manifest mit
+  `platform: unknown/unknown` enthält. Dieser Zusatz-Eintrag bringt Portainer und
+  ältere Docker-/Registry-Tooling beim Deploy zum Fehler („no matching manifest" /
+  HTTP 500). Der Workflow erzeugt nun mit `provenance: false`, `sbom: false` und
+  explizitem `platforms: linux/amd64` ein **schlankes Single-Platform-Manifest**
+  (identisch zu `docker build && docker push`). Das Image `:0.3.7` ist damit ohne
+  Sonderbehandlung deploybar.
+
+### Grund der Versionsanhebung
+
+Patch (`0.3.6` → `0.3.7`): reiner Build-/Auslieferungs-Fix. Es wurde kein
+Anwendungscode geändert. Eigene Version (statt Überschreiben von `0.3.6`), damit
+Portainer/Docker garantiert ein frisches, sauberes Manifest ziehen und kein zuvor
+gecachter `0.3.6`-Index verwendet wird.
+
 ## [0.3.6] – 2026-06-11
 
 ### Hintergrund

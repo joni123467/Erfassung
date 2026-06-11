@@ -51,6 +51,16 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64
+          # Emit a plain single-platform image manifest instead of an OCI image
+          # index. By default build-push-action attaches provenance/SBOM
+          # attestations, which wrap the image in an index containing an extra
+          # `unknown/unknown` attestation manifest. That entry trips up Portainer
+          # and older Docker/registry tooling ("no matching manifest" / HTTP 500
+          # on deploy). Disabling it produces the same clean artifact a plain
+          # `docker build && docker push` would.
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
