@@ -2,7 +2,7 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.3.6`
+**Version:** `0.4.0`
 
 > Die mobile Oberfläche (`/mobile`) ist eine installierbare, offline-fähige PWA.
 > Details siehe Abschnitt [„Mobile Offline-Funktion"](#mobile-offline-funktion-mobile) und [`CHANGELOG.md`](CHANGELOG.md).
@@ -91,6 +91,93 @@ services:
       - ./logs:/app/logs
       - ./config:/app/config
 ```
+
+## Benutzerverwaltung über die Konsole (CLI)
+
+Für Notfälle und Administration ohne Web-Oberfläche gibt es ein Konsolen-Werkzeug
+(`app/manage.py`). Es nutzt dieselbe Datenbank wie die Web-App (Umgebungsvariable
+`DATABASE_URL`) sowie dieselbe Passwort-Prüfung (mind. 10 Zeichen, Groß-/Klein­buchstabe,
+Zahl, Sonderzeichen).
+
+### Aufruf
+
+Im laufenden Docker-Container (empfohlen im Produktivbetrieb – nutzt automatisch das
+gemountete `/app/data`):
+
+```bash
+docker exec -it erfassung python -m app.manage <befehl> [optionen]
+```
+
+> `erfassung` ist der Container-Name aus der `compose.yaml`. Bei abweichendem Namen
+> entsprechend anpassen (`docker ps`).
+
+Lokal (Entwicklung):
+
+```bash
+python -m app.manage <befehl> [optionen]
+```
+
+### Benutzer auflisten
+
+```bash
+docker exec -it erfassung python -m app.manage list-users
+```
+
+Zeigt ID, Benutzername, Name, E-Mail, Gruppe, Admin-Kennzeichen und ob beim nächsten
+Login ein Passwortwechsel erzwungen wird.
+
+### Gruppen auflisten
+
+```bash
+docker exec -it erfassung python -m app.manage list-groups
+```
+
+Hilfreich, um die Gruppen-ID/den -Namen für `--group` zu finden (Admin-Rechte hängen
+an der Gruppe).
+
+### Benutzer anlegen
+
+```bash
+docker exec -it erfassung python -m app.manage create-user \
+  --username mmustermann \
+  --full-name "Max Mustermann" \
+  --email max@example.com \
+  --group Administration \
+  --weekly-hours 40
+```
+
+- Ohne `--password` wird das Passwort interaktiv (verdeckt) abgefragt.
+- `--password "Geheim!2345"` setzt es direkt (Vorsicht: erscheint in der Shell-History).
+- `--random` erzeugt ein sicheres Zufallspasswort und gibt es einmalig aus.
+- `--group` akzeptiert Gruppen-**ID oder -Name**; für Admin-Rechte die Admin-Gruppe
+  (Standard: `Administration`) angeben.
+- Standardmäßig muss der Benutzer das Passwort bei der ersten Anmeldung ändern.
+  Mit `--no-force-change` wird das deaktiviert.
+
+### Passwort zurücksetzen
+
+```bash
+# per Benutzername, mit interaktiver Abfrage
+docker exec -it erfassung python -m app.manage reset-password --username mmustermann
+
+# per ID, mit Zufallspasswort
+docker exec -it erfassung python -m app.manage reset-password --id 1 --random
+
+# direkt gesetztes Passwort, ohne erzwungenen Wechsel
+docker exec -it erfassung python -m app.manage reset-password \
+  --username admin --password "NeuesPasswort!1" --no-force-change
+```
+
+Standardmäßig wird nach dem Zurücksetzen ein Passwortwechsel bei der nächsten
+Anmeldung verlangt (`--no-force-change` deaktiviert das).
+
+### Hinweise
+
+- Das voreingestellte Administratorkonto lautet `admin` (Erst-PIN/-Passwort `0000`).
+  Über `reset-password --username admin --random` lässt sich ein sicheres Passwort
+  vergeben, falls der Zugang verloren ging.
+- Alle Befehle geben bei Fehlern (unbekannter Benutzer, doppelter Benutzername/E-Mail,
+  zu schwaches Passwort) eine verständliche Meldung und den Exit-Code `1` zurück.
 
 ## Persistenz (wichtig)
 
