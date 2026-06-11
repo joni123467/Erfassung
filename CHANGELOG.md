@@ -5,6 +5,32 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.4.0] – 2026-06-11
+
+### Added
+
+- **Konsolen-Benutzerverwaltung (`app/manage.py`):** Neues CLI-Werkzeug zur
+  Administration ohne Web-Oberfläche – ideal für Notfälle (z. B. verlorener
+  Admin-Zugang) und Erstinbetriebnahme.
+  - `list-users` – alle Benutzer auflisten (ID, Benutzername, Name, E-Mail,
+    Gruppe, Admin, Passwortwechsel-Flag).
+  - `list-groups` – Gruppen inkl. Admin-Kennzeichen auflisten.
+  - `create-user` – Benutzer anlegen (Passwort interaktiv, per `--password`
+    oder `--random`; Gruppenzuordnung per ID/Name; `--weekly-hours`;
+    `--no-force-change`).
+  - `reset-password` – Passwort per `--username` oder `--id` zurücksetzen
+    (interaktiv, `--password` oder `--random`; `--force-change/--no-force-change`).
+  - Aufruf im Container: `docker exec -it erfassung python -m app.manage <befehl>`.
+  - Nutzt dieselbe DB (`DATABASE_URL`), Passwort-Hashing (PBKDF2) und
+    Stärke-Prüfung wie die Web-App; PIN-Vergabe erfolgt automatisch.
+- **README:** Abschnitt „Benutzerverwaltung über die Konsole (CLI)" mit Anleitung
+  und Beispielen ergänzt.
+
+### Grund der Versionsanhebung
+
+Minor (`0.3.8` → `0.4.0`): additive neue Funktionalität (Administrations-CLI). Keine
+Änderung an bestehender Web-/Geschäftslogik, am Datenmodell oder an Endpunkten.
+
 ## [0.3.8] – 2026-06-11
 
 ### Fixed
