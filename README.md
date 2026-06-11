@@ -2,7 +2,10 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.1.7`
+**Version:** `0.3.6`
+
+> Die mobile Oberfläche (`/mobile`) ist eine installierbare, offline-fähige PWA.
+> Details siehe Abschnitt [„Mobile Offline-Funktion"](#mobile-offline-funktion-mobile) und [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Deployment-Standard (neu)
 
@@ -163,3 +166,20 @@ Die mobile Seite zeigt nutzerfreundlich an:
 
 - Moderne Browser mit Service Worker + IndexedDB (aktuelles Chrome/Edge/Safari/Firefox mobile).
 - Bei deaktiviertem IndexedDB fällt die App auf reduzierte Browser-Speicherung zurück.
+
+### Updates & Service-Worker-Versionierung
+
+- Der Service Worker leitet seinen Cache-Namen (`erfassung-mobile-v<VERSION>`) zur
+  Laufzeit aus dem `?v=`-Parameter ab, mit dem er registriert wird. Dieser Parameter
+  stammt aus `app_version` (Datei `VERSION`).
+- **Folge:** Beim Anheben der Version in `VERSION` ändert sich automatisch der
+  Cache-Name. Der alte Cache wird beim `activate`-Event gelöscht (`skipWaiting()` +
+  `clients.claim()`), sodass ausgelieferte JS/CSS-Assets nicht „eingefroren" bleiben.
+- Es ist **kein** manuelles Editieren von `static/sw.js` oder `static/app.js` pro
+  Release mehr nötig.
+
+### Installierbarkeit
+
+Installierbar auf Android, iOS, Windows, macOS und Linux über das Manifest
+(`static/manifest.webmanifest`) mit `id`, `start_url`, `scope`, `display: standalone`
+sowie Icons in 192px, 512px und SVG (maskable).

@@ -1,4 +1,10 @@
-const CACHE_VERSION = 'erfassung-mobile-v0.3.5';
+// The cache version is derived at runtime from the `?v=` query the service
+// worker was registered with (see app.js). That value is in turn driven by the
+// server-side app_version (VERSION file), so bumping VERSION automatically
+// produces a new cache name here and purges the previous cache on activate —
+// no manual edit of this file is needed on a release.
+const APP_VERSION = new URLSearchParams(self.location.search).get('v') || 'dev';
+const CACHE_VERSION = `erfassung-mobile-v${APP_VERSION}`;
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
 
