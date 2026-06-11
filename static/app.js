@@ -6,8 +6,14 @@ const SW_VERSION = new URL(import.meta.url).searchParams.get('v') || 'dev';
 
 window.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
+    // The service worker is served from the application root (/sw.js) with a
+    // `Service-Worker-Allowed: /` header so its scope can be the whole origin.
+    // Registering a /static/sw.js with {scope:'/'} would be REJECTED by the
+    // browser (a worker's max scope is its own path), which is why the offline
+    // start previously failed: install never ran, nothing was precached.
     navigator.serviceWorker
-      .register(`/static/sw.js?v=${SW_VERSION}`, { scope: '/' })
+      .register(`/sw.js?v=${SW_VERSION}`, { scope: '/' })
       .catch((error) => console.warn('Service Worker Registrierung fehlgeschlagen', error));
   }
 });
+
