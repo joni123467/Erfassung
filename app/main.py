@@ -731,13 +731,17 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
     elif company_filter_id is not None:
         entries = [entry for entry in entries if entry.company_id == company_filter_id]
 
+    # Anzeige-/Export-Reihenfolge: neueste Einträge zuerst (Datum + Startzeit
+    # absteigend), Name als Tiebreaker aufsteigend. Stabile Zwei-Schritt-Sortierung;
+    # ändert ausschließlich die Reihenfolge, keine Daten oder Berechnungen.
     entries_sorted = sorted(
         entries,
-        key=lambda item: (
-            item.work_date,
-            item.start_time,
-            item.user.full_name.lower() if item.user else "",
-        ),
+        key=lambda item: item.user.full_name.lower() if item.user else "",
+    )
+    entries_sorted = sorted(
+        entries_sorted,
+        key=lambda item: (item.work_date, item.start_time),
+        reverse=True,
     )
 
     total_minutes = sum(entry.worked_minutes for entry in entries)
@@ -1065,7 +1069,9 @@ def account_password_update(
 def _build_daily_overview(db: Session, user_id: int, target_date: date) -> dict[str, object]:
     entries = crud.get_time_entries_for_user(db, user_id, start=target_date, end=target_date)
     entries = [entry for entry in entries if entry.status != models.TimeEntryStatus.REJECTED]
-    entries = sorted(entries, key=lambda entry: (entry.start_time, entry.id))
+    # Anzeige-Reihenfolge: neueste Buchung zuerst. Reine Sortierung – Zeitstempel,
+    # Arbeits-/Pausenzeiten und die Summenberechnung bleiben unverändert.
+    entries = sorted(entries, key=lambda entry: (entry.start_time, entry.id), reverse=True)
     total_minutes = sum(entry.worked_minutes for entry in entries)
     return {
         "date": target_date,
