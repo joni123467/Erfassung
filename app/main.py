@@ -26,7 +26,6 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
@@ -52,8 +51,18 @@ def get_csrf_token(request: Request) -> str:
     return token
 
 
-class CSRFMiddleware(BaseHTTPMiddleware):
-    """Validate synchronizer CSRF tokens on all state-changing requests."""
+class CSRFMiddleware:
+    """Validate synchronizer CSRF tokens on all state-changing requests.
+
+    Implemented as a pure ASGI middleware (not ``BaseHTTPMiddleware``): to read
+    the ``csrf_token`` from a form POST we must consume the request body, which
+    would otherwise leave nothing for the downstream endpoint to parse (causing
+    a 422 "Field required" on e.g. /login). We therefore buffer the body and
+    replay it to the application via a fresh ASGI ``receive`` callable.
+
+    SessionMiddleware is registered *after* this middleware so that it runs
+    further out; by the time we execute, ``scope["session"]`` is populated.
+    """
 
     _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
     _CSRF_ERROR_HTML = (
@@ -65,34 +74,61 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "<a href='/'>Zurück zur Startseite</a></body></html>"
     )
 
-    async def dispatch(self, request: Request, call_next):
+    def __init__(self, app) -> None:
+        self.app = app
+
+    @staticmethod
+    def _replay(body: bytes):
+        """Return an ASGI ``receive`` that yields the buffered body once."""
+        delivered = False
+
+        async def receive():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        return receive
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         if request.method in self._SAFE_METHODS:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        session_token: str | None = None
-        if "session" in request.scope:
-            session_token = request.session.get("csrf_token")
+        session = scope.get("session")
+        session_token = session.get("csrf_token") if isinstance(session, dict) else None
 
-        if not session_token:
-            return HTMLResponse(content=self._CSRF_ERROR_HTML, status_code=403)
+        # Accept the token from an explicit header (fetch/XHR) …
+        submitted_token = request.headers.get("x-csrf-token")
 
-        # Accept token from explicit header (fetch/XHR) or from form body
-        submitted_token: str | None = request.headers.get("x-csrf-token")
+        # … or from the form body. Only then do we consume + replay the stream.
         if not submitted_token:
             content_type = request.headers.get("content-type", "")
             if (
                 "application/x-www-form-urlencoded" in content_type
                 or "multipart/form-data" in content_type
             ):
-                form_data = await request.form()
-                submitted_token = form_data.get("csrf_token")  # type: ignore[assignment]
+                body = await request.body()
+                form = await Request(scope, self._replay(body)).form()
+                submitted_token = form.get("csrf_token")  # type: ignore[assignment]
+                receive = self._replay(body)  # replay for the downstream app
 
-        if not submitted_token or not hmac.compare_digest(
-            session_token, str(submitted_token)
+        if (
+            not session_token
+            or not submitted_token
+            or not hmac.compare_digest(str(session_token), str(submitted_token))
         ):
-            return HTMLResponse(content=self._CSRF_ERROR_HTML, status_code=403)
+            response = HTMLResponse(content=self._CSRF_ERROR_HTML, status_code=403)
+            await response(scope, receive, send)
+            return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
 
 app = FastAPI(
@@ -101,12 +137,17 @@ app = FastAPI(
     version=APP_VERSION,
 )
 
+# NOTE: Starlette applies middleware in reverse registration order, so the
+# LAST middleware added becomes the OUTERMOST (runs first). SessionMiddleware
+# must run before CSRFMiddleware, otherwise request.session is not yet populated
+# when the CSRF check reads it — which would reject every POST (incl. /login)
+# with a 403 "Ungültige Sitzung". Therefore register CSRF first, Session last.
+app.add_middleware(CSRFMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=_SESSION_SECRET,
     https_only=_HTTPS_ONLY_SESSION,
 )
-app.add_middleware(CSRFMiddleware)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")

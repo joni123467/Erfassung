@@ -5,6 +5,34 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.3.8] – 2026-06-11
+
+### Fixed
+
+- **Anmeldung mit „403 – Ungültige Sitzung" repariert (zwei zusammenhängende
+  Fehler in der CSRF-Absicherung):**
+  1. **Middleware-Reihenfolge:** Starlette wendet Middleware in umgekehrter
+     Registrierungsreihenfolge an – die zuletzt registrierte läuft *außen*. Die
+     `CSRFMiddleware` war nach der `SessionMiddleware` registriert und lief damit
+     *vor* ihr. Beim CSRF-Check war die Session daher noch nicht geladen
+     (`scope["session"]` fehlte), sodass **jeder** POST – inklusive `/login` –
+     mit `403` abgewiesen wurde. Reihenfolge korrigiert (CSRF zuerst, Session
+     zuletzt registriert ⇒ Session läuft außen).
+  2. **Request-Body wurde verbraucht:** Die `CSRFMiddleware` (vormals
+     `BaseHTTPMiddleware`) las das Formular per `await request.form()`, wodurch
+     der Body-Stream geleert wurde und der `/login`-Handler keine Felder mehr
+     erhielt (`422 Field required`). Die Middleware ist nun eine **reine
+     ASGI-Middleware**, die den Body puffert und über ein frisches
+     `receive`-Callable an die Anwendung **weiterreicht**.
+  Ergebnis: Anmeldung funktioniert wieder; falsche Zugangsdaten liefern wieder
+  die reguläre Fehlermeldung (HTTP 400) statt eines 403, und fehlende/ungültige
+  CSRF-Token werden weiterhin korrekt mit 403 abgelehnt.
+
+### Grund der Versionsanhebung
+
+Patch (`0.3.7` → `0.3.8`): Behebung eines kritischen Fehlers, der die Anmeldung
+vollständig blockierte. Keine Änderung an Datenmodell oder Geschäftslogik.
+
 ## [0.3.7] – 2026-06-11
 
 ### Fixed
