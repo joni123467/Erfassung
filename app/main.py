@@ -20,7 +20,7 @@ try:  # FastAPI <=0.75 did not re-export BackgroundTasks
     from fastapi import BackgroundTasks
 except ImportError:  # pragma: no cover - fallback for older FastAPI releases
     from starlette.background import BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
@@ -150,6 +150,33 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker() -> Response:
+    """Serve the service worker from the application ROOT.
+
+    A service worker can only control URLs under the path it is served from,
+    unless the `Service-Worker-Allowed` header widens that scope. The app needs
+    scope "/" so the worker can serve the `/mobile` start_url offline. Serving
+    the script from /sw.js (root) with the header below makes scope "/" valid;
+    a /static/sw.js registration with {scope:'/'} would be rejected by browsers.
+    """
+    content = (_STATIC_DIR / "sw.js").read_text(encoding="utf-8")
+    return Response(
+        content,
+        media_type="application/javascript",
+        headers={
+            "Service-Worker-Allowed": "/",
+            # The SW script itself must never be served stale, otherwise updates
+            # (new cache version) would not roll out.
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["now"] = datetime.utcnow
 templates.env.globals["app_version"] = APP_VERSION
@@ -1478,6 +1505,91 @@ def mobile_sync_data(
     return JSONResponse(payload)
 
 
+def _parse_event_time(value: Optional[str]) -> datetime:
+    """Use the client-supplied wall-clock time of the punch (so an event made
+    offline keeps its real time instead of the much later sync time), falling
+    back to the server clock when absent/implausible.
+
+    The client sends local naive ISO ("YYYY-MM-DDTHH:MM:SS"), matching how the
+    server records online punches via datetime.now(); a trailing 'Z' or an
+    explicit offset is normalised away. Values far outside a sane window are
+    rejected to guard against a badly skewed device clock.
+    """
+    if value:
+        text_value = value.strip()
+        if text_value.endswith("Z"):
+            text_value = text_value[:-1]
+        try:
+            parsed = datetime.fromisoformat(text_value)
+        except (ValueError, TypeError):
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is not None:
+                parsed = parsed.replace(tzinfo=None)
+            server_now = datetime.now()
+            if server_now - timedelta(days=400) <= parsed <= server_now + timedelta(days=1):
+                return parsed
+    return datetime.now()
+
+
+def _wants_json(request: Request) -> bool:
+    """True for offline-sync / XHR callers that send `Accept: application/json`.
+
+    Normal browser form posts (Accept: text/html) keep the classic 303 redirect
+    behaviour, so the desktop web UI is unaffected.
+    """
+    return "application/json" in request.headers.get("accept", "").lower()
+
+
+def _auth_required_response(request: Request):
+    """401 JSON for sync clients (so they can keep the queued action and retry
+    after re-authentication), 303 to /login for normal browsers."""
+    if _wants_json(request):
+        return JSONResponse(
+            {"ok": False, "duplicate": False, "retryable": True, "message": "Sitzung abgelaufen"},
+            status_code=401,
+        )
+    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _sync_result(
+    request: Request,
+    *,
+    target: str,
+    message: str = "",
+    error: str = "",
+    duplicate: bool = False,
+    retryable: bool = False,
+):
+    """Return a machine-readable JSON outcome for offline-sync callers, or the
+    classic 303 redirect for normal browser form submissions.
+
+    The JSON shape lets the client decide reliably whether to remove an action
+    from its offline queue:
+      - ok / duplicate  -> action is done on the server -> delete locally
+      - retryable       -> transient/ordering issue     -> keep, retry later
+      - neither         -> definitive rejection          -> drop (won't succeed)
+    """
+    ok = bool(message) and not error
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": ok or duplicate,
+                "duplicate": duplicate,
+                "retryable": retryable,
+                "message": message or error,
+            },
+            status_code=200,
+        )
+    params = {}
+    if message and not error:
+        params["msg"] = message
+    if error:
+        params["error"] = error
+    redirect = _build_redirect(target, **params)
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.post("/punch")
 def punch_action(
     request: Request,
@@ -1487,19 +1599,24 @@ def punch_action(
     notes: str = Form(""),
     next_url: str = Form("/dashboard"),
     client_action_id: Optional[str] = Form(None),
+    event_time: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        return _auth_required_response(request)
+    target = _sanitize_next(next_url)
     if client_action_id:
         existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
         if existing_action:
-            redirect = _build_redirect(_sanitize_next(next_url), msg="Aktion bereits synchronisiert")
-            return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    target = _sanitize_next(next_url)
+            return _sync_result(
+                request,
+                target=target,
+                message="Aktion bereits synchronisiert",
+                duplicate=True,
+            )
     active_entry = crud.get_open_time_entry(db, user.id)
-    now = datetime.now()
+    now = _parse_event_time(event_time)
     message = ""
     error = ""
 
@@ -1519,6 +1636,13 @@ def punch_action(
                 overlapping_active = crud.get_open_time_entry(db, user.id)
                 if overlapping_active:
                     return False
+                # No open entry but the new interval collides with an existing
+                # (closed) booking. Surface a clean, definitive error instead of
+                # letting the exception become a 500 (which an offline client
+                # would retry forever).
+                db.rollback()
+                error = "Zeitraum überschneidet sich mit einer vorhandenen Buchung."
+                return False
             raise
 
     if action == "start_work":
@@ -1531,7 +1655,7 @@ def punch_action(
             created = _safe_start_running_entry(notes_value=notes.strip())
             if created:
                 message = "Arbeitszeit gestartet."
-            else:
+            elif not error:
                 message = "Arbeitszeit läuft bereits."
     elif action == "start_company":
         new_company_value = (new_company_name or "").strip()
@@ -1633,13 +1757,23 @@ def punch_action(
                 action=action,
             )
 
-    params = {}
-    if message and not error:
-        params["msg"] = message
-    if error:
-        params["error"] = error
-    redirect = _build_redirect(target, **params)
-    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    # An end_* / break action that found no open entry is most likely an
+    # ordering issue (the matching start_work hasn't been applied on the server
+    # yet). Mark it retryable so the offline client keeps it and retries after
+    # the earlier action has synced, instead of dropping the clock-out.
+    retryable = bool(error) and active_entry is None and action in {
+        "end_work",
+        "end_company",
+        "start_break",
+        "end_break",
+    }
+    return _sync_result(
+        request,
+        target=target,
+        message=message,
+        error=error,
+        retryable=retryable,
+    )
 
 
 @app.get("/vacations", response_class=HTMLResponse)
@@ -1664,18 +1798,22 @@ def submit_vacation(
 ):
     user = get_logged_in_user(request, db)
     if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        return _auth_required_response(request)
+    vac_target = "/records/vacations"
     if client_action_id:
         existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
         if existing_action:
-            return RedirectResponse(
-                url="/records/vacations?msg=Aktion+bereits+synchronisiert",
-                status_code=status.HTTP_303_SEE_OTHER,
+            return _sync_result(
+                request,
+                target=vac_target,
+                message="Aktion bereits synchronisiert",
+                duplicate=True,
             )
     if end_date < start_date:
-        return RedirectResponse(
-            url="/records/vacations?error=Enddatum+darf+nicht+vor+dem+Startdatum+liegen",
-            status_code=status.HTTP_303_SEE_OTHER,
+        return _sync_result(
+            request,
+            target=vac_target,
+            error="Enddatum darf nicht vor dem Startdatum liegen",
         )
     use_overtime_value = bool(use_overtime == "on" and user.overtime_vacation_enabled)
     overtime_minutes = 0
@@ -1697,11 +1835,7 @@ def submit_vacation(
         error_message = "Urlaubsantrag konnte nicht gespeichert werden"
         if str(exc) == "VACATION_OVERLAP":
             error_message = "Es besteht bereits ein Urlaubsantrag für diesen Zeitraum"
-        redirect = _build_redirect("/records/vacations", error=error_message)
-        return RedirectResponse(
-            url=redirect,
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
+        return _sync_result(request, target=vac_target, error=error_message)
     if client_action_id:
         existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
         if not existing_action:
@@ -1711,10 +1845,7 @@ def submit_vacation(
                 client_action_id=client_action_id,
                 action="create_vacation",
             )
-    return RedirectResponse(
-        url="/records/vacations?msg=Urlaubsantrag+erstellt",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+    return _sync_result(request, target=vac_target, message="Urlaubsantrag erstellt")
 
 
 @app.post("/vacations/{vacation_id}/withdraw")

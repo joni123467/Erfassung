@@ -5,6 +5,59 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.5.0] – 2026-06-11
+
+### Fixed – Offline-PWA zuverlässig gemacht
+
+- **Offline-Start scheiterte (Safari/iOS: „Seite nicht gefunden"):**
+  Der Service Worker wurde unter `/static/sw.js` ausgeliefert, aber mit
+  `{scope: '/'}` registriert. Der maximal erlaubte Scope eines Workers ist sein
+  eigener Pfad (`/static/`); ein breiterer Scope erfordert den Header
+  `Service-Worker-Allowed`, den `StaticFiles` nicht sendet. Dadurch wurde die
+  **Registrierung vom Browser abgelehnt**, das `install`-Event lief nie, nichts
+  wurde vorab gecacht – die App konnte offline nicht starten. Der Worker wird nun
+  von der Wurzel (`GET /sw.js`) mit `Service-Worker-Allowed: /` ausgeliefert und
+  als `/sw.js` registriert, sodass Scope `/` gültig ist und `/mobile` offline
+  bedient wird.
+- **Offline-Stempelungen wurden nicht vollständig synchronisiert (v. a.
+  Arbeitsende):** Mehrere zusammenwirkende Ursachen behoben:
+  1. `postQueuedAction` nutzte `redirect: 'manual'` und wertete **jede**
+     303-Antwort als „Sitzung abgelaufen". Da `/punch` bei Erfolg immer per 303
+     antwortete, schlug jede erfolgreiche Buchung clientseitig fehl. Die
+     Endpunkte liefern bei `Accept: application/json` nun eine **maschinenlesbare
+     JSON-Antwort** (`{ok, duplicate, retryable, message}`).
+  2. `processPunchSubmission` **verwarf** Ereignisse vor dem Speichern anhand
+     einer clientseitigen Zustandsprüfung. In Kombination mit einem eingefrorenen
+     Lade-Zustand führte das dazu, dass das **Arbeitsende verworfen** wurde. Jede
+     Buchung wird jetzt **immer** zuerst in IndexedDB gespeichert.
+  3. `flushOfflineQueue` löschte nicht gesendete Aktionen aufgrund clientseitiger
+     Vermutung (Datenverlust). Es wird nun **jede** Aktion in Erstellungsreihenfolge
+     an den Server gesendet; entfernt wird sie nur bei eindeutiger Server-Antwort
+     (Erfolg/duplikat). Server-Idempotenz (`client_action_id`) verhindert Dubletten.
+  4. Der effektive Zustand wird nach jeder Synchronisation aus dem frischen
+     Server-Snapshot aktualisiert (statt am eingefrorenen Lade-Zustand zu hängen).
+- **Offline-Zeiten waren falsch (Sync-Zeit statt Ereigniszeit):** Der Server
+  stempelte jede Buchung mit `datetime.now()`. Offline erfasste Ereignisse
+  bekamen damit die (spätere) Synchronisationszeit – ein um 8 h versetzter
+  Arbeitstag wurde z. B. mit Dauer 0 erfasst. Der Client sendet nun die echte
+  lokale Ereigniszeit (`event_time`), die der Server verwendet (mit Plausibilitäts-
+  Grenzen). Online-Buchungen verhalten sich unverändert.
+- **Robustheit:** Eine `start_work`-Buchung, deren Intervall sich mit einer
+  vorhandenen Buchung überschneidet, liefert jetzt eine saubere, endgültige
+  Fehlerantwort statt eines HTTP 500 (das ein Offline-Client endlos wiederholt
+  hätte).
+
+### Unverändert / kompatibel
+
+- Normale Browser-Formular-POSTs (`Accept: text/html`) erhalten weiterhin die
+  klassische 303-Weiterleitung – die Desktop-Web-Oberfläche ist nicht betroffen.
+- CSRF-Schutz, Datenmodell und Geschäftslogik bleiben unverändert.
+
+### Grund der Versionsanhebung
+
+Minor (`0.4.0` → `0.5.0`): überarbeitete Offline-Synchronisations-Engine inkl.
+neuem JSON-Sync-Vertrag und client-seitigen Ereigniszeitstempeln.
+
 ## [0.4.0] – 2026-06-11
 
 ### Added

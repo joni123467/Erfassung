@@ -2,7 +2,7 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.4.0`
+**Version:** `0.5.0`
 
 > Die mobile Oberfläche (`/mobile`) ist eine installierbare, offline-fähige PWA.
 > Details siehe Abschnitt [„Mobile Offline-Funktion"](#mobile-offline-funktion-mobile) und [`CHANGELOG.md`](CHANGELOG.md).
@@ -230,9 +230,26 @@ Die App speichert mobilrelevante Serverdaten für ca. 6 Monate (183 Tage) lokal 
 - Automatische Synchronisation beim Start der mobilen Seite.
 - Automatische Synchronisation beim Wechsel von Offline zu Online.
 - Offline-Aktionen bleiben persistent in einer lokalen Queue gespeichert (auch nach Browser-Neustart).
-- Idempotenz über `client_action_id` je Aktion, damit doppelte Übertragungen vermieden werden.
-- Teilfehler lassen verbleibende Queue-Einträge intakt und werden später erneut versucht.
-- Doppelte Offline-Startaktionen werden über effektiven Zustand + `client_action_id` robust entdoppelt, um überlappende Laufzeitbuchungen zu vermeiden.
+- **Queue-and-forward (ab 0.5.0):** Jedes Ereignis wird zuerst unconditional in
+  IndexedDB gespeichert und dann in Erstellungsreihenfolge an den Server gesendet.
+  Eine Aktion wird nur entfernt, wenn der Server sie eindeutig bestätigt – der
+  Server (mit `client_action_id`-Idempotenz) ist die alleinige Wahrheitsquelle.
+  Dadurch keine verlorenen Stempelungen und keine Dubletten.
+- Die Sync-Endpunkte (`/punch`, `/vacations`) antworten bei `Accept: application/json`
+  mit `{ok, duplicate, retryable, message}`, sodass der Client zuverlässig
+  entscheidet, ob eine Aktion erledigt ist oder erneut gesendet werden muss.
+- **Echte Ereigniszeit (ab 0.5.0):** Der Client sendet die lokale Zeit der Aktion
+  (`event_time`); offline erfasste Zeiten bleiben korrekt, auch wenn erst Stunden
+  später synchronisiert wird.
+
+### Service Worker / Offline-Start
+
+- Der Service Worker wird von der Wurzel ausgeliefert (`GET /sw.js`) mit dem
+  Header `Service-Worker-Allowed: /`, damit sein Scope die `/mobile`-`start_url`
+  abdeckt. (Ein unter `/static/` ausgelieferter Worker kann nicht für `/`
+  registriert werden – das verhinderte früher den Offline-Start auf iOS/Safari.)
+- Beim ersten Online-Aufruf installiert der Worker und legt App-Shell, CSS, JS und
+  Icons in den Cache. Danach startet `/mobile` vollständig ohne Netzwerk.
 
 ### Statusmeldungen in der mobilen App
 

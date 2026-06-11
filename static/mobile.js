@@ -147,6 +147,14 @@ function isoDateStr(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+// Local wall-clock timestamp "YYYY-MM-DDTHH:MM:SS" (no timezone conversion), so
+// an offline punch keeps the real local time of the tap rather than the later
+// sync time. Matches how the server records online punches (local naive time).
+function localIsoTimestamp(date = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
+}
+
 function getMondayOf(date) {
   const d = new Date(date);
   const day = d.getDay() || 7;
@@ -663,6 +671,10 @@ async function syncServerData() {
     }
     const payload = await response.json();
     await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
+    // Refresh the base state from the latest server truth. Otherwise the
+    // effective state stays anchored to the (frozen) page-load value, which
+    // made the UI revert to "not working" right after a clock-in synced.
+    initialServerState = buildStateFromEntry(payload.active_entry || null);
     const nowIso = new Date().toISOString();
     await putRecord(META_STORE, { key: 'lastSyncAt', value: nowIso, updatedAt: Date.now() });
     await putRecord(META_STORE, { key: 'localDataReady', value: true, updatedAt: Date.now() });
@@ -678,31 +690,49 @@ async function syncServerData() {
   }
 }
 
+// Posts a single queued action and returns the server's machine-readable
+// outcome: { ok, duplicate, retryable, message }. The endpoints answer with
+// JSON (not a 303 redirect) because we send `Accept: application/json`, so we
+// can reliably tell success/duplicate/transient apart instead of guessing from
+// an opaque redirect. Throws only on transport/auth failures (keep + retry).
 async function postQueuedAction(entry) {
+  const token = getCsrfToken();
   const body = new URLSearchParams(entry.payload);
-  body.set('csrf_token', getCsrfToken());
+  body.set('csrf_token', token);
   const response = await fetchWithTimeout(entry.endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      'Accept': 'application/json',
+      'X-CSRF-Token': token,
+    },
     body: body.toString(),
     credentials: 'same-origin',
-    redirect: 'manual',
     cache: 'no-store',
   }, 8000);
-  // redirect: 'manual' means redirects come back as opaque-redirect (type 'opaqueredirect')
-  // or status 0. Detect auth redirects so we don't lose queued actions.
-  if (response.type === 'opaqueredirect' || response.status === 0) {
-    throw new Error('Auth redirect detected – session expired');
+
+  if (response.status === 401) {
+    throw new Error('AUTH'); // session expired – keep action, retry after re-auth
   }
-  if (response.redirected && /\/login/i.test(response.url)) {
-    throw new Error('Auth redirect to login – session expired');
+  if (response.status === 403) {
+    throw new Error('CSRF'); // token invalid – keep action, retry after refresh
   }
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}`); // 5xx/transient – keep, retry
   }
-  return response;
+  try {
+    return await response.json();
+  } catch {
+    // Endpoint answered 200 without JSON (shouldn't happen) – treat as success.
+    return { ok: true, duplicate: false, retryable: false, message: '' };
+  }
 }
 
+// Sends every queued action to the server in creation order and lets the SERVER
+// (the source of truth, with client_action_id idempotency) decide the outcome.
+// We never discard an un-sent action based on client-side guessing – that was
+// the cause of lost clock-outs. An action is removed only when the server has
+// definitively handled it; transient/auth failures keep it for the next sync.
 async function flushOfflineQueue() {
   const pending = await readPendingActions();
   if (!pending.length) {
@@ -712,43 +742,40 @@ async function flushOfflineQueue() {
   dispatchSyncStatus('Synchronisation läuft …', 'syncing');
   setStatusBadge('syncing');
 
-  const snapshot = await getRecord(DATA_STORE, 'snapshot');
-  let projectedState = buildStateFromEntry(snapshot?.data?.active_entry || null);
   let processed = 0;
   let skipped = 0;
-
-  let punchBlocked = false; // stop further punch actions if one fails (ordering matters)
+  // Punch actions are ordered (a clock-out depends on its clock-in). If one is
+  // not yet accepted, stop the punch chain and retry the whole tail next round
+  // so ordering is preserved – but keep every action in the queue.
+  let punchBlocked = false;
 
   for (const entry of pending) {
-    if (entry.type === 'punch') {
-      if (punchBlocked) continue; // skip remaining punch actions after a failure
+    const isPunch = entry.type === 'punch';
+    if (isPunch && punchBlocked) continue;
 
-      const action = entry.payload?.action;
-      const validation = validatePunchActionAgainstState(projectedState, action, entry.payload || {});
-      if (!validation.allowed) {
-        // Action is already reflected on server – safe to remove from queue
-        await deleteRecord(ACTION_STORE, entry.clientActionId);
-        skipped += 1;
-        continue;
-      }
-
-      try {
-        await postQueuedAction(entry);
-        await deleteRecord(ACTION_STORE, entry.clientActionId);
-        projectedState = applyPunchActionToState(projectedState, action, entry.payload || {});
-        processed += 1;
-      } catch {
-        punchBlocked = true; // don't attempt dependent punch actions
-      }
+    let result;
+    try {
+      result = await postQueuedAction(entry);
+    } catch {
+      // Network / timeout / auth / CSRF / 5xx → keep action, retry later.
+      if (isPunch) punchBlocked = true;
       continue;
     }
 
-    // Non-punch actions (vacation etc.) are independent – always attempt
-    try {
-      await postQueuedAction(entry);
+    if (result.ok || result.duplicate) {
+      // Done on the server (incl. idempotent re-send) → safe to remove.
       await deleteRecord(ACTION_STORE, entry.clientActionId);
       processed += 1;
-    } catch { /* leave in queue for next sync */ }
+    } else if (result.retryable) {
+      // Ordering/precondition not yet met (e.g. clock-out before its clock-in
+      // was accepted) → keep and stop the punch chain so it retries in order.
+      if (isPunch) punchBlocked = true;
+    } else {
+      // Definitive, non-retryable rejection (e.g. invalid/overlapping) → drop
+      // so it cannot block the queue forever. Server holds no such record.
+      await deleteRecord(ACTION_STORE, entry.clientActionId);
+      skipped += 1;
+    }
   }
 
   const remaining = await refreshQueueIndicator();
@@ -816,19 +843,17 @@ async function performReconnectSync(trigger = 'auto') {
 
 async function processPunchSubmission(form, payload) {
   payload.client_action_id = payload.client_action_id || generateClientActionId('punch');
+  // Capture the real time of the action NOW (tap time), so it survives in the
+  // queue and is sent to the server even if synced hours later.
+  if (!payload.event_time) payload.event_time = localIsoTimestamp();
   if (payload.action === 'start_company') {
     payload.company_name = determineCompanyName(form, payload);
   }
 
-  await recomputeEffectiveState();
-  const validation = validatePunchActionAgainstState(mobileState || buildStateFromEntry(null), payload.action, payload);
-  if (!validation.allowed) {
-    showFeedback(`Aktion übersprungen: ${validation.reason}.`, 'info');
-    dispatchSyncStatus('Aktion war bereits berücksichtigt und wurde nicht erneut gespeichert.', 'queue');
-    return;
-  }
-
-  // ── Queue-first: always save locally, then attempt sync ──
+  // ── Queue-first, ALWAYS: every punch is persisted to IndexedDB before any
+  // sync attempt. We never drop an event based on client-side state guessing –
+  // doing so previously lost clock-outs. The server (with client_action_id
+  // idempotency) is the single source of truth for what is a duplicate.
   await queueAction('punch', payload);
   await recomputeEffectiveState();
   await refreshQueueIndicator();
