@@ -1463,7 +1463,11 @@ def mobile_sync_data(
     until_date = today + timedelta(days=days)
 
     entries = crud.get_mobile_history_time_entries(db, user.id, since_date)
-    vacations = crud.get_mobile_history_vacations(db, user.id, since_date)
+    # Urlaubsanträge des gesamten laufenden Jahres mitliefern (nicht nur das
+    # `days`-Fenster), damit die mobile Ansicht alle Anträge des Jahres zeigt –
+    # unabhängig von Status oder Synchronisationszeitpunkt.
+    vacation_since = min(since_date, date(today.year, 1, 1))
+    vacations = crud.get_mobile_history_vacations(db, user.id, vacation_since)
     companies = crud.get_companies(db)
     active_entry = crud.get_open_time_entry(db, user.id)
     metrics = services.calculate_dashboard_metrics(db, user.id, today.replace(day=1))
