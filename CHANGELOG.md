@@ -5,6 +5,39 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.6.0] – 2026-06-12
+
+### Changed – UI-Redesign (modernes SaaS-/Business-Erscheinungsbild)
+
+Reines Design-/UX-Update – **keine** Änderung an Funktionen, APIs, Datenmodell,
+Synchronisation, Offline-Funktion oder Geschäftslogik. Betroffen ist
+ausschließlich `static/styles.css`.
+
+- **Design-System / Tokens:** zentrale `:root`-Token-Ebene (Farben, Radien,
+  Schatten, Status, Focus-Ring). Alle Komponenten konsumieren diese Tokens, wodurch
+  Desktop und Mobile durchgängig wie ein Produkt wirken.
+- **Farbpalette:** tiefes Blau als Primärfarbe (`#2563eb` / Hover `#1d4ed8`),
+  Slate-Neutraltöne, ruhiger Hintergrund (`#f8fafc`), weiße Karten. Statusfarben
+  vereinheitlicht: Grün (aktiv), Amber (Pause), Blau (Urlaub/Info), Rot (Fehler).
+- **Kanten statt Pillen:** kleine Border-Radien (Buttons/Inputs/Badges 6px, Karten
+  /Dialoge 8px); alle `999px`-Pillen entfernt.
+- **Buttons:** Primary (klare Fläche, dezenter Schatten, Hover, Focus-Ring),
+  Secondary (zurückhaltender Neutral-Outline), Danger (klar rot).
+- **Karten:** 1px-Rahmen + dezente Schatten statt starker Schlagschatten; mehr
+  Ruhe, klare Trennung. KPI-Karten vereinheitlicht.
+- **Tabellen:** ruhige Kopfzeile (Uppercase, gedämpft), Zeilen-Hover, bessere
+  Lesbarkeit.
+- **Mobile (`/mobile`):** Header, Tabs, Stempelbuttons, Auftrags- und
+  Urlaubsansicht auf dasselbe Token-System umgestellt – wirkt wie eine
+  installierbare Business-App, nicht wie eine Website.
+- **Dark Mode:** vorbereitet (Token-Overrides unter `html[data-theme="dark"]`),
+  bewusst **nicht** automatisch aktiv – Standard bleibt Hell.
+
+### Grund der Versionsanhebung
+
+Minor (`0.5.2` → `0.6.0`): umfassendes, sichtbares Redesign (nur Darstellung),
+ohne funktionale Änderungen.
+
 ## [0.5.2] – 2026-06-12
 
 ### Fixed – Mobile-/PWA-Funktionen
