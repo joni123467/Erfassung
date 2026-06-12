@@ -5,6 +5,37 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.5.1] – 2026-06-11
+
+### Fixed – Regressionen nach dem 0.5.0-Offline-Refactoring
+
+- **Navigation reagierte erst beim zweiten Klick & Administration nicht
+  erreichbar (gleiche Ursache):** Mit 0.5.0 wurde der Service Worker erstmals im
+  Scope `/` aktiv. Sein `offlineFirstNavigation` bediente daraufhin **jede**
+  Navigation cache-first aus dem einen `/mobile`-Cache-Eintrag. Folge: andere
+  Seiten (`/dashboard`, `/admin`, `/records/*`) zeigten beim ersten Klick den
+  zuvor gecachten Inhalt und erst der zweite Klick die richtige Seite; der
+  legitime `303`-Redirect von `/admin` → `/admin/users` wurde nie befolgt
+  („Administration nicht erreichbar"). Der Worker bedient nun **ausschließlich
+  die `/mobile`-Route** offline-first; alle übrigen Navigationen gehen direkt
+  ans Netzwerk und funktionieren beim ersten Klick. Offline-Verhalten von
+  `/mobile`, Caching statischer Assets und die Sync-Logik bleiben unverändert.
+- **Arbeitszeitverlauf falsch sortiert:** Zwei Ansichten sortierten aufsteigend
+  (ältester Eintrag oben). Sie zeigen jetzt **neueste Einträge zuerst**:
+  - Desktop-Dashboard „Heute" (`_build_daily_overview`).
+  - Administration → Zeitberichte inkl. PDF-/Excel-Export (`entries_sorted`;
+    Datum/Startzeit absteigend, Name aufsteigend als Tiebreaker).
+  Geändert wurde ausschließlich die Anzeige-/Export-Reihenfolge – Zeitstempel,
+  Arbeits-/Pausenzeiten, Summen, Datenbank und Synchronisation bleiben unberührt.
+  (Mobile Tages-/Wochenansicht, Buchungsliste und Freigaben waren bereits
+  absteigend bzw. Kalenderraster und blieben unverändert.)
+
+### Grund der Versionsanhebung
+
+Patch (`0.5.0` → `0.5.1`): gezielte Regressionsbehebung, keine Änderung an den
+Offline-Komponenten (Start, Service-Worker-Caching, IndexedDB, Queue, Sync,
+Duplikatvermeidung).
+
 ## [0.5.0] – 2026-06-11
 
 ### Fixed – Offline-PWA zuverlässig gemacht

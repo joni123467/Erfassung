@@ -105,7 +105,15 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate' || request.destination === 'document') {
-    event.respondWith(offlineFirstNavigation(request));
+    // Only the mobile PWA route is served offline-first from the cache. Every
+    // other page (/, /dashboard, /admin, /login, /records/*) must go to the
+    // network so normal navigation and server-side auth redirects (303) work on
+    // the FIRST click. Without this guard the worker returned the cached /mobile
+    // shell for ALL navigations (the worker now controls scope "/"), which made
+    // non-mobile pages lag one click behind and broke /admin's 303 redirect.
+    if (url.pathname === '/mobile' || url.pathname === '/mobile/') {
+      event.respondWith(offlineFirstNavigation(request));
+    }
     return;
   }
 
