@@ -5,6 +5,44 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.5.2] – 2026-06-12
+
+### Fixed – Mobile-/PWA-Funktionen
+
+- **Auftragsstart-Dialog blieb geöffnet:** `handleOfflineSubmission` setzte das
+  Formular zwar zurück, schloss aber das Modal nicht. Nach erfolgreichem Start
+  (queue-first, also immer erfolgreich) wird das umgebende Modal jetzt
+  automatisch geschlossen; der Nutzer sieht wieder die normale Ansicht.
+- **Urlaubsanträge verschwanden nach der Synchronisation:** Die mobile Urlaubsliste
+  wurde nur serverseitig (beim Online-Laden) bzw. für Offline-Entwürfe befüllt –
+  es gab **keine** clientseitige Darstellung aus dem gecachten Snapshot. Nach
+  Sync/Reload waren synchronisierte Anträge daher nicht mehr sichtbar. Neu:
+  `renderVacations()` zeigt **alle Anträge des laufenden Jahres** (offen,
+  genehmigt, abgelehnt, storniert, Rücknahme angefragt sowie noch nicht
+  synchronisierte Offline-Anträge) mit Zeitraum, Typ und Status. Backend:
+  `/mobile/sync-data` liefert Urlaubsanträge nun für das **gesamte laufende Jahr**
+  (zuvor nur das `days`-Fenster).
+- **Synchronisationsanzeige zeigte Phantom-Aktionen („4 Offline-Aktionen warten"
+  trotz Sync):** In der Queue konnten Aktionen dauerhaft hängen bleiben – etwa
+  ein verwaister Stempel-Stopp (`end_*`), dessen Buchung serverseitig längst
+  geschlossen ist und der mit `retryable` beantwortet wurde (das blockierte zudem
+  die übrige Queue). `flushOfflineQueue` entfernt eine Aktion jetzt bei **jeder
+  eindeutigen Server-Antwort** (Erfolg, Duplikat oder definitive Ablehnung);
+  nur bei echten Transport-/Auth-Fehlern bleibt sie erhalten. Echte
+  Reihenfolge-Abhängigkeiten bleiben über den Transientfehler-Pfad gewahrt.
+  Ergebnis: Der Zähler entspricht exakt dem Queue-Zustand – keine Phantom-Einträge.
+
+### Nicht verändert (Offline-Architektur erhalten)
+
+- Offline-Start, Service Worker, IndexedDB-Speicherung, Offline-Stempelungen,
+  Sync-Queue, Wiederanlauf, Idempotenz/Duplikatvermeidung und automatische
+  Synchronisation bleiben unverändert (per Regressionstest bestätigt).
+
+### Grund der Versionsanhebung
+
+Patch (`0.5.1` → `0.5.2`): gezielte Korrekturen dreier Mobile-Funktionen ohne
+Eingriff in die Offline-Architektur, Datenmodell oder Geschäftslogik.
+
 ## [0.5.1] – 2026-06-11
 
 ### Fixed – Regressionen nach dem 0.5.0-Offline-Refactoring

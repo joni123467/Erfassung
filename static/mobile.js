@@ -766,13 +766,14 @@ async function flushOfflineQueue() {
       // Done on the server (incl. idempotent re-send) → safe to remove.
       await deleteRecord(ACTION_STORE, entry.clientActionId);
       processed += 1;
-    } else if (result.retryable) {
-      // Ordering/precondition not yet met (e.g. clock-out before its clock-in
-      // was accepted) → keep and stop the punch chain so it retries in order.
-      if (isPunch) punchBlocked = true;
     } else {
-      // Definitive, non-retryable rejection (e.g. invalid/overlapping) → drop
-      // so it cannot block the queue forever. Server holds no such record.
+      // Any other server JSON answer is DEFINITIVE: the action could not be
+      // applied – e.g. an orphaned clock-out whose work entry is already closed
+      // on the server, or an invalid/overlapping booking. Remove it so it can
+      // never linger as a phantom "pending" entry. Genuine ordering
+      // dependencies never reach this branch: an earlier transient failure sets
+      // punchBlocked and the dependent punch is skipped (kept) above, to be
+      // retried in order on the next sync.
       await deleteRecord(ACTION_STORE, entry.clientActionId);
       skipped += 1;
     }
@@ -809,6 +810,7 @@ async function performReconnectSync(trigger = 'auto') {
       await recomputeEffectiveState();
       renderOverview().catch(() => {});
       renderSalden().catch(() => {});
+      renderVacations().catch(() => {});
       return;
     }
 
@@ -830,6 +832,7 @@ async function performReconnectSync(trigger = 'auto') {
     // Re-render client-side tabs with fresh data
     renderOverview().catch(() => {});
     renderSalden().catch(() => {});
+    renderVacations().catch(() => {});
 
     if (trigger !== 'background' && syncOk) {
       dispatchSyncStatus('Server wieder erreichbar. Daten sind synchronisiert.', 'synced');
@@ -870,7 +873,7 @@ async function processVacationSubmission(form, payload) {
 
   // ── Queue-first: always save locally, then attempt sync ──
   await queueAction('vacation', payload);
-  await appendVacationPreview(payload, true);
+  await renderVacations();
   await refreshQueueIndicator();
   showFeedback('Urlaubsantrag lokal erfasst. Synchronisiere …', 'info');
 
@@ -890,6 +893,15 @@ async function handleOfflineSubmission(event) {
     await processPunchSubmission(form, payload);
   }
   form.reset();
+  // If the form lives inside a modal (e.g. the "Auftrag starten" dialog), close
+  // it automatically after a successful submission so the user returns to the
+  // normal view. The action is queued offline-first, so this is always a success.
+  const modal = form.closest('.modal');
+  if (modal) {
+    modal.classList.remove('is-visible');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+  }
 }
 
 function registerTabHandling() {
@@ -926,6 +938,7 @@ function registerTabHandling() {
     activate(tabName);
     if (tabName === 'uebersicht') renderOverview().catch(() => {});
     if (tabName === 'salden') renderSalden().catch(() => {});
+    if (tabName === 'urlaub') renderVacations().catch(() => {});
   }));
   window.addEventListener('hashchange', () => activate(window.location.hash.replace('#', ''), false));
   activate(window.location.hash.replace('#', ''), false);
@@ -1251,6 +1264,101 @@ async function renderSalden() {
     </dl>` : ''}`;
 }
 
+// ── Client-side Urlaubsliste (offline-fähig, aus Snapshot + Queue) ───────────
+
+const VACATION_STATUS_LABELS = {
+  approved: { label: 'Genehmigt', cls: 'approved' },
+  pending: { label: 'Wartet auf Freigabe', cls: 'pending' },
+  withdraw_requested: { label: 'Rücknahme angefragt', cls: 'withdraw' },
+  cancelled: { label: 'Zurückgezogen', cls: 'cancelled' },
+  rejected: { label: 'Abgelehnt', cls: 'rejected' },
+};
+
+function fmtDateDE(iso) {
+  const date = new Date(`${String(iso || '').slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return iso || '';
+  return date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// Renders the full list of the current year's vacation requests from the cached
+// server snapshot, merged with not-yet-synced offline requests from the queue.
+// This is what keeps synced requests visible (they previously vanished because
+// nothing rendered them from the snapshot after synchronisation).
+async function renderVacations() {
+  const list = document.querySelector(VACATION_LIST_SELECTOR);
+  if (!list) return;
+  const empty = document.querySelector(VACATION_EMPTY_SELECTOR);
+
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const hasSnapshot = Array.isArray(snapshot?.data?.vacations);
+  const serverVacations = hasSnapshot ? snapshot.data.vacations : [];
+
+  const pending = await readPendingActions();
+  const pendingVacations = pending
+    .filter((action) => action.type === 'vacation')
+    .map((action) => ({
+      start_date: action.payload?.start_date,
+      end_date: action.payload?.end_date,
+      comment: action.payload?.comment || '',
+      status: 'offline',
+      _offline: true,
+    }))
+    .filter((v) => v.start_date && v.end_date);
+
+  // Before the first sync there is no cached list yet – keep whatever the server
+  // already rendered into the page instead of blanking it.
+  if (!hasSnapshot && pendingVacations.length === 0) return;
+
+  const year = String(new Date().getFullYear());
+  const inCurrentYear = (v) =>
+    String(v.start_date).slice(0, 4) === year || String(v.end_date).slice(0, 4) === year;
+
+  const all = [...pendingVacations, ...serverVacations].filter(inCurrentYear);
+  all.sort((a, b) => String(b.start_date).localeCompare(String(a.start_date)));
+
+  if (all.length === 0) {
+    list.innerHTML = '';
+    setElementHidden(list, true);
+    if (empty) setElementHidden(empty, false);
+    return;
+  }
+  setElementHidden(list, false);
+  if (empty) setElementHidden(empty, true);
+
+  list.innerHTML = all
+    .map((v) => {
+      const meta = v._offline
+        ? { label: 'Synchronisation ausstehend', cls: 'offline' }
+        : VACATION_STATUS_LABELS[v.status] || { label: 'Abgelehnt', cls: 'rejected' };
+      const typ = v.use_overtime ? 'Überstundenabbau' : 'Urlaub';
+      const comment = v.comment
+        ? `<span class="mobile-vacation__comment">${escHtml(v.comment)}</span>`
+        : '';
+      let action = '';
+      if (!v._offline && v.id != null && (v.status === 'pending' || v.status === 'approved')) {
+        action = `<form method="post" action="/vacations/${v.id}/withdraw" class="mobile-vacation__action">
+            <input type="hidden" name="csrf_token" value="${escHtml(getCsrfToken())}">
+            <button type="submit" class="mobile-link-button">Zurückziehen</button>
+          </form>`;
+      } else if (v.status === 'withdraw_requested') {
+        action = '<span class="mobile-vacation__badge">In Prüfung</span>';
+      }
+      return `
+        <li class="mobile-vacation" data-status="${meta.cls}">
+          <header class="mobile-vacation__header">
+            <strong>${fmtDateDE(v.start_date)} – ${fmtDateDE(v.end_date)}</strong>
+            <span class="mobile-vacation__status mobile-vacation__status--${meta.cls}">${escHtml(meta.label)}</span>
+          </header>
+          <div class="mobile-vacation__meta">
+            <span>${typ}</span>
+            ${comment}
+          </div>
+          ${action}
+        </li>`;
+    })
+    .join('');
+}
+
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 async function loadSettings() {
@@ -1337,6 +1445,7 @@ async function initSettingsTab() {
           await syncServerData(); // second pass after queue flush
           renderOverview().catch(() => {});
           renderSalden().catch(() => {});
+          renderVacations().catch(() => {});
           await updateSettingsTab();
           dispatchSyncStatus('Synchronisation erfolgreich abgeschlossen.', 'synced');
           showFeedback('Synchronisation abgeschlossen.', 'success');
@@ -1417,6 +1526,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Render from whatever data is already in IndexedDB (possibly from a previous session)
   renderOverview().catch(() => {});
   renderSalden().catch(() => {});
+  renderVacations().catch(() => {});
 
   // ── Phase 2: Attempt server sync (non-blocking for app startup) ────────────
   try {
