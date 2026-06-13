@@ -10,49 +10,76 @@
     <link rel="manifest" href="/static/manifest.webmanifest?v={{ app_version }}">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="theme-color" content="#1d7ed0">
+    <meta name="theme-color" content="#2563eb">
     <meta name="csrf-token" content="{{ get_csrf_token(request) }}">
+    <script>
+        // Apply the persisted theme before first paint to avoid a light flash.
+        (function () {
+            try {
+                var theme = localStorage.getItem('erfassung-theme');
+                if (theme === 'dark' || (!theme && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                }
+            } catch (e) {}
+        }());
+    </script>
     <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}">
 </head>
 <body{% if mobile %} class="is-mobile"{% endif %}>
 {% if not mobile %}
 <header class="timetac-header">
     <div class="timetac-header__brand">
-        <span class="timetac-header__logo" aria-hidden="true">⌚</span>
+        <span class="timetac-header__logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </span>
         <span class="timetac-header__title">Erfassung</span>
         <span class="timetac-header__version">v{{ app_version }}</span>
     </div>
-    {% if user %}
-    {% if not hide_navigation %}
+    {% if user and not hide_navigation %}
     <nav class="timetac-header__nav" aria-label="Hauptnavigation">
         <a href="/dashboard" class="timetac-nav-link {% if request.url.path == '/dashboard' %}is-active{% endif %}">
-            <span class="timetac-nav-link__icon" aria-hidden="true">🏠</span>
+            <span class="timetac-nav-link__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            </span>
             <span>Dashboard</span>
         </a>
         <a href="/mobile" class="timetac-nav-link timetac-nav-link--mobile {% if request.url.path == '/mobile' %}is-active{% endif %}">
-            <span class="timetac-nav-link__icon" aria-hidden="true">📱</span>
+            <span class="timetac-nav-link__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+            </span>
             <span>Mobile</span>
         </a>
         <a href="/records" class="timetac-nav-link {% if request.url.path.startswith('/records') %}is-active{% endif %}">
-            <span class="timetac-nav-link__icon" aria-hidden="true">🗂️</span>
+            <span class="timetac-nav-link__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </span>
             <span>Buchungen &amp; Urlaub</span>
         </a>
         {% if user.group and user.group.is_admin %}
         <a href="/admin" class="timetac-nav-link {% if request.url.path.startswith('/admin') %}is-active{% endif %}">
-            <span class="timetac-nav-link__icon" aria-hidden="true">⚙️</span>
+            <span class="timetac-nav-link__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            </span>
             <span>Administration</span>
         </a>
         {% endif %}
     </nav>
     {% endif %}
-    <div class="timetac-header__profile">
-        <div class="timetac-header__user">
-            <span class="timetac-header__name">{{ user.full_name }}</span>
-            <small class="timetac-header__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
+    <div class="timetac-header__actions">
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Dunkles Design umschalten" title="Hell / Dunkel">
+            <svg class="theme-toggle__icon theme-toggle__icon--light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg class="theme-toggle__icon theme-toggle__icon--dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+        {% if user %}
+        <div class="timetac-header__profile">
+            <div class="timetac-header__user">
+                <span class="timetac-header__name">{{ user.full_name }}</span>
+                <small class="timetac-header__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
+            </div>
+            <a class="timetac-header__logout" href="/logout">Abmelden</a>
         </div>
-        <a class="timetac-header__logout" href="/logout">Abmelden</a>
+        {% endif %}
     </div>
-    {% endif %}
 </header>
 {% endif %}
 <main class="page">
@@ -70,6 +97,10 @@
         <span class="mobile-account-footer__name">{{ user.full_name }}</span>
         <small class="mobile-account-footer__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
     </div>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Dunkles Design umschalten" title="Hell / Dunkel">
+        <svg class="theme-toggle__icon theme-toggle__icon--light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg class="theme-toggle__icon theme-toggle__icon--dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
     <a
         href="#einstellungen"
         class="mobile-tab mobile-settings-btn"
@@ -88,6 +119,7 @@
     <p>Erfassung v{{ app_version }} &copy; {{ now().year }}</p>
 </footer>
 {% endif %}
+<script src="/static/theme.js?v={{ app_version }}" defer></script>
 <script type="module" src="/static/app.js?v={{ app_version }}"></script>
 {% block scripts %}{% endblock %}
 </body>

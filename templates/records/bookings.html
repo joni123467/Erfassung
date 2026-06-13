@@ -16,8 +16,8 @@
             Monat
             <input type="month" name="month" value="{{ month_value }}">
         </label>
-        <button type="submit" class="button small">Monat wechseln</button>
-        <a class="button ghost small" href="/records">Zurücksetzen</a>
+        <button type="submit" class="button">Monat wechseln</button>
+        <a class="button ghost" href="/records">Zurücksetzen</a>
     </form>
     <dl class="dashboard-summary-list records-summary">
         <div class="dashboard-summary-list__item">
@@ -75,8 +75,8 @@
                     {% endfor %}
                 </select>
             </label>
-            <button type="submit" class="button small">Filtern</button>
-            <a class="button ghost small" href="/records?month={{ month_value }}">Alle Buchungen</a>
+            <button type="submit" class="button">Filtern</button>
+            <a class="button ghost" href="/records?month={{ month_value }}">Alle Buchungen</a>
         </form>
     </div>
     <div class="company-summary" aria-live="polite">

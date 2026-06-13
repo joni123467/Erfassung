@@ -25,7 +25,7 @@
                     {% endfor %}
                 </select>
             </label>
-            <button type="submit" class="button small">Anzeigen</button>
+            <button type="submit" class="button">Anzeigen</button>
         </form>
         <div class="holiday-actions">
             <form method="post" action="/admin/holidays/sync" class="inline-form">
@@ -39,7 +39,7 @@
                         {% endfor %}
                     </select>
                 </label>
-                <button type="submit" class="button small">Feiertage laden</button>
+                <button type="submit" class="button">Feiertage laden</button>
             </form>
             <form method="post" action="/admin/holidays/create" class="holiday-form">
                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
@@ -59,7 +59,7 @@
                     </label>
                 </div>
                 <div class="holiday-form__actions">
-                    <button type="submit" class="button small">Feiertag hinzufügen</button>
+                    <button type="submit" class="button">Feiertag hinzufügen</button>
                 </div>
             </form>
         </div>

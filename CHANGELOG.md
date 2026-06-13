@@ -5,6 +5,52 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.7.0] – 2026-06-13
+
+### Added – Dark Mode (vollständig, umschaltbar)
+
+- **Umschalter Hell/Dunkel** im Desktop-Header und im Mobile-Footer
+  (auch in der Offline-Shell der PWA). Die Wahl wird in `localStorage`
+  (`erfassung-theme`) gespeichert und bleibt beim Neuladen erhalten; ohne
+  gespeicherte Wahl folgt die App der Systemeinstellung
+  (`prefers-color-scheme`).
+- **Kein Flackern:** ein Inline-Snippet im `<head>` wendet das gespeicherte
+  Theme vor dem ersten Paint an; `static/theme.js` (neu, im Service-Worker-
+  Precache) verdrahtet die Toggle-Buttons und hält `theme-color` synchron.
+- **Dunkle Palette** (kein reines Schwarz): Hintergrund `#0f172a`, Flächen
+  `#111827`, Karten `#1e293b`, Rahmen `#334155`, Text `#f8fafc`, gedämpfter
+  Text `#94a3b8`, Primärfarbe `#3b82f6`. Umgesetzt ausschließlich als
+  Token-Overrides unter `:root[data-theme="dark"]` – keine komponentenweisen
+  Sonderfälle.
+
+### Changed – Design-System konsequent durchgezogen
+
+- **Radius-Skala als einzige Quelle:** `--radius-xs` 3px (Tabs, Badges,
+  Chips), `--radius-sm` 5px (Buttons, Inputs, Selects), `--radius-md` 6px,
+  `--radius-lg` 8px (Karten, Dialoge). Alle fest codierten `border-radius`-
+  Werte (inkl. `50%` beim Mobile-Einstellungsbutton) entfernt; nichts ist
+  mehr runder als 8px.
+- **Einheitliche Control-Höhen:** `--control-h` (2.5rem) für Inputs, Selects
+  und Buttons; `--control-h-sm` (2rem) nur für kompakte Tabellen-Buttons.
+  Filterleisten (u. a. „Feiertage verwalten", Buchungen, Zeitübersichten)
+  haben jetzt durchgehend gleiche Höhen in einer Zeile.
+- **Navigation modernisiert:** kompakter Sticky-Header (3.5rem), SVG-Icons
+  statt Emojis, ruhige Hover-Zustände (neutraler Wash), klarer aktiver
+  Zustand; Bereichs-Tabs (Admin, Buchungen/Urlaub) als Underline-Tabs statt
+  Pill-Container; Footer als dezente Trennlinie statt blauem Balken.
+- **Alle Farben tokenisiert:** sämtliche hartcodierten Hex-/RGBA-Werte in
+  `styles.css` (Modals, Login, Alerts, Formulare, Tabellen-Streifen,
+  Status-Badges, Mobile-Listen …) durch Design-Tokens ersetzt – Voraussetzung
+  dafür, dass der Dark Mode überall greift. Einzige Ausnahme: der QR-Code
+  behält bewusst einen weißen Hintergrund (Scanbarkeit).
+- **Manifest/Theme-Color** auf die aktuelle Palette aktualisiert
+  (`#2563eb`, Hintergrund `#f8fafc`).
+
+### Grund der Versionsanhebung
+
+Minor (`0.6.0` → `0.7.0`): neues Feature (umschaltbarer Dark Mode) plus
+sichtbares, aber rein darstellungsbezogenes Design-Refactoring.
+
 ## [0.6.0] – 2026-06-12
 
 ### Changed – UI-Redesign (modernes SaaS-/Business-Erscheinungsbild)
