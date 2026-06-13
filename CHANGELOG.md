@@ -5,6 +5,16 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.1] – 2026-06-13
+
+### Fixed
+
+- „Schnell stempeln": Das Info-Symbol zeigte fälschlich den Freigabe-Hinweis
+  der manuellen Buchung. Es wird wieder der Arbeitsschutz-Hinweis nach ArbZG
+  angezeigt (Pausen: nach 6 Std mind. 30 Min, nach 9 Std mind. 45 Min) – bei
+  aktiver automatischer Pausenkorrektur ergänzt um den Abzugs-Hinweis. Gilt für
+  Web und Mobile.
+
 ## [0.9.0] – 2026-06-13
 
 ### Added – Professionelles Logging-System
