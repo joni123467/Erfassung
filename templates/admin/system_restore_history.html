@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Restore-Historie – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_restore_history' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Restore-Historie</h1>
+            <p class="card-header__hint">Protokoll aller Wiederherstellungen.</p>
+        </div>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+                <tr>
+                    <th>Zeitpunkt</th><th>Benutzer</th><th>Backup-Datei</th><th>Version</th>
+                    <th>DB-Typ</th><th>Sicherheitsbackup</th><th>Migrationen</th><th>Ergebnis</th><th>Meldung</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run in runs %}
+                    <tr>
+                        <td>{{ run.started_at.strftime('%d.%m.%Y %H:%M:%S') if run.started_at else '–' }}</td>
+                        <td>{{ run.username }}</td>
+                        <td class="log-message">{{ run.backup_file }}</td>
+                        <td>{{ run.backup_version }}</td>
+                        <td>{{ run.database_type }}</td>
+                        <td>{{ run.safety_backup or '–' }}</td>
+                        <td>{{ run.migrations_applied or '–' }}</td>
+                        <td><span class="log-level log-level--{{ 'info' if run.status == 'success' else ('warning' if run.status == 'warning' else 'error') }}">{{ run.status }}</span></td>
+                        <td class="log-message">{{ run.message }}</td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="9">Noch keine Wiederherstellungen.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

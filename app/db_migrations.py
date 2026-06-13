@@ -89,6 +89,12 @@ def _add_backup_job_tables(engine: Engine) -> None:
     )
 
 
+def _add_restore_history_table(engine: Engine) -> None:
+    """Create the restore history table (§0.9.4)."""
+
+    models.Base.metadata.create_all(bind=engine, tables=[models.RestoreRun.__table__])
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -96,6 +102,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (4, _add_user_auto_break_deduction),
     (5, _add_holiday_source),
     (6, _add_backup_job_tables),
+    (7, _add_restore_history_table),
 ]
 
 

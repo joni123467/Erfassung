@@ -334,3 +334,22 @@ class BackupRun(Base):
     filename = Column(String(500), nullable=True)  # local archive path (download)
 
     job = relationship("BackupJob", back_populates="runs")
+
+
+class RestoreRun(Base):
+    """History of restore operations (§9)."""
+
+    __tablename__ = "restore_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    username = Column(String(255), default="")
+    backup_file = Column(String(500), default="")
+    backup_version = Column(String(40), default="")
+    database_type = Column(String(20), default="")
+    schema_version = Column(Integer, nullable=True)
+    safety_backup = Column(String(500), nullable=True)
+    migrations_applied = Column(String(255), default="")
+    status = Column(String(20), default="error")  # success / warning / error
+    message = Column(Text, default="")

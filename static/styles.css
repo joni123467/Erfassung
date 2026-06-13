@@ -3253,3 +3253,44 @@ tr.company-deleted td {
     .modal__dialog--scroll { max-height: 92vh; }
     .modal { padding: 0.75rem; }
 }
+
+/* --- Restore / Wiederherstellung (§0.9.4) ---------------------------- */
+.restore-upload {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+    margin-bottom: 1rem;
+}
+
+.restore-upload__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-weight: 600;
+}
+
+.alert--danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+}
+
+.restore-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.5rem 1rem;
+    margin: 0 0 0.75rem;
+}
+
+.restore-details > div { display: flex; flex-direction: column; }
+.restore-details dt { font-size: 0.8rem; color: var(--text-muted); }
+.restore-details dd { margin: 0; font-weight: 600; }
+
+.restore-verify-result { display: block; margin-top: 0.25rem; font-size: 0.85rem; }
+.restore-verify-result.is-green { color: var(--success); }
+.restore-verify-result.is-yellow { color: #92400e; }
+.restore-verify-result.is-red { color: var(--danger); }

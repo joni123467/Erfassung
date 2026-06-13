@@ -40,6 +40,7 @@ from . import (
     logging_setup,
     models,
     paths,
+    restore_manager,
     schemas,
     security,
     services,
@@ -4055,6 +4056,7 @@ def admin_system_status(request: Request, db: Session = Depends(database.get_db)
         admin_active="system_status",
         status_data=system_info.system_status(db),
         latest_backup=system_info.latest_backup_run(db),
+        backup_overview=system_info.backup_overview(db),
     )
 
 
@@ -4112,6 +4114,8 @@ def admin_system_settings_save(
     security_logging: Optional[str] = Form(None),
     audit_logging: Optional[str] = Form(None),
     sync_logging: Optional[str] = Form(None),
+    backup_logging: Optional[str] = Form(None),
+    restore_logging: Optional[str] = Form(None),
     rotation_max_mb: str = Form("5"),
     rotation_backup_count: str = Form("5"),
     auto_cleanup_enabled: Optional[str] = Form(None),
@@ -4136,6 +4140,8 @@ def admin_system_settings_save(
             "security_logging": _parse_checkbox(security_logging),
             "audit_logging": _parse_checkbox(audit_logging),
             "sync_logging": _parse_checkbox(sync_logging),
+            "backup_logging": _parse_checkbox(backup_logging),
+            "restore_logging": _parse_checkbox(restore_logging),
             "rotation_max_bytes": int(max_mb * 1024 * 1024),
             "rotation_backup_count": rotation_backup_count,
             "auto_cleanup_enabled": _parse_checkbox(auto_cleanup_enabled),
@@ -4318,7 +4324,7 @@ def admin_backup_job_run(request: Request, job_id: int, db: Session = Depends(da
             url=_build_redirect("/admin/system/backups", error="Backup-Job nicht gefunden"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    run = backup_manager.run_job(db, job, triggered_by=f"manuell ({user.username})")
+    run = backup_manager.run_job(db, job, triggered_by=f"manuell ({user.username})", user=user)
     logging_setup.log_audit("Backup-Job ausgeführt", user=user, detail=f"{job.name}: {run.status}")
     key = "msg" if run.status in {"success", "warning"} else "error"
     return RedirectResponse(
@@ -4370,7 +4376,7 @@ async def admin_backup_job_test(request: Request, db: Session = Depends(database
     existing = crud.get_backup_job(db, job_id) if job_id else None
     fields = _backup_job_fields_from_form(form, keep_passwords_from=existing)
     probe = models.BackupJob(**fields)
-    ok, message = backup_manager.test_connection(probe)
+    ok, message = backup_manager.test_connection(probe, user=user)
     logging_setup.log_audit(
         "Backup-Verbindungstest", user=user, detail=f"{probe.target_type}: {'ok' if ok else 'fehlgeschlagen'}"
     )
@@ -4390,10 +4396,199 @@ def admin_backup_run_download(request: Request, run_id: int, db: Session = Depen
         )
     path = Path(run.filename)
     logging_setup.log_audit("Backup heruntergeladen", user=user, detail=path.name)
+    backup_manager.log_backup(f"Download: {path.name}", user=user)
     return StreamingResponse(
         path.open("rb"),
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={path.name}"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Administration → Sicherung → Wiederherstellung (§1-§9)
+# ---------------------------------------------------------------------------
+
+_UPLOAD_CHUNK = 1024 * 1024  # 1 MiB streaming chunks (never load file into RAM)
+
+
+@app.get("/admin/system/restore", response_class=HTMLResponse)
+def admin_restore_page(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_restore.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        admin_active="system_restore",
+        backups=backup_manager.list_local_backups(),
+    )
+
+
+@app.get("/admin/system/restore/history", response_class=HTMLResponse)
+def admin_restore_history(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_restore_history.html",
+        request,
+        user,
+        admin_active="system_restore_history",
+        runs=crud.get_restore_runs(db, limit=100),
+    )
+
+
+@app.get("/admin/system/restore/download")
+def admin_restore_download(request: Request, file: str = "", db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    path = backup_manager.resolve_backup_path(file)
+    if not path:
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error="Datei nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit("Backup heruntergeladen", user=user, detail=path.name)
+    backup_manager.log_backup(f"Download: {path.name}", user=user)
+    return StreamingResponse(
+        path.open("rb"),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={path.name}"},
+    )
+
+
+@app.post("/admin/system/restore/verify")
+def admin_restore_verify(request: Request, file: str = Form(...), db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
+    path = backup_manager.resolve_backup_path(file)
+    if not path:
+        return JSONResponse({"ok": False, "message": "Datei nicht gefunden"}, status_code=404)
+    result = backup_manager.verify(path, user=user)
+    return JSONResponse(result)
+
+
+@app.post("/admin/system/restore/upload")
+async def admin_restore_upload(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    form = await request.form()
+    upload = form.get("backup_file")
+    if upload is None or not hasattr(upload, "read"):
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error="Keine Datei ausgewählt"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    original = getattr(upload, "filename", "") or "upload"
+    # §24: only accept our archive extensions; storage name is generated server-side.
+    if not original.lower().endswith((".zip",)):
+        backup_manager.log_backup(
+            f"Upload abgelehnt (Dateityp): {original}", level=logging.WARNING, user=user
+        )
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error="Nur .zip-Backups werden akzeptiert"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    backup_manager.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    backup_manager.log_backup(f"Upload gestartet: {original}", user=user)
+    import tempfile as _tempfile
+
+    fd, tmp_name = _tempfile.mkstemp(prefix="upload_", suffix=".zip", dir=str(backup_manager.UPLOAD_DIR))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    size = 0
+    try:
+        with tmp_path.open("wb") as handle:
+            while True:
+                chunk = await upload.read(_UPLOAD_CHUNK)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                size += len(chunk)
+    except Exception as exc:  # pragma: no cover
+        tmp_path.unlink(missing_ok=True)
+        backup_manager.log_backup(
+            f"Upload fehlgeschlagen: {original}: {exc}", level=logging.ERROR, user=user
+        )
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error="Upload fehlgeschlagen"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    backup_manager.log_backup(
+        f"Upload erfolgreich: {original} ({paths.format_size(size)})", user=user
+    )
+    analysis = backup_manager.verify(tmp_path, user=user)
+    if not analysis["integrity"]:
+        tmp_path.unlink(missing_ok=True)
+        backup_manager.log_backup(
+            f"Integritätsprüfung fehlgeschlagen für Upload {original}", level=logging.WARNING, user=user
+        )
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error="Hochgeladene Datei ist kein gültiges Backup-Archiv"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    final = backup_manager.register_uploaded_file(tmp_path, original)
+    logging_setup.log_audit("Backup hochgeladen", user=user, detail=f"{original} -> {final.name}")
+    backup_manager.log_backup(f"Integritätsprüfung erfolgreich, übernommen als {final.name}", user=user)
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/restore", msg=f"Backup hochgeladen: {final.name}"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/restore/run")
+def admin_restore_run(
+    request: Request,
+    file: str = Form(...),
+    confirm: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    if confirm.strip() != "WIEDERHERSTELLEN":
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error="Bestätigung fehlt oder falsch"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    path = backup_manager.resolve_backup_path(file)
+    if not path:
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error="Datei nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit("Backup wiederhergestellt (gestartet)", user=user, detail=path.name)
+    result = restore_manager.restore_from_archive(db, path, user=user)
+    key = "msg" if result["status"] in {"success", "warning"} else "error"
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/restore/history", **{key: result["message"]}),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/restore/delete")
+def admin_restore_delete(request: Request, file: str = Form(...), db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    path = backup_manager.resolve_backup_path(file)
+    if path:
+        try:
+            path.unlink()
+            logging_setup.log_audit("Backup gelöscht", user=user, detail=path.name)
+            backup_manager.log_backup(f"Backup gelöscht: {path.name}", user=user)
+        except OSError:
+            pass
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/restore", msg="Backup gelöscht"),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 

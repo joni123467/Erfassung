@@ -144,6 +144,36 @@ Persistente Einstellungen liegen als JSON im `config`-Volume
   (Datei vorhanden, plausible Größe, Archiv lesbar). DB-Snapshots müssen
   konsistent sein (SQLite Online-Backup-API, MySQL `mysqldump`).
 
+## Backup-/Restore-Kompatibilität (verpflichtend, ab 0.9.4)
+
+Restore liegt in `app/restore_manager.py`, das dedizierte Backup-Log in
+`logs/backup.log` (Kanal `backup` in `logging_setup`). Jedes Archiv enthält
+`backup_meta.json` (App-Version, DB-Typ, Schema-Version, Backup-Typ).
+
+Bei Änderungen an Backup-, Restore-, Upload-, Datenbank-, Migrations- oder
+Konfigurationscode ist zu prüfen: **Sind bestehende Backups weiterhin
+wiederherstellbar?**
+
+### Pflichtprüfungen vor jedem Release
+
+1. Können aktuelle Backups wiederhergestellt werden?
+2. Können ältere Backups (0.6.x–vorherige) wiederhergestellt werden?
+3. Können hochgeladene Backups wiederhergestellt werden?
+4. Werden Migrationen nach dem Restore automatisch ausgeführt?
+5. Bleiben Daten erhalten?
+6. Wird automatisch ein Sicherheitsbackup (`pre_restore_*.zip`) erzeugt?
+7. Wird `backup.log` korrekt geschrieben (ohne Passwörter)?
+
+### Release-Blocker
+
+Kein Release, wenn: Restore fehlschlägt, Migration nach Restore fehlschlägt,
+Datenverlust möglich ist oder das Backup-Logging fehlerhaft ist.
+
+- **Restore-Regeln**: Nach dem DB-Swap immer `Base.metadata.create_all` (fehlende
+  Tabellen) + `db_migrations.run()` ausführen, damit ältere Backups vollständig
+  aufschließen. Uploads nur isoliert speichern, auf Dateityp/Integrität/Path-
+  Traversal prüfen und erst danach übernehmen. Niemals Zugangsdaten loggen.
+
 ## Administration-Navigation
 
 - Die Admin-Navigation (`templates/admin/_nav.html`) ist in einklappbare

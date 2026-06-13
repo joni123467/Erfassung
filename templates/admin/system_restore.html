@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Wiederherstellung – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_restore' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Wiederherstellung</h1>
+            <p class="card-header__hint">Backups prüfen, herunterladen, hochladen und wiederherstellen. Vor jeder Wiederherstellung wird automatisch ein Sicherheitsbackup erzeugt.</p>
+        </div>
+    </div>
+
+    <form method="post" action="/admin/system/restore/upload" enctype="multipart/form-data" class="restore-upload">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label class="restore-upload__field">
+            Backup hochladen (.zip)
+            <input type="file" name="backup_file" accept=".zip,application/zip" required>
+        </label>
+        <button type="submit" class="button primary">Backup hochladen</button>
+    </form>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+                <tr>
+                    <th>Dateiname</th><th>Größe</th><th>Erstellt</th><th>Version</th>
+                    <th>DB-Typ</th><th>Schema</th><th>Quelle</th><th>Aktionen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for backup in backups %}
+                    <tr>
+                        <td class="log-message">{{ backup.name }}</td>
+                        <td>{{ backup.size_human }}</td>
+                        <td>{{ backup.created.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td>{{ backup.app_version or '–' }}</td>
+                        <td>{{ backup.database_type or '–' }}</td>
+                        <td>{{ backup.schema_version if backup.schema_version is not none else '–' }}</td>
+                        <td>{{ backup.source }}</td>
+                        <td class="backup-actions">
+                            <a class="button ghost small" href="/admin/system/restore/download?file={{ backup.name | urlencode }}">Download</a>
+                            <button type="button" class="button ghost small restore-verify" data-file="{{ backup.name }}">Prüfen</button>
+                            <button type="button" class="button small restore-open"
+                                data-file="{{ backup.name }}"
+                                data-size="{{ backup.size_human }}"
+                                data-created="{{ backup.created.strftime('%d.%m.%Y %H:%M') }}"
+                                data-version="{{ backup.app_version or '–' }}"
+                                data-dbtype="{{ backup.database_type or '–' }}">Wiederherstellen</button>
+                            <form method="post" action="/admin/system/restore/delete" class="inline-form" onsubmit="return confirm('Backup „{{ backup.name }}“ löschen?');">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <input type="hidden" name="file" value="{{ backup.name }}">
+                                <button type="submit" class="button danger small">Löschen</button>
+                            </form>
+                            <span class="restore-verify-result" data-result-for="{{ backup.name }}"></span>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="8">Keine Backups vorhanden. Lade ein Backup hoch oder erstelle einen Backup-Job.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<div class="modal" id="restore-modal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__dialog modal__dialog--scroll">
+        <header class="modal__head">
+            <h3>Wiederherstellung bestätigen</h3>
+            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+        </header>
+        <form method="post" action="/admin/system/restore/run" class="modal__scrollform">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+            <input type="hidden" name="file" id="restore-file">
+            <div class="modal__body">
+                <dl class="restore-details">
+                    <div><dt>Dateiname</dt><dd id="restore-d-name"></dd></div>
+                    <div><dt>Größe</dt><dd id="restore-d-size"></dd></div>
+                    <div><dt>Erstellt</dt><dd id="restore-d-created"></dd></div>
+                    <div><dt>Anwendungsversion</dt><dd id="restore-d-version"></dd></div>
+                    <div><dt>Datenbanktyp</dt><dd id="restore-d-dbtype"></dd></div>
+                </dl>
+                <p class="alert alert--danger">
+                    <strong>Achtung:</strong> Die Wiederherstellung ersetzt den aktuellen Datenbestand.
+                    Vor der Wiederherstellung wird automatisch ein Sicherheitsbackup erzeugt.
+                </p>
+                <label>Zur Bestätigung <strong>WIEDERHERSTELLEN</strong> eingeben:
+                    <input type="text" name="confirm" id="restore-confirm" autocomplete="off" placeholder="WIEDERHERSTELLEN">
+                </label>
+            </div>
+            <div class="modal__foot">
+                <button type="button" class="button ghost" data-close>Abbrechen</button>
+                <button type="submit" class="button danger" id="restore-submit" disabled>Wiederherstellen</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+(function () {
+    const modal = document.getElementById('restore-modal');
+    const csrf = modal.querySelector('input[name=csrf_token]').value;
+    const confirmInput = document.getElementById('restore-confirm');
+    const submitBtn = document.getElementById('restore-submit');
+    const show = (v) => {
+        modal.classList.toggle('is-visible', v);
+        modal.setAttribute('aria-hidden', v ? 'false' : 'true');
+        document.body.classList.toggle('modal-open', v);
+    };
+    document.querySelectorAll('.restore-open').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const d = btn.dataset;
+            document.getElementById('restore-file').value = d.file;
+            document.getElementById('restore-d-name').textContent = d.file;
+            document.getElementById('restore-d-size').textContent = d.size;
+            document.getElementById('restore-d-created').textContent = d.created;
+            document.getElementById('restore-d-version').textContent = d.version;
+            document.getElementById('restore-d-dbtype').textContent = d.dbtype;
+            confirmInput.value = '';
+            submitBtn.disabled = true;
+            show(true);
+        });
+    });
+    confirmInput.addEventListener('input', () => {
+        submitBtn.disabled = confirmInput.value.trim() !== 'WIEDERHERSTELLEN';
+    });
+    modal.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', () => show(false)));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.classList.contains('is-visible')) show(false); });
+
+    document.querySelectorAll('.restore-verify').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const file = btn.dataset.file;
+            const out = document.querySelector('.restore-verify-result[data-result-for="' + CSS.escape(file) + '"]');
+            out.textContent = 'Prüfe …';
+            out.className = 'restore-verify-result';
+            try {
+                const body = new FormData();
+                body.append('file', file);
+                const r = await fetch('/admin/system/restore/verify', { method: 'POST', headers: { 'x-csrf-token': csrf }, body });
+                const data = await r.json();
+                out.textContent = (data.messages || []).join(' · ') || data.level;
+                out.classList.add('is-' + (data.level || 'red'));
+            } catch (err) {
+                out.textContent = 'Prüfung fehlgeschlagen';
+                out.classList.add('is-red');
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}

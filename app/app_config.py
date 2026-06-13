@@ -69,6 +69,8 @@ class LoggingConfig:
     security_logging: bool = True
     audit_logging: bool = True
     sync_logging: bool = True
+    backup_logging: bool = True
+    restore_logging: bool = True
     rotation_max_bytes: int = 5 * 1024 * 1024
     rotation_backup_count: int = 5
     auto_cleanup_enabled: bool = False
@@ -89,6 +91,8 @@ class LoggingConfig:
         )
         config.audit_logging = _coerce_bool(payload.get("audit_logging"), config.audit_logging)
         config.sync_logging = _coerce_bool(payload.get("sync_logging"), config.sync_logging)
+        config.backup_logging = _coerce_bool(payload.get("backup_logging"), config.backup_logging)
+        config.restore_logging = _coerce_bool(payload.get("restore_logging"), config.restore_logging)
         config.rotation_max_bytes = _coerce_int(
             payload.get("rotation_max_bytes"), config.rotation_max_bytes, minimum=1024
         )
