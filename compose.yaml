@@ -1,6 +1,6 @@
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.1
+    image: ghcr.io/OWNER/erfassung:0.9.2
     container_name: erfassung
     ports:
       - "8000:8000"

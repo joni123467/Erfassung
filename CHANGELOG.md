@@ -5,6 +5,47 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.2] – 2026-06-13
+
+### Added – Job-basierte Backup-Verwaltung
+
+- Backups laufen jetzt als verwaltete **Backup-Jobs** (Tabelle `backup_jobs`):
+  Liste aller Jobs mit Name, Typ, Aktiv, Zeitplan, Aufbewahrung, letzter
+  Ausführung und letztem Ergebnis; Aktionen Bearbeiten, Sofort ausführen,
+  Aktivieren/Deaktivieren, Löschen.
+- **Neuer Backup-Job** öffnet ein Modal mit dynamischen Feldern je Typ:
+  - Lokal: Zielpfad
+  - FTP/FTPS: Server, Port, Benutzer, Passwort (maskiert), Zielpfad
+  - SMB3: **ein** UNC-Pfad-Feld (`\\\\server\\share\\sub`) und **ein**
+    Benutzerfeld (`benutzer`, `DOMAIN\\benutzer` oder `benutzer@domain.local`).
+- **Verbindung testen** direkt im Modal (lokal/FTP/SMB), mit Ergebnis-/Fehlertext.
+- **Backup-Inhalt** wählbar (Datenbank, Konfiguration, Logs – Mehrfachauswahl).
+- **Zeitplan** je Job: manuell, täglich, wöchentlich, monatlich; ein
+  In-Process-Scheduler führt fällige Jobs automatisch aus.
+- **Aufbewahrung** je Job (Anzahl und/oder Tage), alte Backups werden
+  automatisch entfernt (lokal vollständig, FTP/SMB best-effort).
+- **Backup-Historie** (Tabelle `backup_runs`): Start, Ende, Dauer, Größe, Ziel,
+  Status (Erfolg/Warnung/Fehler); Download lokaler Sicherungen.
+- **Engine**: konsistente Datenbank-Sicherung (SQLite Online-Backup-API,
+  MySQL via `mysqldump`), Integritätsprüfung nach jeder Sicherung
+  (Datei vorhanden, plausible Größe, Archiv lesbar). Passwörter werden nie
+  im Klartext geloggt. Eine vorhandene 0.9.0/0.9.1-Backup-Konfiguration wird
+  beim Start in einen (inaktiven) Job übernommen.
+
+### Changed – Administration-Navigation gruppiert
+
+- Neue, gruppierte und einklappbare Navigation (`<details>`-Accordion) mit den
+  Gruppen **Benutzer**, **Zeitverwaltung**, **Sicherung**, **System** und
+  **Einstellungen**. Desktop als Dropdown-Panels, Mobile als Accordion; der
+  offene/geschlossene Zustand wird pro Gruppe gemerkt (localStorage). Die Gruppe
+  der aktiven Seite öffnet automatisch.
+
+### Notes
+
+- Schemaänderung: neue Tabellen `backup_jobs` und `backup_runs`
+  (Migration 6, idempotent, dialect-aware via `create_all`). Upgradepfade
+  0.6.x–0.9.1 → 0.9.2 für SQLite und MySQL verifiziert; keine Datenverluste.
+
 ## [0.9.1] – 2026-06-13
 
 ### Fixed

@@ -764,3 +764,81 @@ def get_mobile_history_vacations(
         .order_by(models.VacationRequest.start_date.desc())
         .all()
     )
+
+
+# --- Backup-Jobs (§0.9.2) -------------------------------------------------
+
+def get_backup_jobs(db: Session) -> List[models.BackupJob]:
+    return db.query(models.BackupJob).order_by(models.BackupJob.name).all()
+
+
+def get_backup_job(db: Session, job_id: int) -> Optional[models.BackupJob]:
+    return db.query(models.BackupJob).filter(models.BackupJob.id == job_id).first()
+
+
+def create_backup_job(db: Session, **fields) -> models.BackupJob:
+    job = models.BackupJob(**fields)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def update_backup_job(db: Session, job_id: int, **fields) -> Optional[models.BackupJob]:
+    job = get_backup_job(db, job_id)
+    if not job:
+        return None
+    for key, value in fields.items():
+        setattr(job, key, value)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def delete_backup_job(db: Session, job_id: int) -> bool:
+    job = get_backup_job(db, job_id)
+    if not job:
+        return False
+    db.delete(job)
+    db.commit()
+    return True
+
+
+def get_active_backup_jobs(db: Session) -> List[models.BackupJob]:
+    return db.query(models.BackupJob).filter(models.BackupJob.active.is_(True)).all()
+
+
+def add_backup_run(db: Session, **fields) -> models.BackupRun:
+    run = models.BackupRun(**fields)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_backup_runs(db: Session, limit: int = 100) -> List[models.BackupRun]:
+    return (
+        db.query(models.BackupRun)
+        .order_by(models.BackupRun.started_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def get_backup_run(db: Session, run_id: int) -> Optional[models.BackupRun]:
+    return db.query(models.BackupRun).filter(models.BackupRun.id == run_id).first()
+
+
+def prune_backup_runs(db: Session, job_id: int, keep: int = 200) -> None:
+    """Keep the history table from growing without bound."""
+    runs = (
+        db.query(models.BackupRun)
+        .filter(models.BackupRun.job_id == job_id)
+        .order_by(models.BackupRun.started_at.desc())
+        .offset(keep)
+        .all()
+    )
+    for run in runs:
+        db.delete(run)
+    if runs:
+        db.commit()

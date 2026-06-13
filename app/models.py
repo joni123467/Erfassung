@@ -267,3 +267,70 @@ def default_work_end(start: time, minutes: int) -> time:
     start_dt = datetime.combine(date.today(), start)
     end_dt = start_dt + timedelta(minutes=minutes)
     return end_dt.time()
+
+
+class BackupJob(Base):
+    """A configured, job-based backup definition (§0.9.2)."""
+
+    __tablename__ = "backup_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    active = Column(Boolean, default=True)
+    # manual / daily / weekly / monthly (optional cron string for future use)
+    schedule = Column(String(20), default="manual")
+    cron = Column(String(120), default="")
+    # comma separated subset of: database,config,logs
+    contents = Column(String(64), default="database,config")
+    # local / ftp / smb
+    target_type = Column(String(10), default="local")
+
+    local_path = Column(String(500), default="")
+
+    ftp_host = Column(String(255), default="")
+    ftp_port = Column(Integer, default=21)
+    ftp_username = Column(String(255), default="")
+    ftp_password = Column(String(255), default="")
+    ftp_path = Column(String(500), default="/")
+    ftp_use_tls = Column(Boolean, default=True)
+
+    # SMB uses a single UNC path and a single username field
+    # (\\server\share\sub, DOMAIN\user or user@domain).
+    smb_path = Column(String(500), default="")
+    smb_username = Column(String(255), default="")
+    smb_password = Column(String(255), default="")
+
+    retention_count = Column(Integer, default=10)
+    retention_days = Column(Integer, default=30)
+
+    last_run_at = Column(DateTime, nullable=True)
+    last_status = Column(String(20), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    runs = relationship(
+        "BackupRun", back_populates="job", cascade="all, delete-orphan"
+    )
+
+    @property
+    def content_list(self) -> list[str]:
+        return [part for part in (self.contents or "").split(",") if part]
+
+
+class BackupRun(Base):
+    """A single execution of a backup job (history entry)."""
+
+    __tablename__ = "backup_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey("backup_jobs.id"), nullable=True)
+    job_name = Column(String(255), default="")
+    target_type = Column(String(10), default="local")
+    started_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Float, default=0.0)
+    size_bytes = Column(Integer, default=0)
+    status = Column(String(20), default="error")  # success / warning / error
+    message = Column(Text, default="")
+    filename = Column(String(500), nullable=True)  # local archive path (download)
+
+    job = relationship("BackupJob", back_populates="runs")

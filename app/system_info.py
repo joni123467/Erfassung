@@ -265,19 +265,9 @@ def health_report(db: Session) -> dict[str, object]:
 
 # -- Backups (delegated to app.backup_manager) ----------------------------
 
-def list_backups() -> list[dict[str, object]]:
-    from . import backup_manager
+def latest_backup_run(db: Session):
+    """Most recent backup run (history entry) or None."""
+    from . import crud
 
-    return backup_manager.list_backups()
-
-
-def backup_summary() -> dict[str, object]:
-    from . import backup_manager
-
-    return backup_manager.backup_summary()
-
-
-def create_backup(config=None) -> dict[str, object]:
-    from . import backup_manager
-
-    return backup_manager.create_backup(config)
+    runs = crud.get_backup_runs(db, limit=1)
+    return runs[0] if runs else None
