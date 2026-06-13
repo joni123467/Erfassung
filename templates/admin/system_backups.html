@@ -116,55 +116,62 @@
 
 <div class="modal" id="backup-job-modal" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="modal__backdrop" data-close></div>
-    <div class="modal__dialog">
-        <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
-        <h3 id="backup-modal-title">Neuer Backup-Job</h3>
-        <form method="post" action="/admin/system/backups/jobs" class="form-grid" id="backup-job-form">
+    <div class="modal__dialog modal__dialog--scroll">
+        <header class="modal__head">
+            <h3 id="backup-modal-title">Neuer Backup-Job</h3>
+            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+        </header>
+        <form method="post" action="/admin/system/backups/jobs" class="modal__scrollform" id="backup-job-form">
             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <input type="hidden" name="job_id" id="bj-job-id" value="">
-            <label>Name<input type="text" name="name" id="bj-name" required></label>
-            <label class="checkbox-inline"><input type="checkbox" name="active" id="bj-active" checked> Aktiv</label>
-            <label>Zeitplan
-                <select name="schedule" id="bj-schedule">
-                    {% for option in backup_schedules %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
-                </select>
-            </label>
-            <fieldset class="full-width">
-                <legend>Backup-Inhalt</legend>
-                {% for content in backup_contents %}
-                    <label class="checkbox-inline"><input type="checkbox" name="contents" value="{{ content }}" class="bj-content"> {{ content }}</label>
-                {% endfor %}
-            </fieldset>
-            <label>Backup-Typ
-                <select name="target_type" id="bj-target">
-                    {% for option in backup_targets %}<option value="{{ option }}">{{ option|upper }}</option>{% endfor %}
-                </select>
-            </label>
+            <div class="modal__body form-grid">
+                <label>Name<input type="text" name="name" id="bj-name" required></label>
+                <label>Zeitplan
+                    <select name="schedule" id="bj-schedule">
+                        {% for option in backup_schedules %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="checkbox-inline"><input type="checkbox" name="active" id="bj-active" checked> Aktiv</label>
+                <fieldset class="full-width bj-fieldset">
+                    <legend>Backup-Inhalt</legend>
+                    <div class="bj-checkboxes">
+                        {% for content in backup_contents %}
+                            <label class="checkbox-inline"><input type="checkbox" name="contents" value="{{ content }}" class="bj-content"> {{ content }}</label>
+                        {% endfor %}
+                    </div>
+                </fieldset>
+                <label>Backup-Typ
+                    <select name="target_type" id="bj-target">
+                        {% for option in backup_targets %}<option value="{{ option }}">{{ option|upper }}</option>{% endfor %}
+                    </select>
+                </label>
 
-            <div class="full-width bj-group" data-group="local">
-                <label>Zielpfad<input type="text" name="local_path" id="bj-local-path" placeholder="leer = Standard (data/backups)"></label>
+                <div class="full-width bj-group" data-group="local">
+                    <label>Zielpfad<input type="text" name="local_path" id="bj-local-path" placeholder="leer = Standard (data/backups)"></label>
+                </div>
+
+                <div class="full-width bj-group" data-group="ftp">
+                    <label>Server<input type="text" name="ftp_host" id="bj-ftp-host"></label>
+                    <label>Port<input type="number" name="ftp_port" id="bj-ftp-port" value="21"></label>
+                    <label>Benutzer<input type="text" name="ftp_username" id="bj-ftp-username"></label>
+                    <label>Passwort<input type="password" name="ftp_password" id="bj-ftp-password" autocomplete="new-password"></label>
+                    <label>Zielpfad<input type="text" name="ftp_path" id="bj-ftp-path" value="/"></label>
+                    <label class="checkbox-inline"><input type="checkbox" name="ftp_use_tls" id="bj-ftp-tls" checked> FTPS (TLS)</label>
+                </div>
+
+                <div class="full-width bj-group" data-group="smb">
+                    <label>Pfad<input type="text" name="smb_path" id="bj-smb-path" placeholder="\\192.168.1.10\backup"></label>
+                    <label>Benutzer<input type="text" name="smb_username" id="bj-smb-username" placeholder="backupuser, DOMAIN\backupuser oder backupuser@domain.local"></label>
+                    <label>Passwort<input type="password" name="smb_password" id="bj-smb-password" autocomplete="new-password"></label>
+                </div>
+
+                <label>Backups behalten (Anzahl)<input type="number" name="retention_count" id="bj-retention-count" min="0" value="10"></label>
+                <label>Aufbewahrungsdauer (Tage)<input type="number" name="retention_days" id="bj-retention-days" min="0" value="30"></label>
+
+                <p class="form-hint full-width" id="bj-test-result" role="status"></p>
             </div>
-
-            <div class="full-width bj-group" data-group="ftp">
-                <label>Server<input type="text" name="ftp_host" id="bj-ftp-host"></label>
-                <label>Port<input type="number" name="ftp_port" id="bj-ftp-port" value="21"></label>
-                <label>Benutzer<input type="text" name="ftp_username" id="bj-ftp-username"></label>
-                <label>Passwort<input type="password" name="ftp_password" id="bj-ftp-password" autocomplete="new-password"></label>
-                <label>Zielpfad<input type="text" name="ftp_path" id="bj-ftp-path" value="/"></label>
-                <label class="checkbox-inline"><input type="checkbox" name="ftp_use_tls" id="bj-ftp-tls" checked> FTPS (TLS)</label>
-            </div>
-
-            <div class="full-width bj-group" data-group="smb">
-                <label>Pfad<input type="text" name="smb_path" id="bj-smb-path" placeholder="\\192.168.1.10\backup"></label>
-                <label>Benutzer<input type="text" name="smb_username" id="bj-smb-username" placeholder="backupuser, DOMAIN\backupuser oder backupuser@domain.local"></label>
-                <label>Passwort<input type="password" name="smb_password" id="bj-smb-password" autocomplete="new-password"></label>
-            </div>
-
-            <label>Backups behalten (Anzahl)<input type="number" name="retention_count" id="bj-retention-count" min="0" value="10"></label>
-            <label>Aufbewahrungsdauer (Tage)<input type="number" name="retention_days" id="bj-retention-days" min="0" value="30"></label>
-
-            <p class="form-hint full-width" id="bj-test-result" role="status"></p>
-            <div class="full-width modal-action-bar">
+            <div class="modal__foot">
+                <button type="button" class="button ghost" data-close>Abbrechen</button>
                 <button type="button" class="button ghost" id="bj-test">Verbindung testen</button>
                 <button type="submit" class="button primary">Speichern</button>
             </div>
