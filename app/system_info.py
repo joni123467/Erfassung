@@ -271,3 +271,35 @@ def latest_backup_run(db: Session):
 
     runs = crud.get_backup_runs(db, limit=1)
     return runs[0] if runs else None
+
+
+def backup_overview(db: Session) -> dict[str, object]:
+    """Backup/restore highlights for the system status page (§20)."""
+    from . import crud, log_tools
+
+    runs = crud.get_backup_runs(db, limit=200)
+    last_success = next((r for r in runs if r.status == "success"), None)
+    last_error = next((r for r in runs if r.status == "error"), None)
+    restores = crud.get_restore_runs(db, limit=1)
+    last_restore = restores[0] if restores else None
+
+    last_verify = None
+    try:
+        for line in log_tools.read_log("backup", limit=2000):
+            if "Backup-Prüfung" in (line.message or ""):
+                last_verify = line.timestamp
+                break
+    except Exception:  # pragma: no cover
+        last_verify = None
+
+    def _fmt(value):
+        return value.strftime("%d.%m.%Y %H:%M") if value else None
+
+    return {
+        "last_successful_backup": _fmt(getattr(last_success, "started_at", None)),
+        "last_backup_error": _fmt(getattr(last_error, "started_at", None)),
+        "last_backup_error_message": getattr(last_error, "message", None),
+        "last_restore": _fmt(getattr(last_restore, "started_at", None)),
+        "last_restore_status": getattr(last_restore, "status", None),
+        "last_verify": _fmt(last_verify),
+    }

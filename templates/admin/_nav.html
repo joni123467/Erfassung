@@ -26,7 +26,9 @@
         'id': 'backup', 'label': 'Sicherung', 'show': admin_permissions.system,
         'items': [
             {'href': '/admin/system/backups', 'label': 'Backup-Jobs', 'key': 'system_backups', 'show': admin_permissions.system},
-            {'href': '/admin/system/backups?tab=history', 'label': 'Backup-Historie', 'key': 'system_backups_history', 'show': admin_permissions.system},
+            {'href': '/admin/system/backups#history', 'label': 'Backup-Historie', 'key': 'system_backups_history', 'show': admin_permissions.system},
+            {'href': '/admin/system/restore', 'label': 'Wiederherstellung', 'key': 'system_restore', 'show': admin_permissions.system},
+            {'href': '/admin/system/restore/history', 'label': 'Restore-Historie', 'key': 'system_restore_history', 'show': admin_permissions.system},
         ],
     },
     {

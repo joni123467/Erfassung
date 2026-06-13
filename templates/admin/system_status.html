@@ -120,15 +120,21 @@
 </section>
 
 <section class="card">
-    <h2>Backups</h2>
+    <h2>Backups &amp; Wiederherstellung</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Letztes erfolgreiches Backup</th><td>{{ backup_overview.last_successful_backup or '–' }}</td></tr>
+                <tr><th>Letzter Backupfehler</th><td>{{ backup_overview.last_backup_error or '–' }}</td></tr>
+                <tr><th>Letzte Wiederherstellung</th><td>{{ backup_overview.last_restore or '–' }}{% if backup_overview.last_restore_status %} ({{ backup_overview.last_restore_status }}){% endif %}</td></tr>
+                <tr><th>Letzte Backupprüfung</th><td>{{ backup_overview.last_verify or '–' }}</td></tr>
+            </tbody>
+        </table>
+    </div>
     <p class="card-header__hint">
-        {% if latest_backup %}
-            Letzte Sicherung: {{ latest_backup.started_at.strftime('%d.%m.%Y %H:%M') }}
-            ({{ latest_backup.job_name }}, Status: {{ latest_backup.status }}).
-        {% else %}
-            Noch keine Sicherung vorhanden.
-        {% endif %}
-        <a href="/admin/system/backups">Zu den Backup-Jobs</a>
+        <a href="/admin/system/backups">Backup-Jobs</a> ·
+        <a href="/admin/system/restore">Wiederherstellung</a> ·
+        <a href="/admin/system/restore/history">Restore-Historie</a>
     </p>
 </section>
 {% endblock %}

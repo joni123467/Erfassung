@@ -842,3 +842,22 @@ def prune_backup_runs(db: Session, job_id: int, keep: int = 200) -> None:
         db.delete(run)
     if runs:
         db.commit()
+
+
+# --- Restore-Historie (§0.9.4) --------------------------------------------
+
+def add_restore_run(db: Session, **fields) -> models.RestoreRun:
+    run = models.RestoreRun(**fields)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_restore_runs(db: Session, limit: int = 100) -> List[models.RestoreRun]:
+    return (
+        db.query(models.RestoreRun)
+        .order_by(models.RestoreRun.started_at.desc())
+        .limit(limit)
+        .all()
+    )

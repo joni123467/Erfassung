@@ -5,6 +5,58 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.4] – 2026-06-13
+
+### Added – Enterprise Backup & Restore
+
+- **Wiederherstellung** (`Administration → Sicherung → Wiederherstellung`):
+  Backups prüfen, herunterladen, hochladen und wiederherstellen. Listet lokale
+  und hochgeladene Backups mit Dateiname, Größe, Datum, Anwendungsversion,
+  Datenbanktyp, Schema-Version und Quelle.
+- **Restore-Dialog** mit Pflicht-Bestätigung („WIEDERHERSTELLEN" eingeben) und
+  deutlicher Warnung. Vor jeder Wiederherstellung wird automatisch ein
+  **Sicherheitsbackup** (`pre_restore_*.zip`) erzeugt.
+- **Versionsübergreifender Restore**: Ältere Backups (0.6.x–0.9.3) werden
+  unterstützt; nach dem Einspielen werden fehlende Tabellen angelegt und alle
+  ausstehenden Migrationen automatisch ausgeführt (SQLite & MySQL). Kein
+  manueller Eingriff nötig.
+- **Backup-Download** als Streaming/Chunked-Transfer (auch große Dateien, nicht
+  komplett im RAM). **Upload** großer Backups in 1-MiB-Chunks, isoliert
+  gespeichert, erst nach Integritätsprüfung übernommen.
+- **Backup-Prüfung** (verify) mit Ampel: grün (verwendbar), gelb (verwendbar
+  mit Hinweisen), rot (nicht verwendbar).
+- **Backup-Metadaten** in jedem Archiv (`backup_meta.json`): Anwendungsversion,
+  Datenbanktyp, Schema-Version, Erstellungsdatum, Backup-Typ – für
+  Kompatibilitätsprüfungen.
+- **Restore-Historie** (`restore_runs`): Zeitpunkt, Benutzer, Datei, Version,
+  DB-Typ, Sicherheitsbackup, ausgeführte Migrationen, Ergebnis.
+
+### Added – Eigenes Backup-Logging
+
+- Neuer Logkanal **`logs/backup.log`** für alle Backup-/Restore-/Upload-/
+  Verbindungstest-/Aufbewahrungs-/Integritätsvorgänge (Zeitpunkt, Benutzer,
+  Jobname, Ziel, Dateiname, Größe, Dauer, Ergebnis). Passwörter/Zugangsdaten
+  werden niemals protokolliert. In `Administration → Logs` filter-, such- und
+  herunterladbar.
+- Logging-Konfiguration um **Backup-Logging** und **Restore-Logging** erweitert
+  (persistent im config-Volume).
+- Audit-Log um Backup-Ereignisse erweitert (manuell gestartet, gelöscht,
+  hochgeladen, wiederhergestellt, Job erstellt/geändert, Ziel geändert).
+
+### Changed
+
+- Systemstatus zeigt zusätzlich letztes erfolgreiches Backup, letzten
+  Backupfehler, letzte Wiederherstellung und letzte Backupprüfung.
+- Navigation „Sicherung" um **Wiederherstellung** und **Restore-Historie**
+  erweitert.
+
+### Notes
+
+- Schemaänderung: neue Tabelle `restore_runs` (Migration 7, idempotent,
+  dialect-aware). Upgradepfade 0.6.x–0.9.3 → 0.9.4 (SQLite & MySQL) verifiziert;
+  keine Datenverluste. Uploads werden auf Dateityp, Archiv-Integrität und
+  Path-Traversal geprüft und isoliert gespeichert.
+
 ## [0.9.3] – 2026-06-13
 
 ### Fixed – Backup-Job-Modal vollständig bedienbar

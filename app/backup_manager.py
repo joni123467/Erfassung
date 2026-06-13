@@ -14,6 +14,7 @@ Design goals:
 from __future__ import annotations
 
 import logging
+import json
 import os
 import shutil
 import sqlite3
@@ -27,11 +28,22 @@ from typing import Optional
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from . import crud, database, paths
+from . import __version__ as APP_VERSION
+from . import crud, database, db_schema, logging_setup, paths
 
 LOGGER = logging.getLogger("erfassung.application")
 
 BACKUP_DIR = paths.DATA_DIR / "backups"
+UPLOAD_DIR = paths.DATA_DIR / "uploads"
+META_NAME = "backup_meta.json"
+
+
+def log_backup(message, *, level=logging.INFO, user=None):
+    """Backup/restore events go to the dedicated backup.log (§11-§18)."""
+    try:
+        logging_setup.log_backup(message, level=level, user=user)
+    except Exception:  # pragma: no cover - logging must never break a backup
+        LOGGER.info(message)
 
 
 # -- database snapshot helpers --------------------------------------------
@@ -83,9 +95,39 @@ def _dump_database(staging: Path) -> tuple[Optional[Path], Optional[str]]:
     return snapshot, None
 
 
+# -- metadata --------------------------------------------------------------
+
+def _build_metadata(contents: list[str], backup_type: str) -> dict:
+    """Metadata embedded in every archive for compatibility checks (§10)."""
+    schema_version = None
+    try:
+        schema_version = db_schema.latest_applied_version(database.engine)
+    except Exception:  # pragma: no cover
+        schema_version = None
+    return {
+        "app_version": APP_VERSION,
+        "database_type": database.DB_BACKEND,
+        "schema_version": schema_version,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "backup_type": backup_type,
+        "contents": contents,
+    }
+
+
+def read_metadata(archive_path: Path) -> Optional[dict]:
+    """Read the embedded backup metadata, or None if absent/unreadable."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            if META_NAME not in archive.namelist():
+                return None
+            return json.loads(archive.read(META_NAME).decode("utf-8"))
+    except (zipfile.BadZipFile, OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
 # -- archive ---------------------------------------------------------------
 
-def _build_archive(job, staging: Path) -> tuple[Path, list[str]]:
+def _build_archive(job, staging: Path, *, backup_type: str = "job") -> tuple[Path, list[str]]:
     """Build the ZIP for ``job`` in ``staging``. Returns (path, warnings)."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -96,6 +138,7 @@ def _build_archive(job, staging: Path) -> tuple[Path, list[str]]:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(META_NAME, json.dumps(_build_metadata(contents, backup_type), indent=2))
             if "database" in contents:
                 snapshot, warning = _dump_database(tmp_dir)
                 if snapshot:
@@ -111,6 +154,27 @@ def _build_archive(job, staging: Path) -> tuple[Path, list[str]]:
                     if entry.is_file():
                         archive.write(entry, arcname=f"logs/{entry.relative_to(paths.LOGS_DIR)}")
     return archive_path, warnings
+
+
+def create_safety_backup() -> Path:
+    """Create a pre-restore safety backup of DB + config (§6)."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_path = BACKUP_DIR / f"pre_restore_{timestamp}.zip"
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                META_NAME, json.dumps(_build_metadata(["database", "config"], "safety"), indent=2)
+            )
+            snapshot, _warning = _dump_database(tmp_dir)
+            if snapshot:
+                archive.write(snapshot, arcname=f"data/{snapshot.name}")
+            if paths.CONFIG_DIR.exists():
+                for entry in paths.CONFIG_DIR.rglob("*"):
+                    if entry.is_file():
+                        archive.write(entry, arcname=f"config/{entry.relative_to(paths.CONFIG_DIR)}")
+    return archive_path
 
 
 def verify_integrity(archive_path: Path) -> tuple[bool, str]:
@@ -129,6 +193,133 @@ def verify_integrity(archive_path: Path) -> tuple[bool, str]:
     except zipfile.BadZipFile:
         return False, "Archiv ist nicht lesbar (kein gültiges ZIP)"
     return True, "Archiv geprüft (lesbar, plausible Größe)"
+
+
+def verify(archive_path: Path, *, user=None) -> dict:
+    """Analyse an archive without restoring it (§4). Returns level/details.
+
+    level: 'green' (verwendbar), 'yellow' (verwendbar mit Hinweisen),
+    'red' (nicht verwendbar).
+    """
+    archive_path = Path(archive_path)
+    result = {
+        "level": "red",
+        "readable": False,
+        "integrity": False,
+        "has_metadata": False,
+        "has_database": False,
+        "app_version": None,
+        "database_type": None,
+        "schema_version": None,
+        "messages": [],
+    }
+    ok, integrity_msg = verify_integrity(archive_path)
+    result["integrity"] = ok
+    result["readable"] = ok
+    if not ok:
+        result["messages"].append(integrity_msg)
+        log_backup(f"Integritätsprüfung fehlgeschlagen: {archive_path.name} – {integrity_msg}",
+                   level=logging.WARNING, user=user)
+        return result
+
+    names = []
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            names = archive.namelist()
+    except zipfile.BadZipFile:  # pragma: no cover - already checked
+        result["messages"].append("Archiv nicht lesbar")
+        return result
+
+    result["has_database"] = any(n.startswith("data/") for n in names)
+    meta = read_metadata(archive_path)
+    if meta:
+        result["has_metadata"] = True
+        result["app_version"] = meta.get("app_version")
+        result["database_type"] = meta.get("database_type")
+        result["schema_version"] = meta.get("schema_version")
+
+    messages = []
+    if not result["has_metadata"]:
+        messages.append("Keine Metadaten enthalten – Kompatibilität nicht prüfbar")
+    if not result["has_database"]:
+        messages.append("Kein Datenbank-Snapshot enthalten")
+    if result["has_metadata"] and result["database_type"] and result["database_type"] != database.DB_BACKEND:
+        messages.append(
+            f"Datenbanktyp im Backup ({result['database_type']}) weicht vom aktuellen "
+            f"System ({database.DB_BACKEND}) ab"
+        )
+
+    if not result["has_database"]:
+        result["level"] = "red"
+        messages.insert(0, "Backup nicht für Wiederherstellung der Datenbank verwendbar")
+    elif messages:
+        result["level"] = "yellow"
+    else:
+        result["level"] = "green"
+        messages.append("Backup verwendbar")
+    result["messages"] = messages
+    log_backup(
+        f"Backup-Prüfung {archive_path.name}: {result['level']} "
+        f"(Version={result['app_version']}, DB={result['database_type']})",
+        user=user,
+    )
+    return result
+
+
+def backup_file_info(archive_path: Path) -> dict:
+    """Metadata + filesystem info for one local archive (for listings)."""
+    path = Path(archive_path)
+    stat = path.stat()
+    meta = read_metadata(path) or {}
+    name = path.name
+    if name.startswith("pre_restore_"):
+        source = "safety"
+    elif name.startswith("upload_"):
+        source = "upload"
+    else:
+        source = "local"
+    return {
+        "name": name,
+        "path": str(path),
+        "size_bytes": stat.st_size,
+        "size_human": paths.format_size(stat.st_size),
+        "created": datetime.fromtimestamp(stat.st_mtime),
+        "app_version": meta.get("app_version"),
+        "database_type": meta.get("database_type"),
+        "schema_version": meta.get("schema_version"),
+        "backup_type": meta.get("backup_type"),
+        "source": source,
+    }
+
+
+def list_local_backups() -> list[dict]:
+    """All restorable archives in the local backup directory (incl. uploads)."""
+    items: list[dict] = []
+    for directory in (BACKUP_DIR,):
+        if directory.exists():
+            for path in directory.glob("*.zip"):
+                try:
+                    items.append(backup_file_info(path))
+                except OSError:  # pragma: no cover
+                    continue
+    items.sort(key=lambda i: i["created"], reverse=True)
+    return items
+
+
+def resolve_backup_path(name: str) -> Optional[Path]:
+    """Safely resolve a backup file name to a path inside BACKUP_DIR.
+
+    Guards against path traversal (§24): only plain file names within the
+    backup directory are accepted.
+    """
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return None
+    candidate = (BACKUP_DIR / name).resolve()
+    try:
+        candidate.relative_to(BACKUP_DIR.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.exists() else None
 
 
 # -- SMB helpers -----------------------------------------------------------
@@ -237,12 +428,20 @@ def _apply_local_retention(job, directory: Path) -> int:
     if cutoff is not None:
         remove.update(a for a in archives if a.stat().st_mtime < cutoff)
     removed = 0
+    freed = 0
     for archive in remove:
         try:
+            freed += archive.stat().st_size
             archive.unlink()
             removed += 1
         except OSError:  # pragma: no cover
             continue
+    if removed:
+        # §17: log retention cleanup (job, count, freed space).
+        log_backup(
+            f"Aufbewahrung '{job.name}': {removed} alte Sicherung(en) gelöscht, "
+            f"{paths.format_size(freed)} freigegeben"
+        )
     return removed
 
 
@@ -337,13 +536,16 @@ def _apply_smb_retention(job) -> int:
 
 # -- run + test ------------------------------------------------------------
 
-def run_job(db: Session, job, *, triggered_by: str = "manual") -> "object":
+def run_job(db: Session, job, *, triggered_by: str = "manual", user=None) -> "object":
     """Execute ``job``: build, verify, transfer, prune, record history."""
     started = datetime.now()
     status = "error"
     message = ""
     size = 0
+    location = "-"
     local_file: Optional[str] = None
+    # §12: log start (never include credentials, only the target type/path).
+    log_backup(f"Backup gestartet: Job '{job.name}' (Typ {job.target_type}, Auslöser {triggered_by})", user=user)
     try:
         archive_path, warnings = _build_archive(job, BACKUP_DIR)
         ok, integrity_msg = verify_integrity(archive_path)
@@ -368,6 +570,20 @@ def run_job(db: Session, job, *, triggered_by: str = "manual") -> "object":
         LOGGER.error("Backup-Job '%s' fehlgeschlagen: %s", job.name, exc)
 
     finished = datetime.now()
+    duration = (finished - started).total_seconds()
+    # §12/§13: log result (Jobname, Ziel, Dateiname, Größe, Dauer, Ergebnis).
+    if status == "error":
+        log_backup(
+            f"Backup fehlgeschlagen: Job '{job.name}', Ziel {job.target_type}: {message}",
+            level=logging.ERROR, user=user,
+        )
+    else:
+        log_backup(
+            f"Backup erfolgreich: Job '{job.name}', Ziel {location}, "
+            f"Datei {Path(local_file).name if local_file else '-'}, "
+            f"{paths.format_size(size)}, {duration:.1f}s, Status {status}",
+            user=user,
+        )
     run = crud.add_backup_run(
         db,
         job_id=job.id,
@@ -386,8 +602,23 @@ def run_job(db: Session, job, *, triggered_by: str = "manual") -> "object":
     return run
 
 
-def test_connection(job) -> tuple[bool, str]:
+def test_connection(job, *, user=None) -> tuple[bool, str]:
     """Verify the job's target is reachable without creating a backup."""
+    ok, message = _test_connection(job)
+    # §16: log connection tests (target type, result) – never credentials.
+    target = job.target_type
+    if target == "ftp":
+        target = f"ftp://{job.ftp_host}"
+    elif target == "smb":
+        target = job.smb_path
+    log_backup(
+        f"Verbindungstest {job.target_type} ({target}): {'erfolgreich' if ok else 'fehlgeschlagen'}",
+        level=logging.INFO if ok else logging.WARNING, user=user,
+    )
+    return ok, message
+
+
+def _test_connection(job) -> tuple[bool, str]:
     try:
         if job.target_type == "local":
             directory = Path(job.local_path) if job.local_path else BACKUP_DIR
@@ -427,3 +658,54 @@ def test_connection(job) -> tuple[bool, str]:
         return False, f"Erforderliche Bibliothek fehlt: {exc.name}"
     except Exception as exc:  # pragma: no cover - depends on target
         return False, f"Verbindung fehlgeschlagen: {type(exc).__name__}: {exc}"
+
+
+# -- uploads & remote retrieval -------------------------------------------
+
+def register_uploaded_file(temp_path: Path, original_name: str) -> Path:
+    """Move a verified upload into the backup directory under a safe name (§3/§24)."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_suffix = ".zip"
+    final = BACKUP_DIR / f"upload_{timestamp}{safe_suffix}"
+    shutil.move(str(temp_path), str(final))
+    return final
+
+
+def fetch_remote_to_temp(job, filename: str) -> Path:
+    """Download a named backup file from a job's FTP/SMB target to a temp file."""
+    fd, tmp_name = tempfile.mkstemp(prefix="fetch_", suffix=".zip", dir=str(BACKUP_DIR))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    if job.target_type == "ftp":
+        import ftplib
+
+        cls = ftplib.FTP_TLS if job.ftp_use_tls else ftplib.FTP
+        ftp = cls()
+        ftp.connect(job.ftp_host, job.ftp_port or 21, timeout=30)
+        ftp.login(job.ftp_username, job.ftp_password)
+        if isinstance(ftp, ftplib.FTP_TLS):
+            ftp.prot_p()
+        try:
+            if job.ftp_path and job.ftp_path != "/":
+                ftp.cwd(job.ftp_path)
+            with tmp_path.open("wb") as handle:
+                ftp.retrbinary(f"RETR {filename}", handle.write)
+        finally:
+            ftp.quit()
+    elif job.target_type == "smb":
+        smbclient, server = _smb_register(job)
+        try:
+            _srv, share, sub = _parse_unc(job.smb_path)
+            remote_dir = f"\\\\{server}\\{share}" + (("\\" + sub) if sub else "")
+            with smbclient.open_file(f"{remote_dir}\\{filename}", mode="rb") as src, tmp_path.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+        finally:
+            try:
+                smbclient.delete_session(server)
+            except Exception:  # pragma: no cover
+                pass
+    else:
+        tmp_path.unlink(missing_ok=True)
+        raise ValueError("Remote-Abruf nur für FTP/SMB")
+    return tmp_path
