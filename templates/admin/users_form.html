@@ -74,6 +74,11 @@
                                 <input type="checkbox" name="overtime_vacation_enabled" {% if is_edit and form_user.overtime_vacation_enabled %}checked{% endif %}>
                                 Überstundenabbau über Urlaubsanträge erlauben
                             </label>
+                            <label class="checkbox">
+                                <input type="checkbox" name="auto_break_deduction" {% if not is_edit or form_user.auto_break_deduction %}checked{% endif %}>
+                                Automatische gesetzliche Pausen anwenden (ArbZG)
+                            </label>
+                            <p class="form-hint user-form__hint">Deaktiviert: Es werden nur tatsächlich gestempelte Pausen abgezogen, keine automatische Pausenkorrektur.</p>
                         </div>
                     </fieldset>
                 </div>

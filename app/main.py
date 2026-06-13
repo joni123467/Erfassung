@@ -31,8 +31,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import __version__ as APP_VERSION
 from . import crud, database, holiday_calculator, models, schemas, security, services
 from .integrations import timemoto
-from .excel_export import export_time_entries
-from .pdf_export import export_team_overview_pdf, export_time_overview_pdf
+from .excel_export import export_time_entries, export_user_summary_excel
+from .pdf_export import (
+    export_team_overview_pdf,
+    export_time_overview_pdf,
+    export_user_summary_pdf,
+)
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -368,6 +372,14 @@ def ensure_schema() -> None:
                     text(
                         "ALTER TABLE users ADD COLUMN monthly_overtime_limit_minutes INTEGER DEFAULT 1200"
                     )
+                )
+            if "auto_break_deduction" not in columns:
+                # Default 1 keeps the existing behaviour for all current users.
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN auto_break_deduction BOOLEAN DEFAULT 1")
+                )
+                connection.execute(
+                    text("UPDATE users SET auto_break_deduction = 1 WHERE auto_break_deduction IS NULL")
                 )
             if "password_hash" not in columns:
                 connection.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR"))
@@ -941,6 +953,22 @@ def _seed_default_records() -> None:
         db.close()
 
 
+def _ensure_holiday_data() -> None:
+    """Automatic holiday management: keep the current and the next year
+    populated for the configured region without any manual sync action."""
+    db = database.SessionLocal()
+    try:
+        region = crud.get_default_holiday_region(db)
+        today = date.today()
+        for year in (today.year, today.year + 1):
+            if not crud.get_holidays_for_year(db, year, region):
+                holiday_calculator.ensure_holidays(db, year, region)
+    except Exception:  # pragma: no cover - never block startup on holiday data
+        logger.warning("Feiertage konnten beim Start nicht aktualisiert werden", exc_info=True)
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def ensure_seed_data():
     ensure_schema()
@@ -960,6 +988,7 @@ def ensure_seed_data():
                 exc_info=True,
             )
             raise
+    _ensure_holiday_data()
 
 
 @app.middleware("http")
@@ -2508,6 +2537,170 @@ def admin_time_reports_page(request: Request, db: Session = Depends(database.get
     )
 
 
+def _build_user_report_data(params, db: Session) -> dict[str, object]:
+    """Per-user evaluation for a selectable set of users and period."""
+    today = date.today()
+    default_start = today.replace(day=1)
+    default_end = date(today.year, today.month, monthrange(today.year, today.month)[1])
+    start_date = _parse_date_param(params.get("start")) or default_start
+    end_date = _parse_date_param(params.get("end")) or default_end
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    all_users = crud.get_users(db)
+    selected_ids: set[int] = set()
+    for raw in params.getlist("users"):
+        try:
+            selected_ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    report_users = [item for item in all_users if item.id in selected_ids] if selected_ids else list(all_users)
+
+    rows: list[dict[str, object]] = []
+    totals = {
+        "count": 0,
+        "work_minutes": 0,
+        "break_minutes": 0,
+        "target_minutes": 0,
+        "vacation_minutes": 0,
+        "overtime_taken_minutes": 0,
+        "balance_minutes": 0,
+    }
+    for report_user in report_users:
+        entries = list(
+            crud.get_time_entries(
+                db,
+                report_user.id,
+                start=start_date,
+                end=end_date,
+                statuses=[models.TimeEntryStatus.APPROVED],
+            )
+        )
+        work_minutes = sum(entry.worked_minutes for entry in entries)
+        break_minutes = sum(entry.applied_break_minutes for entry in entries)
+        target_minutes = services.calculate_target_minutes_in_range(report_user, start_date, end_date)
+        user_vacations = crud.get_vacations_in_range(
+            db,
+            start_date,
+            end_date,
+            user_id=report_user.id,
+            statuses=[models.VacationStatus.APPROVED],
+        )
+        vacation_minutes = services.calculate_approved_vacation_minutes(
+            report_user, user_vacations, start_date, end_date
+        )
+        overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
+            report_user, user_vacations, start_date, end_date
+        )
+        balance_minutes = work_minutes + vacation_minutes - target_minutes
+        rows.append(
+            {
+                "user": report_user,
+                "count": len(entries),
+                "work_minutes": work_minutes,
+                "break_minutes": break_minutes,
+                "target_minutes": target_minutes,
+                "vacation_minutes": vacation_minutes,
+                "overtime_taken_minutes": overtime_taken_minutes,
+                "balance_minutes": balance_minutes,
+            }
+        )
+        totals["count"] += len(entries)
+        totals["work_minutes"] += work_minutes
+        totals["break_minutes"] += break_minutes
+        totals["target_minutes"] += target_minutes
+        totals["vacation_minutes"] += vacation_minutes
+        totals["overtime_taken_minutes"] += overtime_taken_minutes
+        totals["balance_minutes"] += balance_minutes
+
+    period_range = f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
+    export_query = urlencode(
+        [("start", start_date.strftime("%Y-%m-%d")), ("end", end_date.strftime("%Y-%m-%d"))]
+        + [("users", str(user_id)) for user_id in sorted(selected_ids)]
+    )
+    return {
+        "report_rows": rows,
+        "report_totals": totals,
+        "all_users": all_users,
+        "selected_user_ids": selected_ids,
+        "start_value": start_date.strftime("%Y-%m-%d"),
+        "end_value": end_date.strftime("%Y-%m-%d"),
+        "start_date": start_date,
+        "end_date": end_date,
+        "period_range": period_range,
+        "period_filename": f"{start_date.strftime('%Y-%m-%d')}_{end_date.strftime('%Y-%m-%d')}",
+        "export_query": export_query,
+    }
+
+
+@app.get("/admin/reports/users", response_class=HTMLResponse)
+def admin_user_reports_page(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    report_data = _build_user_report_data(request.query_params, db)
+    return _admin_template(
+        "admin/user_reports.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        **report_data,
+    )
+
+
+@app.get("/admin/reports/users/pdf")
+def admin_user_reports_pdf(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    report_data = _build_user_report_data(request.query_params, db)
+    try:
+        buffer = export_user_summary_pdf(
+            period_range=report_data["period_range"],
+            rows=report_data["report_rows"],
+            totals=report_data["report_totals"],
+        )
+    except RuntimeError as exc:
+        params = list(request.query_params.multi_items())
+        params.append(("error", str(exc)))
+        return RedirectResponse(
+            url=f"/admin/reports/users?{urlencode(params)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    filename = f"benutzer_zeit_{report_data['period_filename']}.pdf"
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.get("/admin/reports/users/excel")
+def admin_user_reports_excel(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    report_data = _build_user_report_data(request.query_params, db)
+    buffer = export_user_summary_excel(
+        rows=report_data["report_rows"],
+        totals=report_data["report_totals"],
+        period_range=report_data["period_range"],
+    )
+    filename = f"benutzer_zeit_{report_data['period_filename']}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @app.get("/admin/reports/time/pdf")
 def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
@@ -2722,6 +2915,7 @@ def create_user_html(
     vacation_carryover_enabled: Optional[str] = Form(None),
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
+    auto_break_deduction: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -2735,6 +2929,7 @@ def create_user_html(
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
+    auto_break_value = auto_break_deduction == "on"
     try:
         overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
     except ValueError:
@@ -2762,6 +2957,7 @@ def create_user_html(
                 vacation_carryover_days=carryover_days_value,
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
+                auto_break_deduction=auto_break_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -2797,6 +2993,7 @@ def update_user_html(
     vacation_carryover_enabled: Optional[str] = Form(None),
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
+    auto_break_deduction: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -2810,6 +3007,7 @@ def update_user_html(
     carryover_enabled = vacation_carryover_enabled == "on"
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
+    auto_break_value = auto_break_deduction == "on"
     try:
         overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
     except ValueError:
@@ -2840,6 +3038,7 @@ def update_user_html(
                 vacation_carryover_days=carryover_days_value,
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
+                auto_break_deduction=auto_break_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -3106,43 +3305,6 @@ def set_time_entry_status_admin(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     message = "Buchung freigegeben" if new_status == models.TimeEntryStatus.APPROVED else "Buchung abgelehnt"
     redirect = _build_redirect("/admin/approvals", msg=message)
-    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-
-
-@app.post("/admin/holidays/sync")
-def sync_holidays_admin(
-    request: Request,
-    state: str = Form(...),
-    year: int = Form(...),
-    db: Session = Depends(database.get_db),
-):
-    user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    state = state.upper()
-    if state not in HOLIDAY_STATE_CODES:
-        redirect = _build_redirect(
-            "/admin/holidays",
-            error="Ungültiges Bundesland",
-            state=state,
-            holiday_year=str(year),
-        )
-        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    if year < 1900 or year > 2100:
-        redirect = _build_redirect(
-            "/admin/holidays",
-            error="Jahr muss zwischen 1900 und 2100 liegen",
-            state=state,
-            holiday_year=str(year),
-        )
-        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    holidays = holiday_calculator.ensure_holidays(db, year, state)
-    redirect = _build_redirect(
-        "/admin/holidays",
-        msg=f"{len(holidays)}+Feiertage+aktualisiert",
-        state=state,
-        holiday_year=str(year),
-    )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -3541,14 +3703,6 @@ def update_vacation_status(vacation_id: int, status: str, db: Session = Depends(
     if not updated:
         raise HTTPException(status_code=404, detail="Urlaubseintrag nicht gefunden")
     return schemas.VacationRequest.model_validate(updated)
-
-
-@app.post("/api/holidays/sync")
-def sync_holidays(year: int, state: str = "BY", db: Session = Depends(database.get_db)):
-    state = state.upper()
-    region = state if state in HOLIDAY_STATE_CODES else "DE"
-    holidays = holiday_calculator.ensure_holidays(db, year, region)
-    return {"count": len(holidays), "state": region}
 
 
 @app.get("/api/users/{user_id}/excel")

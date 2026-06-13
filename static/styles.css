@@ -95,6 +95,12 @@ textarea {
     resize: vertical;
 }
 
+select[multiple] {
+    height: auto;
+    min-height: var(--control-h);
+    padding: 0.35rem 0.5rem;
+}
+
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]):focus,
 select:focus,
 textarea:focus {
@@ -859,6 +865,46 @@ li {
 .dashboard-metrics-card__section--hours {
     border-bottom: 1px solid var(--border);
     padding-bottom: 1.25rem;
+}
+
+.dashboard-metrics-card__section--holidays {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.25rem;
+    gap: 0.5rem;
+}
+
+.dashboard-holiday-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+
+.dashboard-holiday-list__item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.25rem 0;
+    border-bottom: none;
+    font-size: 0.9rem;
+}
+
+.dashboard-holiday-list__name {
+    font-weight: 500;
+    color: var(--text);
+}
+
+.dashboard-holiday-list__date {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.dashboard-holiday-list__item--empty {
+    color: var(--text-muted);
+    font-style: italic;
 }
 
 .dashboard-metrics-card__section--vacation {

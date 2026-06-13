@@ -69,6 +69,7 @@ class User(Base):
     vacation_carryover_days = Column(Integer, default=0)
     rfid_tag = Column(String, unique=True, nullable=True)
     monthly_overtime_limit_minutes = Column(Integer, nullable=True)
+    auto_break_deduction = Column(Boolean, default=True)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
@@ -150,6 +151,21 @@ class TimeEntry(Base):
         return 45
 
     @property
+    def auto_break_enabled(self) -> bool:
+        """Whether statutory (ArbZG) breaks are deducted automatically."""
+        if self.user is None:
+            return True
+        value = getattr(self.user, "auto_break_deduction", True)
+        return True if value is None else bool(value)
+
+    @property
+    def applied_break_minutes(self) -> int:
+        """Break minutes actually deducted from the working time."""
+        if self.auto_break_enabled:
+            return max(self.total_break_minutes, self.required_break_minutes)
+        return self.total_break_minutes
+
+    @property
     def worked_minutes(self) -> int:
         start_dt = datetime.combine(self.work_date, self.start_time)
         if self.is_open:
@@ -160,8 +176,7 @@ class TimeEntry(Base):
         if end_dt < start_dt:
             end_dt += timedelta(days=1)
         raw_minutes = int((end_dt - start_dt).total_seconds() // 60)
-        applied_break = max(self.total_break_minutes, self.required_break_minutes)
-        minutes = raw_minutes - applied_break
+        minutes = raw_minutes - self.applied_break_minutes
         return max(minutes, 0)
 
     @property

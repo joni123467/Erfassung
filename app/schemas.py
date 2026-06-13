@@ -59,6 +59,7 @@ class UserBase(BaseModel):
     vacation_carryover_days: int = 0
     rfid_tag: Optional[str] = None
     monthly_overtime_limit_minutes: Optional[int] = None
+    auto_break_deduction: bool = True
 
     @field_validator("standard_weekly_hours")
     @classmethod
