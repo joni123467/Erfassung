@@ -2053,12 +2053,12 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         if overtime_limit_minutes and not overtime_limit_exceeded
         else 0
     )
-    approved_vacations = [
+    # All requests overlapping the period (any status) – the PDF vacation
+    # overview shows pending/rejected/cancelled entries with their status.
+    period_vacations = [
         vacation
         for vacation in vacations
-        if vacation.status == models.VacationStatus.APPROVED
-        and vacation.start_date <= end_date
-        and vacation.end_date >= start_date
+        if vacation.start_date <= end_date and vacation.end_date >= start_date
     ]
     try:
         buffer = export_time_overview_pdf(
@@ -2077,7 +2077,7 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
             overtime_limit_exceeded=overtime_limit_exceeded,
             overtime_limit_excess_minutes=overtime_limit_excess_minutes,
             overtime_limit_remaining_minutes=overtime_limit_remaining_minutes,
-            vacations=approved_vacations,
+            vacations=period_vacations,
         )
     except RuntimeError as exc:
         redirect_params = []
@@ -2516,6 +2516,13 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_time_report_data(request.query_params, db)
+    # report_data["vacations"] only contains approved requests (KPI basis);
+    # the PDF vacation overview lists every request in the period with status.
+    period_vacations = crud.get_vacations_in_range(
+        db,
+        report_data["start_date"],
+        report_data["end_date"],
+    )
     try:
         buffer = export_team_overview_pdf(
             period_label=report_data["period_label"],
@@ -2531,7 +2538,7 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
             entries=report_data["entries_sorted"],
             vacation_minutes_total=report_data["vacation_minutes_total"],
             effective_minutes=report_data["effective_minutes"],
-            vacations=report_data.get("vacations"),
+            vacations=period_vacations,
         )
     except RuntimeError as exc:
         params = list(request.query_params.multi_items())

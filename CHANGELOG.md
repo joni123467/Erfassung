@@ -5,6 +5,50 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.8.0] – 2026-06-13
+
+### Changed – PDF-Reports grundlegend überarbeitet (`app/pdf_export.py`)
+
+- **Keine Überlappungen mehr:** jede Tabellenzelle wird als umbruchfähiger
+  `Paragraph` gerendert (inkl. XML-Escaping von Nutzereingaben). Lange
+  Firmennamen, Kommentare oder Status brechen sauber innerhalb ihrer Spalte
+  um, statt in Nachbarspalten zu laufen oder abgeschnitten zu werden.
+- **Bessere Seitennutzung:** kompakter Kopf (Titel 15pt linksbündig + eine
+  Metazeile statt großem zentriertem Titel mit Doppel-Spacern), Ränder
+  20mm → 14mm seitlich / 12mm oben, kompakte Zellenpaddings und 8pt-Schrift
+  in Tabellen, Kennzahlen + Urlaubskonto bzw. Zusammenfassung +
+  Statusverteilung nebeneinander statt untereinander.
+- **Einheitliches Tabellen-Stilsystem** für beide Reports (Kopfzeile,
+  Zebra-Streifen, Gitter, rechtsbündige Zahlenspalten, wiederholte
+  Kopfzeile bei Seitenumbruch, Summenzeile) statt sechsfach kopierter
+  Einzel-Styles.
+- **Fußzeile mit Seitenzahl** auf jeder Seite (auch im Team-Report, der
+  zuvor gar keine Fußzeile hatte).
+- **Fix:** Im Team-Report stand die Summe der Einzelbuchungen in der
+  Spalte „Ende" statt „Arbeitszeit".
+
+### Added – Urlaubsübersicht im PDF
+
+- Beide Reports enthalten eine Tabelle „Urlaubsübersicht" mit Zeitraum,
+  Typ (Urlaub/Überstundenabbau), Status (Genehmigt, Offen, Abgelehnt,
+  Storniert, Rücknahme angefragt), Arbeitstagen, Stunden-Anrechnung (nur
+  bei genehmigten Anträgen) und Kommentar – für dieselbe Periode wie der
+  Report. Die Kennzahlen-Berechnung nutzt unverändert nur genehmigte
+  Anträge.
+
+### Changed – Arbeitsschutz-Hinweis als Info-Tooltip
+
+- Der dauerhaft sichtbare ArbZG-Hinweis (Desktop-Dashboard, Mobile-App,
+  Offline-Shell) ist jetzt ein kleines (i)-Symbol neben „Schnell stempeln":
+  Hover/Fokus zeigt den Tooltip (Desktop), Tippen öffnet/schließt ihn
+  (Mobile), Escape schließt. Token-basiert, Dark-Mode-kompatibel, absolut
+  positioniert (keine Layoutverschiebung).
+
+### Grund der Versionsanhebung
+
+Minor (`0.7.0` → `0.8.0`): neue Reportinhalte (Urlaubsübersicht) plus
+Layout-/Usability-Überarbeitung ohne Änderung bestehender Geschäftslogik.
+
 ## [0.7.0] – 2026-06-13
 
 ### Added – Dark Mode (vollständig, umschaltbar)

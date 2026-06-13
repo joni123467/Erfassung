@@ -77,7 +77,16 @@
       <!-- ── Buchung ─────────────────────────────────────────────────────── -->
       <section class="mobile-panel is-active" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung">
         <div class="mobile-card">
-          <h2 class="mobile-card__title">Schnell stempeln</h2>
+          <h2 class="mobile-card__title">Schnell stempeln
+            <span class="info-tip">
+              <button type="button" class="info-tip__trigger" aria-expanded="false" aria-label="Hinweis zum Arbeitsschutz anzeigen">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              </button>
+              <span class="info-tip__bubble" role="tooltip">
+                <strong>Arbeitsschutz (ArbZG):</strong> Nach 6 Stunden Arbeit mindestens 30 Minuten Pause einlegen, nach 9 Stunden mindestens 45 Minuten.
+              </span>
+            </span>
+          </h2>
 
           <div class="mobile-card__section" data-state="active" hidden>
             <p class="mobile-card__text">
@@ -186,10 +195,6 @@
           </div>
         </div>
 
-        <div class="mobile-card mobile-card--hint">
-          <h2 class="mobile-card__title">Hinweis</h2>
-          <p class="mobile-card__text">Nach 6 Stunden Arbeit mindestens 30 Minuten Pause einlegen, nach 9 Stunden mindestens 45 Minuten (ArbZG).</p>
-        </div>
       </section>
 
       <!-- ── Übersicht ───────────────────────────────────────────────────── -->
@@ -308,6 +313,31 @@
 </footer>
 
 <script>
+  // Info tooltips: tap to open/close (the shell does not load app.js, which
+  // hosts the same handler for the regular pages).
+  (function () {
+    function closeAll(except) {
+      var open = document.querySelectorAll('.info-tip.is-open');
+      for (var i = 0; i < open.length; i++) {
+        if (open[i] === except) continue;
+        open[i].classList.remove('is-open');
+        var btn = open[i].querySelector('.info-tip__trigger');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+      }
+    }
+    document.addEventListener('click', function (event) {
+      var trigger = event.target && event.target.closest ? event.target.closest('.info-tip__trigger') : null;
+      var tip = trigger ? trigger.parentElement : null;
+      closeAll(tip);
+      if (trigger && tip) {
+        var openState = tip.classList.toggle('is-open');
+        trigger.setAttribute('aria-expanded', openState ? 'true' : 'false');
+      }
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeAll(null);
+    });
+  }());
   (function () {
     var modal = document.getElementById('mobile-order-modal');
     if (!modal) return;

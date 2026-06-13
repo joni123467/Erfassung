@@ -501,16 +501,6 @@ li {
     font-weight: 600;
 }
 
-.dashboard-summary__hint {
-    background: var(--accent);
-    border-left: 4px solid var(--brand);
-    padding: 0.75rem 1rem;
-    border-radius: var(--radius);
-    line-height: 1.5;
-    margin: 0;
-    color: var(--text-muted);
-}
-
 .dashboard-layout {
     display: grid;
     grid-template-columns: 1fr;
@@ -577,10 +567,6 @@ li {
     font-size: 1.7rem;
     font-weight: 700;
     color: var(--brand-dark);
-}
-
-.dashboard-day-card__hint {
-    margin-top: 1.25rem;
 }
 
 .dashboard-day-card__timeline {
@@ -929,10 +915,6 @@ li {
         flex-direction: row;
         align-items: flex-end;
         justify-content: space-between;
-    }
-
-    .dashboard-summary__hint {
-        max-width: 420px;
     }
 }
 
@@ -2189,11 +2171,6 @@ tr.company-deleted td {
     gap: 0.6rem;
 }
 
-.mobile-card--hint {
-    background: var(--warning-soft);
-    box-shadow: none;
-}
-
 .mobile-card__title {
     margin: 0;
     font-size: 1.05rem;
@@ -2809,6 +2786,97 @@ tr.company-deleted td {
 
 .mobile-holiday-list strong {
     font-size: 0.95rem;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Info tooltip: small (i) trigger, bubble on hover/focus (desktop) or tap
+   (mobile, via .is-open toggled in app.js / offline shell). Absolutely
+   positioned, so opening never shifts the surrounding layout.
+   ────────────────────────────────────────────────────────────────────────── */
+.info-tip {
+    position: relative;
+    display: inline-flex;
+    vertical-align: middle;
+}
+
+.info-tip__trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-subtle);
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.info-tip__trigger:hover,
+.info-tip.is-open .info-tip__trigger {
+    color: var(--brand);
+    background: var(--hover);
+}
+
+.info-tip__trigger:focus-visible {
+    outline: none;
+    box-shadow: var(--ring);
+}
+
+.info-tip__trigger svg {
+    width: 0.95rem;
+    height: 0.95rem;
+}
+
+.info-tip__bubble {
+    position: absolute;
+    bottom: calc(100% + 0.5rem);
+    left: -0.5rem;
+    z-index: 60;
+    width: max-content;
+    max-width: min(300px, calc(100vw - 2.5rem));
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.8rem;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+    box-shadow: var(--shadow-md);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+}
+
+.info-tip__bubble::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 0.85rem;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-top: -0.25rem;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    transform: rotate(45deg);
+}
+
+.info-tip:hover .info-tip__bubble,
+.info-tip:focus-within .info-tip__bubble,
+.info-tip.is-open .info-tip__bubble {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
