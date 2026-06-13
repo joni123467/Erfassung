@@ -13,6 +13,7 @@ const CORE_ASSETS = [
   '/static/styles.css',
   '/static/mobile.js',
   '/static/app.js',
+  '/static/theme.js',
   '/static/manifest.webmanifest',
   '/static/icons/icon.svg',
   '/static/icons/icon-192.png',
