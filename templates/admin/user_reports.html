@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Benutzerauswertung – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'user_reports' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Benutzerauswertung</h1>
+            <p class="card-header__hint">Zeitübersicht je Benutzer für {{ period_range }} (freigegebene Buchungen).</p>
+        </div>
+        <div class="card-header__actions">
+            <a class="button ghost" href="/admin/reports/users/pdf{% if export_query %}?{{ export_query }}{% endif %}">PDF-Export</a>
+            <a class="button" href="/admin/reports/users/excel{% if export_query %}?{{ export_query }}{% endif %}">Excel-Export</a>
+        </div>
+    </div>
+    <form method="get" action="/admin/reports/users" class="filter-bar">
+        <label>
+            Von
+            <input type="date" name="start" value="{{ start_value }}">
+        </label>
+        <label>
+            Bis
+            <input type="date" name="end" value="{{ end_value }}">
+        </label>
+        <label>
+            Benutzer
+            <select name="users" multiple size="5">
+                {% for item in all_users %}
+                    <option value="{{ item.id }}" {% if item.id in selected_user_ids %}selected{% endif %}>{{ item.full_name }}</option>
+                {% endfor %}
+            </select>
+            <span class="form-hint">Mehrfachauswahl mit Strg/Cmd. Ohne Auswahl werden alle Benutzer ausgewertet.</span>
+        </label>
+        <button type="submit" class="button">Übernehmen</button>
+        <a class="button ghost" href="/admin/reports/users">Zurücksetzen</a>
+    </form>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Benutzer</th>
+                <th>Buchungen</th>
+                <th>Arbeitszeit</th>
+                <th>Pausen</th>
+                <th>Soll</th>
+                <th>Urlaub</th>
+                <th>Überstundenabbau</th>
+                <th>Über-/Minusstunden</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in report_rows %}
+                <tr>
+                    <td>{{ row.user.full_name }} <span class="muted">({{ row.user.username }})</span></td>
+                    <td>{{ row.count }}</td>
+                    <td>{{ row.work_minutes|format_minutes }} Std</td>
+                    <td>{{ row.break_minutes|format_minutes }} Std</td>
+                    <td>{{ row.target_minutes|format_minutes }} Std</td>
+                    <td>{{ row.vacation_minutes|format_minutes }} Std</td>
+                    <td>{{ row.overtime_taken_minutes|format_minutes }} Std</td>
+                    <td class="{% if row.balance_minutes < 0 %}status-label status-rejected{% endif %}">{{ row.balance_minutes|format_minutes }} Std</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="8">Keine Benutzer für diese Auswahl gefunden.</td></tr>
+            {% endfor %}
+            </tbody>
+            {% if report_rows %}
+            <tfoot>
+            <tr>
+                <th>Summe</th>
+                <th>{{ report_totals.count }}</th>
+                <th>{{ report_totals.work_minutes|format_minutes }} Std</th>
+                <th>{{ report_totals.break_minutes|format_minutes }} Std</th>
+                <th>{{ report_totals.target_minutes|format_minutes }} Std</th>
+                <th>{{ report_totals.vacation_minutes|format_minutes }} Std</th>
+                <th>{{ report_totals.overtime_taken_minutes|format_minutes }} Std</th>
+                <th>{{ report_totals.balance_minutes|format_minutes }} Std</th>
+            </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+    <p class="form-hint">Soll = Arbeitstage (Mo–Fr) × Tagessoll · Urlaub = angerechnete genehmigte Urlaubsstunden · Über-/Minusstunden = Arbeitszeit + Urlaub − Soll.</p>
+</section>
+{% endblock %}

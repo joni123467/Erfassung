@@ -5,6 +5,62 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.8.1] – 2026-06-13
+
+### Added – Benutzerauswertung (Zeitübersicht je Benutzer)
+
+- Neue Auswertung unter **Administration → Benutzerauswertung**
+  (`/admin/reports/users`): frei wählbarer Zeitraum, Auswahl einzelner
+  oder mehrerer Benutzer (ohne Auswahl: alle). Je Benutzer werden
+  Buchungen, Arbeitszeit, Pausen, Soll, Urlaub, Überstundenabbau und
+  Über-/Minusstunden ausgewiesen, inkl. Summenzeile.
+  (Krankheit ist im Datenmodell nicht vorhanden und daher nicht enthalten.)
+- **PDF-Export** im bestehenden Report-Layout
+  (`/admin/reports/users/pdf`).
+- **Excel-Export** (`/admin/reports/users/excel`): ein Benutzer pro
+  Zeile, Dezimalstunden mit Zahlenformat, fixierte Kopfzeile – geeignet
+  für Weiterverarbeitung.
+
+### Added – Konfigurierbare gesetzliche Pausen
+
+- Neues Benutzerfeld `auto_break_deduction` (Standard: aktiviert).
+  Checkbox „Automatische gesetzliche Pausen anwenden (ArbZG)" unter
+  Benutzer bearbeiten → Zeitkonto & Buchungen.
+- Deaktiviert: keine automatische Pausenkorrektur mehr – es zählen nur
+  tatsächlich gestempelte Pausen. Aktiviert: bisheriges Verhalten.
+- Migrationssicher: `ensure_schema()` ergänzt die Spalte mit Default 1
+  beim Start, zusätzlich versionierte Migration 4 in
+  `app/db_migrations.py`. Bestehende Benutzer behalten das bisherige
+  Verhalten.
+
+### Changed – Feiertagsverwaltung vereinfacht
+
+- „Jahr synchronisieren"-Formular und „Feiertage laden"-Button entfernt;
+  die Endpunkte `POST /admin/holidays/sync` und `POST /api/holidays/sync`
+  wurden ersatzlos gestrichen.
+- Feiertage werden jetzt automatisch verwaltet: beim Anwendungsstart
+  werden aktuelles und nächstes Jahr für die konfigurierte Region
+  sichergestellt; die Verwaltungsseite lädt fehlende Jahre weiterhin
+  automatisch beim Aufruf. Manuelles Anlegen/Löschen bleibt erhalten.
+
+### Added – Feiertage im Dashboard
+
+- Neue kompakte Sektion „Nächste Feiertage" in der Dashboard-Seitenleiste
+  direkt unter „Meine Soll-/Ist-Stunden" (bis zu 5 kommende Feiertage,
+  token-basiert und damit Dark-Mode-kompatibel).
+
+### Added – AGENTS.md
+
+- Neuer Leitfaden für Entwicklungsagenten mit verpflichtenden Regeln für
+  Datenbankschema-Prüfung, idempotente Migrationen, versionsübergreifende
+  Upgrades (0.6.x/0.7.x/0.8.0 → 0.8.1) und Vor-Deployment-Checks.
+
+### Grund der Versionsanhebung
+
+Patch-/Minor-Mischung bewusst als 0.8.1 gemäß Vorgabe: neue Auswertung und
+Benutzereinstellung, vereinfachte Feiertagsverwaltung, keine Breaking
+Changes; Migrationen halten alle Bestandsdaten.
+
 ## [0.8.0] – 2026-06-13
 
 ### Changed – PDF-Reports grundlegend überarbeitet (`app/pdf_export.py`)

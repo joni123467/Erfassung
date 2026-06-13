@@ -11,6 +11,94 @@ from . import services
 from .models import TimeEntry, VacationRequest
 
 
+def export_user_summary_excel(
+    *,
+    rows: Iterable[dict[str, object]],
+    totals: dict[str, int],
+    period_range: str,
+) -> BytesIO:
+    """Per-user evaluation: one user per row, decimal hours for easy
+    further processing (pivot tables, payroll, …)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Benutzerauswertung"
+
+    bold = Font(bold=True)
+    ws.append([f"Benutzerauswertung – Zeitraum {period_range}"])
+    ws["A1"].font = bold
+    ws.append([])
+
+    headers = [
+        "Benutzer",
+        "Benutzername",
+        "Buchungen",
+        "Arbeitszeit (Std)",
+        "Pausen (Std)",
+        "Soll (Std)",
+        "Urlaub (Std)",
+        "Überstundenabbau (Std)",
+        "Über-/Minusstunden (Std)",
+    ]
+    ws.append(headers)
+    header_row = ws.max_row
+    for cell in ws[header_row]:
+        cell.font = bold
+        cell.alignment = Alignment(horizontal="center")
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    def _hours(minutes: object) -> float:
+        return round(int(minutes or 0) / 60.0, 2)
+
+    hour_columns = range(4, len(headers) + 1)
+    for row in rows:
+        row_user = row.get("user")
+        ws.append(
+            [
+                str(getattr(row_user, "full_name", "")) or "",
+                str(getattr(row_user, "username", "")) or "",
+                int(row.get("count", 0)),
+                _hours(row.get("work_minutes")),
+                _hours(row.get("break_minutes")),
+                _hours(row.get("target_minutes")),
+                _hours(row.get("vacation_minutes")),
+                _hours(row.get("overtime_taken_minutes")),
+                _hours(row.get("balance_minutes")),
+            ]
+        )
+        for column in hour_columns:
+            ws.cell(row=ws.max_row, column=column).number_format = "0.00"
+
+    ws.append(
+        [
+            "Summe",
+            "",
+            int(totals.get("count", 0)),
+            _hours(totals.get("work_minutes")),
+            _hours(totals.get("break_minutes")),
+            _hours(totals.get("target_minutes")),
+            _hours(totals.get("vacation_minutes")),
+            _hours(totals.get("overtime_taken_minutes")),
+            _hours(totals.get("balance_minutes")),
+        ]
+    )
+    for cell in ws[ws.max_row]:
+        cell.font = bold
+    for column in hour_columns:
+        ws.cell(row=ws.max_row, column=column).number_format = "0.00"
+
+    for column_cells in ws.columns:
+        max_length = max(
+            len(str(cell.value)) if cell.value is not None and cell.row > 1 else 0
+            for cell in column_cells
+        )
+        ws.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 12), 40)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
 def export_time_entries(
     entries: Iterable[TimeEntry],
     vacations: Optional[Iterable[VacationRequest]] = None,

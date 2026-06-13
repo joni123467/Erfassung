@@ -51,10 +51,26 @@ def _add_time_entry_external_columns(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def _add_user_auto_break_deduction(connection: sqlite3.Connection) -> None:
+    cursor = connection.execute("PRAGMA table_info('users')")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "auto_break_deduction" not in columns:
+        # Default 1 keeps the existing behaviour (statutory breaks applied)
+        # for every user created before this migration.
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN auto_break_deduction INTEGER DEFAULT 1"
+        )
+    connection.execute(
+        "UPDATE users SET auto_break_deduction = 1 WHERE auto_break_deduction IS NULL"
+    )
+    connection.commit()
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
     (3, _add_time_entry_external_columns),
+    (4, _add_user_auto_break_deduction),
 ]
 
 

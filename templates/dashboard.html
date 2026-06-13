@@ -324,6 +324,19 @@
                     {% endif %}
                 </div>
             </div>
+            <div class="dashboard-metrics-card__section dashboard-metrics-card__section--holidays">
+                <h2>Nächste Feiertage</h2>
+                <ul class="dashboard-holiday-list">
+                    {% for holiday in metrics.upcoming_holidays %}
+                        <li class="dashboard-holiday-list__item">
+                            <span class="dashboard-holiday-list__name">{{ holiday.name }}</span>
+                            <span class="dashboard-holiday-list__date">{{ holiday.date.strftime('%d.%m.%Y') }}</span>
+                        </li>
+                    {% else %}
+                        <li class="dashboard-holiday-list__item dashboard-holiday-list__item--empty">Keine kommenden Feiertage hinterlegt.</li>
+                    {% endfor %}
+                </ul>
+            </div>
             <div class="dashboard-metrics-card__section dashboard-metrics-card__section--vacation">
                 <h2>Urlaubsübersicht</h2>
                 <div class="dashboard-summary-card__body">

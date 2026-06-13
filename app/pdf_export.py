@@ -46,6 +46,13 @@ def _format_minutes(value: int) -> str:
     return f"{hours:02d}:{minutes:02d}"
 
 
+def _format_signed_minutes(value: int) -> str:
+    minutes = int(value)
+    sign = "-" if minutes < 0 else ""
+    hours, remainder = divmod(abs(minutes), 60)
+    return f"{sign}{hours:02d}:{remainder:02d}"
+
+
 def _status_label(status: str) -> str:
     if status == TimeEntryStatus.APPROVED:
         return "Freigegeben"
@@ -456,6 +463,86 @@ def export_time_overview_pdf(
 
     footer = _page_footer(
         f"Mitarbeiter: {user.full_name} ({user.username})",
+        f"Erstellt am: {date.today().strftime('%d.%m.%Y')}",
+    )
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    buffer.seek(0)
+    return buffer
+
+
+def export_user_summary_pdf(
+    *,
+    period_range: str,
+    rows: Sequence[dict[str, object]],
+    totals: dict[str, int],
+) -> BytesIO:
+    """Per-user evaluation: one row per selected user, layout consistent
+    with the other reports (same style system)."""
+    _ensure_reportlab()
+
+    buffer = BytesIO()
+    doc = _make_doc(buffer)
+    styles = _build_styles()
+    story: List[object] = []
+
+    story.append(Paragraph("Benutzerauswertung – Zeitübersicht", styles["title"]))
+    meta_line = (
+        f"Zeitraum: {escape(period_range)}"
+        f" &nbsp;·&nbsp; Benutzer: {len(rows)}"
+        f" &nbsp;·&nbsp; Erstellt am: {date.today().strftime('%d.%m.%Y')}"
+    )
+    story.append(Paragraph(meta_line, styles["meta"]))
+    story.append(Spacer(1, 3 * mm))
+
+    table_rows: list[list[str]] = []
+    for row in rows:
+        row_user = row.get("user")
+        full_name = str(getattr(row_user, "full_name", "")) or "–"
+        username = str(getattr(row_user, "username", ""))
+        label = f"{full_name} ({username})" if username else full_name
+        table_rows.append(
+            [
+                label,
+                str(row.get("count", 0)),
+                f"{_format_minutes(int(row.get('work_minutes', 0)))} Std",
+                f"{_format_minutes(int(row.get('break_minutes', 0)))} Std",
+                f"{_format_minutes(int(row.get('target_minutes', 0)))} Std",
+                f"{_format_minutes(int(row.get('vacation_minutes', 0)))} Std",
+                f"{_format_signed_minutes(int(row.get('balance_minutes', 0)))} Std",
+            ]
+        )
+    story.append(Paragraph("Übersicht je Benutzer", styles["h2"]))
+    story.append(
+        _data_table(
+            styles,
+            header=["Benutzer", "Buchungen", "Arbeitszeit", "Pausen", "Soll", "Urlaub", "Über-/Minusstd."],
+            rows=table_rows,
+            fractions=[0.285, 0.105, 0.13, 0.11, 0.12, 0.11, 0.14],
+            aligns=["L", "R", "R", "R", "R", "R", "R"],
+            doc_width=doc.width,
+            total_row=[
+                "Summe",
+                str(totals.get("count", 0)),
+                f"{_format_minutes(int(totals.get('work_minutes', 0)))} Std",
+                f"{_format_minutes(int(totals.get('break_minutes', 0)))} Std",
+                f"{_format_minutes(int(totals.get('target_minutes', 0)))} Std",
+                f"{_format_minutes(int(totals.get('vacation_minutes', 0)))} Std",
+                f"{_format_signed_minutes(int(totals.get('balance_minutes', 0)))} Std",
+            ],
+            total_span=1,
+        )
+    )
+    story.append(Spacer(1, 2 * mm))
+    story.append(
+        Paragraph(
+            "Arbeitszeit/Pausen aus freigegebenen Buchungen; Soll = Arbeitstage (Mo–Fr) × Tagessoll; "
+            "Urlaub = angerechnete genehmigte Urlaubsstunden; Über-/Minusstunden = Arbeitszeit + Urlaub − Soll.",
+            styles["meta"],
+        )
+    )
+
+    footer = _page_footer(
+        "Benutzerauswertung – Zeitübersicht",
         f"Erstellt am: {date.today().strftime('%d.%m.%Y')}",
     )
     doc.build(story, onFirstPage=footer, onLaterPages=footer)

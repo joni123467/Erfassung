@@ -16,6 +16,7 @@
     {% endif %}
     {% if admin_permissions.reports %}
         <a href="/admin/reports/time" class="timetac-subnav__link {% if admin_active == 'reports' %}is-active{% endif %}">Zeitübersichten</a>
+        <a href="/admin/reports/users" class="timetac-subnav__link {% if admin_active == 'user_reports' %}is-active{% endif %}">Benutzerauswertung</a>
     {% endif %}
     {% if admin_permissions.integrations %}
         <a href="/admin/integrations/timemoto" class="timetac-subnav__link {% if admin_active == 'timemoto' %}is-active{% endif %}">TimeMoto TM-616</a>

@@ -49,6 +49,17 @@ def calculate_required_vacation_minutes(
     return total
 
 
+def calculate_target_minutes_in_range(
+    user: models.User | None, start: date, end: date
+) -> int:
+    """Target working minutes for an arbitrary period (Mon–Fri × daily target).
+
+    Uses the same weekday rule as the vacation crediting so Soll and Ist
+    stay comparable across dashboard, reports and exports.
+    """
+    return calculate_required_vacation_minutes(user, start, end)
+
+
 def calculate_vacation_overtime_in_range(
     user: models.User | None,
     vacations: list[models.VacationRequest],
