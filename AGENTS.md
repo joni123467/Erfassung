@@ -77,6 +77,45 @@ Benutzer aktualisieren von **beliebigen** älteren Versionen
    `python -m app.db_migrations --database <pfad>` ausführen →
    Spalten/Daten prüfen.
 4. Bleiben vorhandene Daten erhalten? (Stichproben vor/nach Migration)
+5. Werden Logs geschrieben und liegen sie im `logs`-Volume?
+6. Bleiben Konfigurationsänderungen über Neustarts erhalten (`config`-Volume)?
+7. Werden config/data/logs jeweils korrekt verwendet?
+
+## Logging prüfen (verpflichtend)
+
+Seit 0.9.0 existiert ein dateibasiertes Logging-System
+(`app/logging_setup.py`) mit sechs rotierenden Kanälen im `logs`-Volume:
+`application`, `api`, `sync`, `security`, `error`, `audit`.
+
+- **Neue Logs registrieren**: zusätzliche Kanäle ausschließlich über
+  `logging_setup.CHANNELS` einführen; keine eigenen Dateipfade hartkodieren.
+- **Persistenz geprüft**: Logdateien liegen unter `paths.LOGS_DIR`. Keine
+  Logs ins data- oder config-Volume schreiben.
+- **Audit-Pflicht**: administrative Aktionen (Login/Logout, Passwort-,
+  Benutzer-, Rollenänderungen, Urlaubsfreigaben, Feiertags- und
+  Systemeinstellungsänderungen, Log-Level-Änderungen) müssen
+  `logging_setup.log_audit` auslösen – möglichst bevor eine neue
+  Logging-Policy aktiv wird.
+
+## Konfiguration prüfen (verpflichtend)
+
+Persistente Einstellungen liegen als JSON im `config`-Volume
+(`app/app_config.py`: `logging.json`, `system.json`).
+
+- **Einstellungen persistent**: neue konfigurierbare Werte über `app_config`
+  (Dataclass + `from_dict`/`to_dict`) ergänzen, nie nur im Speicher halten.
+- Validierung für Importe in `app_config.validate_import` ergänzen.
+
+## Volumes prüfen (verpflichtend)
+
+`app/paths.py` löst die drei Volumes zentral auf:
+
+- **config**: nur Konfiguration (System, Logging, UI, Mail, Sync, PWA).
+- **data**: nur Geschäftsdaten (Datenbank, Benutzer, Urlaub, Zeiterfassung,
+  Aufträge, Feiertage, Backups).
+- **logs**: nur Protokolle.
+- Pfade immer über `paths.*` beziehen, nichts relativ zum Arbeitsverzeichnis
+  ablegen und keine Datei im falschen Volume speichern.
 
 ## Weitere Konventionen
 

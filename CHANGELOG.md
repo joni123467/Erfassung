@@ -5,6 +5,66 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.0] – 2026-06-13
+
+### Added – Professionelles Logging-System
+
+- Dateibasiertes Logging (`app/logging_setup.py`) mit sechs rotierenden
+  Kanälen im `logs`-Volume: `application.log`, `api.log`, `sync.log`,
+  `security.log`, `error.log`, `audit.log`. Strukturiertes Format mit
+  Zeitstempel, Log-Level, Kanal und Benutzerbezug.
+- Größenbasierte Log-Rotation (max. Dateigröße + Generationen),
+  konfigurierbar und persistent im `config`-Volume (`logging.json`).
+- Optionale automatische Bereinigung rotierter Logs nach Alter.
+
+### Added – Administration → System
+
+- **Logs** (`/admin/system/logs`): Anzeige aller Kanäle mit Filter
+  (Suchtext, Log-Level, Zeitraum), Einzel-Download, ZIP-Download mehrerer
+  Logs, Leeren einzelner/aller Logs (mit Sicherheitsabfrage, nur Admins)
+  sowie optionalem Auto-Refresh.
+- **Systemstatus** (`/admin/system/status`): Version, Datenbankstatus/-typ,
+  Benutzer-/Urlaubs-/Auftrags-Zahlen, Speicherinformationen (DB-, config-,
+  logs-Größe, freier Speicher), Synchronisation, PWA-Status und Volume-Übersicht
+  (Pfad, Größe, Dateianzahl, letzte Änderung).
+- **Fehlerübersicht** (`/admin/system/errors`): Fehler 24 h / 7 Tage,
+  häufigste Fehler, Fehler nach Kategorie, Direktsprung zu den Logs.
+- **Systemeinstellungen** (`/admin/system/settings`): Log-Level, Logging-Toggles,
+  Rotation und Synchronisationsparameter; persistent im `config`-Volume.
+- **Backups** (`/admin/system/backups`): Übersicht (letzte Sicherung, Datum,
+  Größe, Speicherort) und manuelles Erstellen einer ZIP-Sicherung von
+  Datenbank + Konfiguration.
+
+### Added – Audit-Logging, Health, Import/Export
+
+- Audit-Protokollierung für Login/Logout, Passwort-, Benutzer-, Rollen-,
+  Urlaubs-, Feiertags- und Systemeinstellungsänderungen sowie Log-Aktionen.
+- `/health` liefert nun einen detaillierten Statusbericht (Datenbank,
+  Konfiguration, Volumes, Schreibrechte) inkl. korrektem HTTP-Status.
+- Export/Import der Systemeinstellungen und der Feiertagskonfiguration als JSON
+  (mit Validierung vor der Übernahme).
+
+### Added – Persistente Volumes & Start-up-Prüfung
+
+- Zentrale Volume-Auflösung (`app/paths.py`) für `config`, `data`, `logs`
+  inkl. Umgebungsvariablen-Overrides. Beim Start werden fehlende Verzeichnisse
+  angelegt und das Ergebnis im `application.log` dokumentiert.
+
+### Changed – Dashboard & Arbeitsschutz-Hinweis
+
+- Dashboard-Reihenfolge: Mein Soll-/Ist-Stunden → Urlaubsübersicht →
+  Feiertagsübersicht. Die doppelte Feiertagsanzeige im unteren Bereich
+  wurde entfernt – Feiertage erscheinen nur noch einmal.
+- Arbeitsschutz-Hinweis ist nun kontextabhängig: Der Freigabe-Hinweis wird
+  immer angezeigt; der Hinweis zu automatischen gesetzlichen Pausen nur, wenn
+  `auto_break_deduction` aktiv ist (Web und Mobile, inkl. Info-Tooltip).
+
+### Notes
+
+- Keine Schemaänderungen in dieser Version; Logging und Konfiguration sind
+  dateibasiert. Upgradepfade 0.6.x/0.7.x/0.8.x → 0.9.0 über die bestehenden
+  Migrationen verifiziert (Daten bleiben erhalten).
+
 ## [0.8.1] – 2026-06-13
 
 ### Added – Benutzerauswertung (Zeitübersicht je Benutzer)

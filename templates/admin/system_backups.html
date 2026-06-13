@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Backups – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_backups' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Backups</h1>
+            <p class="card-header__hint">Sicherungen von Datenbank und Konfiguration. Speicherort: <code>{{ backups.location }}</code></p>
+        </div>
+        <div class="card-header__actions">
+            <form method="post" action="/admin/system/backups/create" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                <button type="submit" class="button primary">Backup jetzt erstellen</button>
+            </form>
+        </div>
+    </div>
+    <p class="card-header__hint">
+        {% if backups.latest %}
+            Letzte Sicherung: {{ backups.latest.created.strftime('%d.%m.%Y %H:%M') }} ({{ backups.latest.size_human }})
+        {% else %}
+            Noch keine Sicherung vorhanden.
+        {% endif %}
+    </p>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+                <tr><th>Name</th><th>Datum</th><th>Größe</th><th>Speicherort</th></tr>
+            </thead>
+            <tbody>
+                {% for backup in backups.backups %}
+                    <tr>
+                        <td>{{ backup.name }}</td>
+                        <td>{{ backup.created.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td>{{ backup.size_human }}</td>
+                        <td><code>{{ backup.path }}</code></td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="4">Keine Backups vorhanden.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

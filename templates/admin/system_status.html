@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Systemstatus – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_status' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Systemstatus</h1>
+            <p class="card-header__hint">Überblick über Version, Datenbank, Speicher und Synchronisation.</p>
+        </div>
+    </div>
+    <div class="metric-grid">
+        <article class="metric-tile">
+            <span class="metric-tile__label">Version</span>
+            <strong class="metric-tile__value">{{ status_data.version }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Datenbank</span>
+            <strong class="metric-tile__value">{{ 'erreichbar' if status_data.database.reachable else 'nicht erreichbar' }}</strong>
+            <span class="metric-tile__sub">{{ status_data.database.type }} · {{ status_data.database.size_human }}</span>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Benutzer</span>
+            <strong class="metric-tile__value">{{ status_data.counts.users }}</strong>
+            <span class="metric-tile__sub">{{ status_data.counts.active_users }} aktiv (30 Tage)</span>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Urlaubseinträge</span>
+            <strong class="metric-tile__value">{{ status_data.counts.vacations }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Aufträge / Firmen</span>
+            <strong class="metric-tile__value">{{ status_data.counts.orders }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Zeitbuchungen</span>
+            <strong class="metric-tile__value">{{ status_data.counts.time_entries }}</strong>
+        </article>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Speicherinformationen</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Datenbankgröße</th><td>{{ status_data.storage.database_human }}</td></tr>
+                <tr><th>config</th><td>{{ status_data.storage.config_human }}</td></tr>
+                <tr><th>logs</th><td>{{ status_data.storage.logs_human }}</td></tr>
+                <tr><th>Freier Speicher</th><td>{{ status_data.storage.free_human }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Synchronisation</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Gerät konfiguriert</th><td>{{ 'ja' if status_data.sync.configured else 'nein' }}</td></tr>
+                <tr><th>Letzte Synchronisation</th><td>{{ status_data.sync.last_sync_at or '–' }}</td></tr>
+                <tr><th>Offene Offline-Aktionen</th><td>{{ status_data.pending_sync }}</td></tr>
+                <tr><th>Fehler (24h)</th><td>{{ status_data.sync.errors_last_24h }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>PWA</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Service Worker</th><td>{{ 'verfügbar' if status_data.pwa.service_worker_available else 'nicht verfügbar' }}</td></tr>
+                <tr><th>Offline-Shell</th><td>{{ 'verfügbar' if status_data.pwa.offline_shell_available else 'nicht verfügbar' }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Volumes</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+                <tr><th>Volume</th><th>Pfad</th><th>Größe</th><th>Dateien</th><th>Letzte Änderung</th><th>Schreibbar</th></tr>
+            </thead>
+            <tbody>
+                {% for volume in status_data.volumes %}
+                    <tr>
+                        <td>{{ volume.name }}</td>
+                        <td><code>{{ volume.path }}</code></td>
+                        <td>{{ volume.size_human }}</td>
+                        <td>{{ volume.file_count }}</td>
+                        <td>{{ volume.last_modified.strftime('%d.%m.%Y %H:%M') if volume.last_modified else '–' }}</td>
+                        <td>{{ 'ja' if volume.writable else 'nein' }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Backups</h2>
+    <p class="card-header__hint">
+        {% if backups.latest %}
+            Letzte Sicherung: {{ backups.latest.created.strftime('%d.%m.%Y %H:%M') }} ({{ backups.latest.size_human }}).
+        {% else %}
+            Noch keine Sicherung vorhanden.
+        {% endif %}
+        <a href="/admin/system/backups">Zur Backup-Übersicht</a>
+    </p>
+</section>
+{% endblock %}

@@ -4,3 +4,9 @@ __pycache__/
 *.db
 .env
 .venv/
+
+# Runtime volume artefacts (config/data/logs)
+/logs/
+/data/
+*.log
+/config/*.json

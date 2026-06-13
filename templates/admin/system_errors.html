@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Fehlerübersicht – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_errors' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Fehlerübersicht</h1>
+            <p class="card-header__hint">Auswertung der <code>error.log</code>. <a href="/admin/system/logs?channel=error">Direkt zu den Fehler-Logs</a>.</p>
+        </div>
+    </div>
+    <div class="metric-grid">
+        <article class="metric-tile">
+            <span class="metric-tile__label">Fehler (24 h)</span>
+            <strong class="metric-tile__value">{{ errors.last_24h }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Fehler (7 Tage)</span>
+            <strong class="metric-tile__value">{{ errors.last_7d }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Fehler gesamt</span>
+            <strong class="metric-tile__value">{{ errors.total }}</strong>
+        </article>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Häufigste Fehler</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead><tr><th>Meldung</th><th>Anzahl</th></tr></thead>
+            <tbody>
+                {% for item in errors.most_common %}
+                    <tr><td class="log-message">{{ item.message }}</td><td>{{ item.count }}</td></tr>
+                {% else %}
+                    <tr><td colspan="2">Keine Fehler protokolliert.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Fehler nach Kategorie</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead><tr><th>Kanal</th><th>Anzahl</th></tr></thead>
+            <tbody>
+                {% for item in errors.by_channel %}
+                    <tr><td>{{ item.channel }}</td><td>{{ item.count }}</td></tr>
+                {% else %}
+                    <tr><td colspan="2">Keine Fehler protokolliert.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
