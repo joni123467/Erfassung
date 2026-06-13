@@ -34,11 +34,19 @@ def calculate_german_holidays(year: int, state: str = "BY") -> Iterable[schemas.
     subdiv = state if state != "DE" else None
     holiday_set = holidays.Germany(years=year, subdiv=subdiv, language="de")
     for holiday_date, name in sorted(holiday_set.items()):
-        yield schemas.HolidayCreate(name=name, date=holiday_date, region=state or "DE")
+        yield schemas.HolidayCreate(
+            name=name, date=holiday_date, region=state or "DE", source="statutory"
+        )
 
 
 def ensure_holidays(db, year: int, state: str = "BY"):
+    """Load and persist statutory holidays for a year/state.
+
+    Custom (administrator-defined) holidays are preserved; only statutory
+    entries are refreshed.
+    """
     normalized_state = (state or "DE").upper()
     holiday_models = list(calculate_german_holidays(year, normalized_state))
     region = normalized_state or "DE"
-    return crud.replace_holidays_for_region(db, region, year, holiday_models)
+    crud.apply_statutory_holidays(db, region, year, holiday_models)
+    return crud.get_holidays_for_year(db, year, region)

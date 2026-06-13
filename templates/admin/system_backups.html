@@ -7,7 +7,7 @@
     <div class="card-header">
         <div>
             <h1>Backups</h1>
-            <p class="card-header__hint">Sicherungen von Datenbank und Konfiguration. Speicherort: <code>{{ backups.location }}</code></p>
+            <p class="card-header__hint">Sicherungen von Datenbank und Konfiguration. Speicherort lokal: <code>{{ backups.location }}</code></p>
         </div>
         <div class="card-header__actions">
             <form method="post" action="/admin/system/backups/create" class="inline-form">
@@ -23,6 +23,85 @@
             Noch keine Sicherung vorhanden.
         {% endif %}
     </p>
+</section>
+
+<section class="card">
+    <h2>Backup-Ziel & Aufbewahrung</h2>
+    <form method="post" action="/admin/system/backups/settings" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label>
+            Ziel
+            <select name="target">
+                {% for option in backup_targets %}
+                    <option value="{{ option }}" {% if backup_config.target == option %}selected{% endif %}>{{ option|upper }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Backups aufbewahren (Anzahl)
+            <input type="number" name="retention_count" min="0" value="{{ backup_config.retention_count }}">
+        </label>
+        <label>
+            Aufbewahrungsdauer (Tage)
+            <input type="number" name="retention_days" min="0" value="{{ backup_config.retention_days }}">
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="include_logs" {% if backup_config.include_logs %}checked{% endif %}> Logs einschließen
+        </label>
+
+        <h3 class="full-width">FTP</h3>
+        <label>Host<input type="text" name="ftp_host" value="{{ backup_config.ftp_host }}"></label>
+        <label>Port<input type="number" name="ftp_port" value="{{ backup_config.ftp_port }}"></label>
+        <label>Benutzer<input type="text" name="ftp_username" value="{{ backup_config.ftp_username }}"></label>
+        <label>Passwort<input type="password" name="ftp_password" placeholder="{% if backup_config.ftp_password %}unverändert{% endif %}"></label>
+        <label>Zielverzeichnis<input type="text" name="ftp_remote_dir" value="{{ backup_config.ftp_remote_dir }}"></label>
+        <label class="checkbox-inline"><input type="checkbox" name="ftp_use_tls" {% if backup_config.ftp_use_tls %}checked{% endif %}> FTPS (TLS)</label>
+
+        <h3 class="full-width">SMB3</h3>
+        <label>Server<input type="text" name="smb_server" value="{{ backup_config.smb_server }}" placeholder="\\192.168.1.10\backup oder Server"></label>
+        <label>Freigabe (Share)<input type="text" name="smb_share" value="{{ backup_config.smb_share }}" placeholder="backup"></label>
+        <label>Unterpfad (optional)<input type="text" name="smb_path" value="{{ backup_config.smb_path }}"></label>
+        <label>Benutzer<input type="text" name="smb_username" value="{{ backup_config.smb_username }}" placeholder="backupuser"></label>
+        <label>Passwort<input type="password" name="smb_password" placeholder="{% if backup_config.smb_password %}unverändert{% endif %}"></label>
+        <label>Domäne (optional)<input type="text" name="smb_domain" value="{{ backup_config.smb_domain }}" placeholder="AD / DOMAIN"></label>
+
+        <div class="full-width">
+            <button type="submit" class="button primary">Backup-Einstellungen speichern</button>
+            <button type="submit" formaction="/admin/system/backups/test" class="button ghost">Verbindung testen</button>
+        </div>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Verlauf</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+                <tr><th>Zeitpunkt</th><th>Ziel</th><th>Größe</th><th>Ergebnis</th><th>Meldung</th></tr>
+            </thead>
+            <tbody>
+                {% for item in backups.history %}
+                    <tr>
+                        <td>{{ item.timestamp }}</td>
+                        <td>{{ item.target|upper }}</td>
+                        <td>{{ item.size_human or '–' }}</td>
+                        <td>
+                            <span class="log-level log-level--{{ 'info' if item.result == 'success' else 'error' }}">
+                                {{ 'Erfolg' if item.result == 'success' else 'Fehler' }}
+                            </span>
+                        </td>
+                        <td class="log-message">{{ item.message }}</td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="5">Noch keine Backups durchgeführt.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Lokale Sicherungen</h2>
     <div class="table-scroll">
         <table class="striped-table">
             <thead>
@@ -37,7 +116,7 @@
                         <td><code>{{ backup.path }}</code></td>
                     </tr>
                 {% else %}
-                    <tr><td colspan="4">Keine Backups vorhanden.</td></tr>
+                    <tr><td colspan="4">Keine lokalen Backups vorhanden.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

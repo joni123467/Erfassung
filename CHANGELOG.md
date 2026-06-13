@@ -5,6 +5,16 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.1] – 2026-06-13
+
+### Fixed
+
+- „Schnell stempeln": Das Info-Symbol zeigte fälschlich den Freigabe-Hinweis
+  der manuellen Buchung. Es wird wieder der Arbeitsschutz-Hinweis nach ArbZG
+  angezeigt (Pausen: nach 6 Std mind. 30 Min, nach 9 Std mind. 45 Min) – bei
+  aktiver automatischer Pausenkorrektur ergänzt um den Abzugs-Hinweis. Gilt für
+  Web und Mobile.
+
 ## [0.9.0] – 2026-06-13
 
 ### Added – Professionelles Logging-System
@@ -59,11 +69,57 @@ die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
   immer angezeigt; der Hinweis zu automatischen gesetzlichen Pausen nur, wenn
   `auto_break_deduction` aktiv ist (Web und Mobile, inkl. Info-Tooltip).
 
+### Added – Feiertagsverwaltung überarbeitet (§22)
+
+- Jahres-Dropdown entfernt; es gilt automatisch das aktuelle Kalenderjahr.
+- Einzige Auswahl ist das Bundesland; Aktion „**Feiertage übernehmen**" lädt,
+  speichert und übernimmt die gesetzlichen Feiertage des aktuellen Jahres.
+- Neues Feld `Holiday.source` (`statutory`/`custom`): Eigene Feiertage werden
+  beim Übernehmen nie überschrieben, es entstehen keine Duplikate. Bestehende
+  Einträge gelten als `custom` (Default), bleiben also erhalten.
+
+### Added – Optionale MySQL-Unterstützung (§23)
+
+- Datenbankwahl über `DATABASE_URL` (Standard bleibt SQLite); MySQL 8+/MariaDB
+  via PyMySQL. Engine dialect-aware (Pool-Pre-Ping für MySQL).
+- Alle `String`-Spalten haben jetzt explizite Längen (MySQL-kompatibel).
+- Migrationen sind dialect-aware: Versionsstand wird in der portablen Tabelle
+  `schema_migrations` geführt (statt SQLite-`PRAGMA user_version`), bestehende
+  SQLite-Installationen werden transparent übernommen. Migrationen laufen
+  automatisch beim Start, sind idempotent und datenerhaltend.
+
+### Fixed – Offline-Aktionszähler (§24)
+
+- „Offene Offline-Aktionen" im Systemstatus zählte fälschlich den
+  Idempotenz-/Dedup-Log bereits verarbeiteter Aktionen (`mobile_sync_actions`).
+  Der Server verarbeitet Offline-Aktionen synchron und hat keine serverseitige
+  Warteschlange – der Wert ist nun korrekt 0. Verarbeitete Aktionen werden
+  separat als Gesamtzahl ausgewiesen.
+
+### Added – Synchronisationsdiagnose & Systemstatus (§24/§26)
+
+- Neuer Bereich **Administration → Synchronisation** (`/admin/system/sync`):
+  offene Aktionen, laufende/fehlerhafte Synchronisationen, Retry-Versuche,
+  letzte erfolgreiche Synchronisation, verarbeitete Offline-Aktionen.
+- Systemstatus zeigt Datenbanktyp, DB-Version, letzte und ausstehende
+  Migrationen.
+
+### Added – Backup-Ziele & -Verwaltung (§25/§26)
+
+- Backup-Ziele **lokal**, **FTP/FTPS** und **SMB3** (Windows-kompatible Pfade,
+  Auth mit Benutzer/Passwort/Domäne). Konfiguration persistent im
+  config-Volume; Passwörter werden nie im Klartext geloggt.
+- „Verbindung testen", konfigurierbare Aufbewahrung (Anzahl/Dauer),
+  Integritätsprüfung nach jeder Sicherung (Datei/Größe/Archiv lesbar),
+  Backup-Historie mit Ergebnis, optionales Einschließen der Logs.
+
 ### Notes
 
-- Keine Schemaänderungen in dieser Version; Logging und Konfiguration sind
-  dateibasiert. Upgradepfade 0.6.x/0.7.x/0.8.x → 0.9.0 über die bestehenden
-  Migrationen verifiziert (Daten bleiben erhalten).
+- Schemaänderung in dieser Version: `holidays.source` (Migration 5,
+  idempotent, dialect-aware, Default `custom`). Upgradepfade
+  0.6.x/0.7.x/0.8.x → 0.9.0 für SQLite und MySQL über `schema_migrations`
+  verifiziert (Daten bleiben erhalten). Neue Abhängigkeiten: `PyMySQL`,
+  `smbprotocol`.
 
 ## [0.8.1] – 2026-06-13
 

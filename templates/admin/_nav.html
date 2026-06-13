@@ -24,6 +24,7 @@
     {% if admin_permissions.system %}
         <a href="/admin/system/status" class="timetac-subnav__link {% if admin_active == 'system_status' %}is-active{% endif %}">Systemstatus</a>
         <a href="/admin/system/logs" class="timetac-subnav__link {% if admin_active == 'system_logs' %}is-active{% endif %}">Logs</a>
+        <a href="/admin/system/sync" class="timetac-subnav__link {% if admin_active == 'system_sync' %}is-active{% endif %}">Synchronisation</a>
         <a href="/admin/system/errors" class="timetac-subnav__link {% if admin_active == 'system_errors' %}is-active{% endif %}">Fehlerübersicht</a>
         <a href="/admin/system/backups" class="timetac-subnav__link {% if admin_active == 'system_backups' %}is-active{% endif %}">Backups</a>
         <a href="/admin/system/settings" class="timetac-subnav__link {% if admin_active == 'system_settings' %}is-active{% endif %}">Systemeinstellungen</a>

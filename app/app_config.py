@@ -27,6 +27,7 @@ VALID_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 _LOGGING_PATH = paths.CONFIG_DIR / "logging.json"
 _SYSTEM_PATH = paths.CONFIG_DIR / "system.json"
+_BACKUP_PATH = paths.CONFIG_DIR / "backup.json"
 
 
 def _ensure_config_dir() -> None:
@@ -133,6 +134,101 @@ class SystemSettings:
         return config
 
 
+BACKUP_TARGETS = ("local", "ftp", "smb")
+
+
+@dataclass
+class BackupConfig:
+    """Backup destinations and retention. Stored in the config volume.
+
+    Passwords are persisted (so unattended backups work) but must never be
+    written to any log file.
+    """
+
+    target: str = "local"
+    include_logs: bool = False
+    retention_count: int = 10
+    retention_days: int = 30
+
+    # FTP
+    ftp_host: str = ""
+    ftp_port: int = 21
+    ftp_username: str = ""
+    ftp_password: str = ""
+    ftp_remote_dir: str = "/"
+    ftp_use_tls: bool = True
+
+    # SMB (SMB3)
+    smb_server: str = ""
+    smb_share: str = ""
+    smb_path: str = ""
+    smb_username: str = ""
+    smb_password: str = ""
+    smb_domain: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def safe_dict(self) -> dict[str, Any]:
+        """Like :meth:`to_dict` but with passwords masked (for logging/UI echo)."""
+        data = self.to_dict()
+        for key in ("ftp_password", "smb_password"):
+            if data.get(key):
+                data[key] = "***"
+        return data
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "BackupConfig":
+        config = cls()
+        if not isinstance(payload, dict):
+            return config
+        target = payload.get("target")
+        if isinstance(target, str) and target in BACKUP_TARGETS:
+            config.target = target
+        config.include_logs = _coerce_bool(payload.get("include_logs"), config.include_logs)
+        config.retention_count = _coerce_int(
+            payload.get("retention_count"), config.retention_count, minimum=0
+        )
+        config.retention_days = _coerce_int(
+            payload.get("retention_days"), config.retention_days, minimum=0
+        )
+        config.ftp_host = str(payload.get("ftp_host") or "").strip()
+        config.ftp_port = _coerce_int(payload.get("ftp_port"), config.ftp_port, minimum=1)
+        config.ftp_username = str(payload.get("ftp_username") or "").strip()
+        # Keep the stored password when the form submits an empty/masked value.
+        ftp_pw = payload.get("ftp_password")
+        if ftp_pw not in (None, "", "***"):
+            config.ftp_password = str(ftp_pw)
+        config.ftp_remote_dir = str(payload.get("ftp_remote_dir") or "/").strip() or "/"
+        config.ftp_use_tls = _coerce_bool(payload.get("ftp_use_tls"), config.ftp_use_tls)
+        config.smb_server = str(payload.get("smb_server") or "").strip()
+        config.smb_share = str(payload.get("smb_share") or "").strip()
+        config.smb_path = str(payload.get("smb_path") or "").strip()
+        config.smb_username = str(payload.get("smb_username") or "").strip()
+        smb_pw = payload.get("smb_password")
+        if smb_pw not in (None, "", "***"):
+            config.smb_password = str(smb_pw)
+        config.smb_domain = str(payload.get("smb_domain") or "").strip()
+        return config
+
+
+def load_backup_config() -> "BackupConfig":
+    stored = _read_json(_BACKUP_PATH)
+    config = BackupConfig.from_dict(stored)
+    # from_dict skips empty passwords (to support masked form re-submits); when
+    # loading from disk we must keep the real stored passwords verbatim.
+    if isinstance(stored, dict):
+        if stored.get("ftp_password"):
+            config.ftp_password = str(stored["ftp_password"])
+        if stored.get("smb_password"):
+            config.smb_password = str(stored["smb_password"])
+    return config
+
+
+def save_backup_config(config: "BackupConfig") -> None:
+    _write_json(_BACKUP_PATH, config.to_dict())
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -206,11 +302,15 @@ def import_all(payload: dict[str, Any]) -> None:
 __all__ = [
     "LoggingConfig",
     "SystemSettings",
+    "BackupConfig",
+    "BACKUP_TARGETS",
     "VALID_LEVELS",
     "load_logging_config",
     "save_logging_config",
     "load_system_settings",
     "save_system_settings",
+    "load_backup_config",
+    "save_backup_config",
     "export_all",
     "import_all",
     "validate_import",

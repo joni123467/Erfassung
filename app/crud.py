@@ -542,6 +542,7 @@ def upsert_holidays(db: Session, holidays: Iterable[schemas.HolidayCreate]) -> L
         if existing:
             existing.name = holiday.name
             existing.region = holiday.region
+            existing.source = getattr(holiday, "source", existing.source) or existing.source
             stored.append(existing)
         else:
             stored.append(create_holiday(db, holiday))
@@ -612,6 +613,51 @@ def replace_holidays_for_region(
     for holiday in created:
         db.refresh(holiday)
     return created
+
+def apply_statutory_holidays(
+    db: Session, region: str, year: int, holidays: Iterable[schemas.HolidayCreate]
+) -> dict[str, int]:
+    """Replace statutory holidays for ``region``/``year`` while preserving any
+    custom holidays the administrator added (§22).
+
+    - existing rows with ``source='statutory'`` for the region/year are removed
+      and re-inserted from the freshly calculated set,
+    - custom rows (``source='custom'``) are never touched,
+    - a statutory entry that collides with an existing custom entry on the same
+      date is skipped so the custom one wins (no duplicates, no overwrite).
+    """
+
+    start = date(year, 1, 1)
+    end = date(year, 12, 31)
+    base_query = (
+        db.query(models.Holiday)
+        .filter(models.Holiday.region == region)
+        .filter(models.Holiday.date >= start)
+        .filter(models.Holiday.date <= end)
+    )
+    base_query.filter(models.Holiday.source == "statutory").delete(synchronize_session=False)
+    db.flush()
+
+    # Dates already occupied by custom holidays must not be overwritten.
+    occupied = {
+        row.date
+        for row in base_query.filter(models.Holiday.source == "custom").all()
+    }
+
+    created = 0
+    skipped = 0
+    for holiday in holidays:
+        payload = holiday.model_dump()
+        payload["region"] = region
+        payload["source"] = "statutory"
+        if payload["date"] in occupied:
+            skipped += 1
+            continue
+        db.add(models.Holiday(**payload))
+        created += 1
+    db.commit()
+    return {"created": created, "preserved_custom": len(occupied), "skipped": skipped}
+
 
 def get_company(db: Session, company_id: int) -> Optional[models.Company]:
     return db.query(models.Company).filter(models.Company.id == company_id).first()

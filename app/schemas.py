@@ -170,6 +170,7 @@ class HolidayBase(BaseModel):
     name: str
     date: date
     region: str = "DE"
+    source: str = "custom"
 
 
 class HolidayCreate(HolidayBase):

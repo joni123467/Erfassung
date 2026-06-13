@@ -11,7 +11,8 @@
         </div>
     </div>
     <div class="card-body card-body--form card-body--separated">
-        <form method="get" action="/admin/holidays" class="filter-bar">
+        <form method="post" action="/admin/holidays/apply" class="filter-bar">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <label>
                 Bundesland
                 <select name="state">
@@ -20,17 +21,9 @@
                     {% endfor %}
                 </select>
             </label>
-            <label>
-                Jahr
-                <select name="holiday_year">
-                    {% for year_option in holiday_year_options %}
-                        <option value="{{ year_option }}" {% if selected_year == year_option %}selected{% endif %}>{{ year_option }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <button type="submit" class="button">Anzeigen</button>
+            <button type="submit" class="button primary">Feiertage übernehmen</button>
         </form>
-        <p class="card-header__hint">Gesetzliche Feiertage werden automatisch geladen und aktuell gehalten. Zusätzliche regionale Feiertage können hier manuell ergänzt werden.</p>
+        <p class="card-header__hint">Bundesland wählen und <strong>Feiertage übernehmen</strong>: Die gesetzlichen Feiertage des aktuellen Jahres ({{ current_year }}) werden geladen, gespeichert und aktiv übernommen. Eigene Feiertage bleiben dabei erhalten.</p>
         <div class="holiday-actions">
             <form method="post" action="/admin/holidays/create" class="holiday-form">
                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
@@ -73,6 +66,7 @@
                 <th>Datum</th>
                 <th>Name</th>
                 <th>Region</th>
+                <th>Typ</th>
                 <th>Aktionen</th>
             </tr>
             </thead>
@@ -82,17 +76,18 @@
                     <td>{{ holiday.date.strftime('%d.%m.%Y') }}</td>
                     <td>{{ holiday.name }}</td>
                     <td>{{ holiday.region }}</td>
+                    <td>{% if holiday.source == 'statutory' %}gesetzlich{% else %}eigener{% endif %}</td>
                     <td>
                         <form method="post" action="/admin/holidays/{{ holiday.id }}/delete" class="inline-form" onsubmit="return confirm('Feiertag wirklich löschen?');">
                             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="state" value="{{ selected_state }}">
-                            <input type="hidden" name="year" value="{{ selected_year }}">
+                            <input type="hidden" name="year" value="{{ current_year }}">
                             <button type="submit" class="button danger small">Löschen</button>
                         </form>
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="4">Keine Feiertage für diese Auswahl vorhanden.</td></tr>
+                <tr><td colspan="5">Noch keine Feiertage. Bundesland wählen und „Feiertage übernehmen".</td></tr>
             {% endfor %}
             </tbody>
         </table>

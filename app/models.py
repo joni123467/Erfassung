@@ -27,7 +27,7 @@ class Company(Base):
     __tablename__ = "companies"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
+    name = Column(String(255), unique=True, nullable=False)
     description = Column(Text, default="")
 
     time_entries = relationship("TimeEntry", back_populates="company")
@@ -37,7 +37,7 @@ class Group(Base):
     __tablename__ = "groups"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String(255), unique=True, index=True, nullable=False)
     is_admin = Column(Boolean, default=False)
     can_manage_users = Column(Boolean, default=False)
     can_manage_vacations = Column(Boolean, default=False)
@@ -53,13 +53,13 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    full_name = Column(String, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String(255), unique=True, index=True, nullable=False)
+    full_name = Column(String(255), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
     standard_daily_minutes = Column(Integer, default=480)
     standard_weekly_hours = Column(Float, default=40.0)
     pin_code = Column(String(4), unique=True, nullable=False)
-    password_hash = Column(String, nullable=True)
+    password_hash = Column(String(255), nullable=True)
     must_change_password = Column(Boolean, default=True)
     group_id = Column(Integer, ForeignKey("groups.id"))
     time_account_enabled = Column(Boolean, default=False)
@@ -67,7 +67,7 @@ class User(Base):
     annual_vacation_days = Column(Integer, default=30)
     vacation_carryover_enabled = Column(Boolean, default=False)
     vacation_carryover_days = Column(Integer, default=0)
-    rfid_tag = Column(String, unique=True, nullable=True)
+    rfid_tag = Column(String(255), unique=True, nullable=True)
     monthly_overtime_limit_minutes = Column(Integer, nullable=True)
     auto_break_deduction = Column(Boolean, default=True)
 
@@ -115,18 +115,18 @@ class TimeEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
-    deleted_company_name = Column(String, nullable=True)
+    deleted_company_name = Column(String(255), nullable=True)
     work_date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
     break_minutes = Column(Integer, default=0)
     break_started_at = Column(Time, nullable=True)
     is_open = Column(Boolean, default=False)
-    notes = Column(String, default="")
-    status = Column(String, default=TimeEntryStatus.APPROVED)
+    notes = Column(String(255), default="")
+    status = Column(String(32), default=TimeEntryStatus.APPROVED)
     is_manual = Column(Boolean, default=False)
-    source = Column(String, nullable=True)
-    external_id = Column(String, nullable=True)
+    source = Column(String(64), nullable=True)
+    external_id = Column(String(191), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -226,12 +226,12 @@ class VacationRequest(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
-    status = Column(String, default=VacationStatus.PENDING)
-    comment = Column(String, default="")
+    status = Column(String(32), default=VacationStatus.PENDING)
+    comment = Column(String(255), default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     use_overtime = Column(Boolean, default=False)
     overtime_minutes = Column(Integer, default=0)
-    previous_status = Column(String, nullable=True)
+    previous_status = Column(String(32), nullable=True)
 
     user = relationship("User", back_populates="vacation_requests")
 
@@ -241,9 +241,12 @@ class Holiday(Base):
     __table_args__ = (UniqueConstraint("date", "region", name="uq_holidays_date_region"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    name = Column(String(255), nullable=False)
     date = Column(Date, nullable=False)
-    region = Column(String, default="DE")
+    region = Column(String(64), default="DE")
+    # 'statutory' = automatisch geladene gesetzliche Feiertage,
+    # 'custom' = vom Administrator manuell ergänzt (werden nie überschrieben).
+    source = Column(String(20), default="custom")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -255,8 +258,8 @@ class MobileSyncAction(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    client_action_id = Column(String, nullable=False)
-    action = Column(String, nullable=False)
+    client_action_id = Column(String(191), nullable=False)
+    action = Column(String(64), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
