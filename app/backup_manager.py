@@ -1,35 +1,42 @@
-"""Backup creation, integrity checks, retention, history and remote targets.
+"""Job-based backup engine (§0.9.2).
 
-Targets (§25):
-* local – store the archive in the data volume (``data/backups``)
-* ftp   – upload via FTP/FTPS (stdlib ``ftplib``)
-* smb   – upload via SMB3 (``smbprotocol``)
+Each :class:`app.models.BackupJob` defines what to back up (database / config /
+logs), where to store it (local / FTP / SMB) and how long to keep it. Runs are
+recorded as :class:`app.models.BackupRun` history rows.
 
-Backup configuration (incl. credentials) is persisted in the config volume via
-:class:`app.app_config.BackupConfig`. Passwords are never written to any log.
+Design goals:
+* consistent database snapshots (SQLite online-backup API; mysqldump for MySQL)
+* integrity check after every run (file present, plausible size, readable ZIP)
+* per-job retention (count and/or age), best-effort on remote targets
+* credentials are persisted in the DB but never written to any log
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import os
+import shutil
+import sqlite3
+import subprocess
+import tempfile
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from . import app_config, database, paths
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
+
+from . import crud, database, paths
 
 LOGGER = logging.getLogger("erfassung.application")
 
 BACKUP_DIR = paths.DATA_DIR / "backups"
-_HISTORY_PATH = BACKUP_DIR / "history.json"
-_MAX_HISTORY = 200
 
 
-# -- helpers ---------------------------------------------------------------
+# -- database snapshot helpers --------------------------------------------
 
-def _database_path() -> Optional[Path]:
+def _sqlite_path() -> Optional[Path]:
     url = database.SQLALCHEMY_DATABASE_URL
     if url.startswith("sqlite:///"):
         raw = url.replace("sqlite:///", "", 1)
@@ -40,55 +47,73 @@ def _database_path() -> Optional[Path]:
     return None
 
 
-def _read_history() -> list[dict]:
-    if not _HISTORY_PATH.exists():
-        return []
+def _dump_database(staging: Path) -> tuple[Optional[Path], Optional[str]]:
+    """Return (snapshot_path, warning). Snapshot is consistent for SQLite."""
+    if database.IS_SQLITE:
+        src = _sqlite_path()
+        if not src or not src.exists():
+            return None, "SQLite-Datei nicht gefunden"
+        snapshot = staging / "erfassung.db"
+        # Online backup API -> consistent snapshot even during writes.
+        with sqlite3.connect(src) as source, sqlite3.connect(snapshot) as dest:
+            source.backup(dest)
+        return snapshot, None
+
+    # MySQL/MariaDB: use mysqldump when available.
+    if shutil.which("mysqldump") is None:
+        return None, "mysqldump nicht verfügbar – Datenbank wurde nicht gesichert"
+    url = make_url(database.SQLALCHEMY_DATABASE_URL)
+    snapshot = staging / "erfassung.sql"
+    cmd = ["mysqldump", "--single-transaction", "--routines", "--triggers"]
+    if url.host:
+        cmd += ["-h", url.host]
+    if url.port:
+        cmd += ["-P", str(url.port)]
+    if url.username:
+        cmd += ["-u", url.username]
+    env = dict(os.environ)
+    if url.password:
+        env["MYSQL_PWD"] = url.password  # avoids password on the command line
+    cmd.append(url.database or "")
     try:
-        data = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (OSError, json.JSONDecodeError):
-        return []
+        with snapshot.open("wb") as handle:
+            subprocess.run(cmd, check=True, stdout=handle, stderr=subprocess.PIPE, env=env)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return None, f"mysqldump fehlgeschlagen: {type(exc).__name__}"
+    return snapshot, None
 
 
-def _append_history(entry: dict) -> None:
+# -- archive ---------------------------------------------------------------
+
+def _build_archive(job, staging: Path) -> tuple[Path, list[str]]:
+    """Build the ZIP for ``job`` in ``staging``. Returns (path, warnings)."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    history = _read_history()
-    history.insert(0, entry)
-    history = history[:_MAX_HISTORY]
-    try:
-        _HISTORY_PATH.write_text(json.dumps(history, indent=2), encoding="utf-8")
-    except OSError as exc:  # pragma: no cover
-        LOGGER.warning("Backup-Historie konnte nicht geschrieben werden: %s", exc)
-
-
-def history() -> list[dict]:
-    return _read_history()
-
-
-# -- archive creation ------------------------------------------------------
-
-def _build_archive(include_logs: bool) -> Path:
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    # Microseconds keep the filename unique even for rapid successive backups.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    archive_path = BACKUP_DIR / f"backup_{timestamp}.zip"
-    db_path = _database_path()
-    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        if db_path and db_path.exists():
-            archive.write(db_path, arcname=f"data/{db_path.name}")
-        if paths.CONFIG_DIR.exists():
-            for entry in paths.CONFIG_DIR.rglob("*"):
-                if entry.is_file():
-                    archive.write(entry, arcname=f"config/{entry.relative_to(paths.CONFIG_DIR)}")
-        if include_logs and paths.LOGS_DIR.exists():
-            for entry in paths.LOGS_DIR.rglob("*"):
-                if entry.is_file():
-                    archive.write(entry, arcname=f"logs/{entry.relative_to(paths.LOGS_DIR)}")
-    return archive_path
+    archive_path = BACKUP_DIR / f"backup_job{job.id}_{timestamp}.zip"
+    contents = job.content_list
+    warnings: list[str] = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            if "database" in contents:
+                snapshot, warning = _dump_database(tmp_dir)
+                if snapshot:
+                    archive.write(snapshot, arcname=f"data/{snapshot.name}")
+                if warning:
+                    warnings.append(warning)
+            if "config" in contents and paths.CONFIG_DIR.exists():
+                for entry in paths.CONFIG_DIR.rglob("*"):
+                    if entry.is_file():
+                        archive.write(entry, arcname=f"config/{entry.relative_to(paths.CONFIG_DIR)}")
+            if "logs" in contents and paths.LOGS_DIR.exists():
+                for entry in paths.LOGS_DIR.rglob("*"):
+                    if entry.is_file():
+                        archive.write(entry, arcname=f"logs/{entry.relative_to(paths.LOGS_DIR)}")
+    return archive_path, warnings
 
 
 def verify_integrity(archive_path: Path) -> tuple[bool, str]:
-    """§26: ensure the file exists, has a plausible size and is a readable ZIP."""
     if not archive_path.exists():
         return False, "Datei wurde nicht erstellt"
     size = archive_path.stat().st_size
@@ -106,21 +131,113 @@ def verify_integrity(archive_path: Path) -> tuple[bool, str]:
     return True, "Archiv geprüft (lesbar, plausible Größe)"
 
 
+# -- SMB helpers -----------------------------------------------------------
+
+def _parse_unc(unc: str) -> tuple[str, str, str]:
+    """Split a Windows UNC path ``\\\\server\\share\\sub\\dir`` into parts.
+
+    Returns (server, share, subpath). Accepts forward or back slashes.
+    """
+    cleaned = (unc or "").strip().replace("/", "\\").lstrip("\\")
+    parts = [p for p in cleaned.split("\\") if p]
+    server = parts[0] if parts else ""
+    share = parts[1] if len(parts) > 1 else ""
+    subpath = "\\".join(parts[2:]) if len(parts) > 2 else ""
+    return server, share, subpath
+
+
+def _smb_register(job):
+    import smbclient
+
+    server, _share, _sub = _parse_unc(job.smb_path)
+    # smbprotocol accepts "DOMAIN\\user" and "user@domain" in ``username``.
+    smbclient.register_session(server, username=job.smb_username, password=job.smb_password)
+    return smbclient, server
+
+
+# -- transfer --------------------------------------------------------------
+
+def _transfer(job, archive_path: Path) -> tuple[str, Optional[str]]:
+    """Move/upload the archive to the job target. Returns (location, local_file)."""
+    if job.target_type == "local":
+        dest_dir = Path(job.local_path) if job.local_path else BACKUP_DIR
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        final = dest_dir / archive_path.name
+        if final != archive_path:
+            shutil.move(str(archive_path), str(final))
+        return str(final), str(final)
+
+    if job.target_type == "ftp":
+        import ftplib
+
+        cls = ftplib.FTP_TLS if job.ftp_use_tls else ftplib.FTP
+        ftp = cls()
+        ftp.connect(job.ftp_host, job.ftp_port or 21, timeout=30)
+        ftp.login(job.ftp_username, job.ftp_password)
+        if isinstance(ftp, ftplib.FTP_TLS):
+            ftp.prot_p()
+        try:
+            target_dir = job.ftp_path or "/"
+            if target_dir and target_dir != "/":
+                try:
+                    ftp.cwd(target_dir)
+                except ftplib.error_perm:
+                    ftp.mkd(target_dir)
+                    ftp.cwd(target_dir)
+            with archive_path.open("rb") as handle:
+                ftp.storbinary(f"STOR {archive_path.name}", handle)
+        finally:
+            ftp.quit()
+        archive_path.unlink(missing_ok=True)
+        return f"ftp://{job.ftp_host}{job.ftp_path}", None
+
+    if job.target_type == "smb":
+        smbclient, server = _smb_register(job)
+        try:
+            _srv, share, sub = _parse_unc(job.smb_path)
+            remote_dir = f"\\\\{server}\\{share}"
+            if sub:
+                remote_dir += "\\" + sub
+            try:
+                smbclient.makedirs(remote_dir, exist_ok=True)
+            except Exception:  # pragma: no cover - already exists
+                pass
+            remote_file = f"{remote_dir}\\{archive_path.name}"
+            with archive_path.open("rb") as src, smbclient.open_file(remote_file, mode="wb") as dst:
+                dst.write(src.read())
+        finally:
+            try:
+                smbclient.delete_session(server)
+            except Exception:  # pragma: no cover
+                pass
+        archive_path.unlink(missing_ok=True)
+        return job.smb_path, None
+
+    return str(archive_path), str(archive_path)
+
+
 # -- retention -------------------------------------------------------------
 
-def apply_retention(config: app_config.BackupConfig) -> int:
-    """Remove local archives exceeding the configured count/age. Returns removed."""
-    archives = sorted(BACKUP_DIR.glob("backup_*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
-    to_remove: set[Path] = set()
-    if config.retention_count > 0 and len(archives) > config.retention_count:
-        to_remove.update(archives[config.retention_count:])
-    if config.retention_days > 0:
-        cutoff = datetime.now().timestamp() - config.retention_days * 24 * 3600
-        for archive in archives:
-            if archive.stat().st_mtime < cutoff:
-                to_remove.add(archive)
+def _retention_cutoff(job) -> Optional[float]:
+    if job.retention_days and job.retention_days > 0:
+        return datetime.now().timestamp() - job.retention_days * 24 * 3600
+    return None
+
+
+def _apply_local_retention(job, directory: Path) -> int:
+    archives = sorted(
+        directory.glob(f"backup_job{job.id}_*.zip"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    remove: set[Path] = set()
+    if job.retention_count and job.retention_count > 0 and len(archives) > job.retention_count:
+        remove.update(archives[job.retention_count:])
+    cutoff = _retention_cutoff(job)
+    if cutoff is not None:
+        remove.update(a for a in archives if a.stat().st_mtime < cutoff)
     removed = 0
-    for archive in to_remove:
+    for archive in remove:
         try:
             archive.unlink()
             removed += 1
@@ -129,180 +246,184 @@ def apply_retention(config: app_config.BackupConfig) -> int:
     return removed
 
 
-# -- remote transfer -------------------------------------------------------
+def apply_retention(job) -> int:
+    """Prune old archives for ``job`` according to its retention rules."""
+    try:
+        if job.target_type == "local":
+            directory = Path(job.local_path) if job.local_path else BACKUP_DIR
+            return _apply_local_retention(job, directory)
+        if job.target_type == "ftp":
+            return _apply_ftp_retention(job)
+        if job.target_type == "smb":
+            return _apply_smb_retention(job)
+    except Exception as exc:  # pragma: no cover - remote best effort
+        LOGGER.warning("Backup-Retention (%s) fehlgeschlagen: %s", job.target_type, exc)
+    return 0
 
-def _upload_ftp(config: app_config.BackupConfig, archive_path: Path) -> None:
+
+def _select_for_removal(names_with_mtime: list[tuple[str, float]], job) -> list[str]:
+    names_with_mtime.sort(key=lambda item: item[1], reverse=True)
+    remove: list[str] = []
+    if job.retention_count and job.retention_count > 0 and len(names_with_mtime) > job.retention_count:
+        remove += [n for n, _ in names_with_mtime[job.retention_count:]]
+    cutoff = _retention_cutoff(job)
+    if cutoff is not None:
+        remove += [n for n, m in names_with_mtime if m < cutoff and n not in remove]
+    return remove
+
+
+def _apply_ftp_retention(job) -> int:
     import ftplib
 
-    cls = ftplib.FTP_TLS if config.ftp_use_tls else ftplib.FTP
+    cls = ftplib.FTP_TLS if job.ftp_use_tls else ftplib.FTP
     ftp = cls()
-    ftp.connect(config.ftp_host, config.ftp_port, timeout=30)
-    ftp.login(config.ftp_username, config.ftp_password)
+    ftp.connect(job.ftp_host, job.ftp_port or 21, timeout=30)
+    ftp.login(job.ftp_username, job.ftp_password)
     if isinstance(ftp, ftplib.FTP_TLS):
         ftp.prot_p()
+    removed = 0
     try:
-        if config.ftp_remote_dir and config.ftp_remote_dir != "/":
+        if job.ftp_path and job.ftp_path != "/":
+            ftp.cwd(job.ftp_path)
+        # FTP lacks reliable mtimes via NLST; the timestamped filename sorts
+        # chronologically, so lexical descending order keeps the newest.
+        names = [
+            name.rsplit("/", 1)[-1]
+            for name in ftp.nlst()
+            if name.rsplit("/", 1)[-1].startswith(f"backup_job{job.id}_")
+        ]
+        names.sort(reverse=True)
+        keep = job.retention_count if job.retention_count and job.retention_count > 0 else len(names)
+        for base in names[keep:]:
             try:
-                ftp.cwd(config.ftp_remote_dir)
-            except ftplib.error_perm:
-                ftp.mkd(config.ftp_remote_dir)
-                ftp.cwd(config.ftp_remote_dir)
-        with archive_path.open("rb") as handle:
-            ftp.storbinary(f"STOR {archive_path.name}", handle)
+                ftp.delete(base)
+                removed += 1
+            except ftplib.error_perm:  # pragma: no cover
+                continue
     finally:
         ftp.quit()
+    return removed
 
 
-def _smb_url_parts(config: app_config.BackupConfig) -> tuple[str, str]:
-    """Return (server, share) handling Windows-style ``\\\\server\\share`` paths."""
-    server = config.smb_server.strip().lstrip("\\/").replace("\\", "/")
-    share = config.smb_share.strip().strip("\\/").replace("\\", "/")
-    if not share and "/" in server:
-        server, _, share = server.partition("/")
-    return server, share
-
-
-def _upload_smb(config: app_config.BackupConfig, archive_path: Path) -> None:
-    import smbclient
-
-    server, share = _smb_url_parts(config)
-    username = config.smb_username
-    if config.smb_domain and "\\" not in username and "@" not in username:
-        username = f"{config.smb_domain}\\{username}"
-    smbclient.register_session(
-        server, username=username, password=config.smb_password
-    )
+def _apply_smb_retention(job) -> int:
+    smbclient, server = _smb_register(job)
+    removed = 0
     try:
-        sub_path = config.smb_path.strip("\\/").replace("\\", "/")
+        _srv, share, sub = _parse_unc(job.smb_path)
         remote_dir = f"\\\\{server}\\{share}"
-        if sub_path:
-            remote_dir = remote_dir + "\\" + sub_path.replace("/", "\\")
-        remote_file = f"{remote_dir}\\{archive_path.name}"
-        try:
-            smbclient.makedirs(remote_dir, exist_ok=True)
-        except Exception:  # pragma: no cover - dir may already exist
-            pass
-        with archive_path.open("rb") as src, smbclient.open_file(remote_file, mode="wb") as dst:
-            dst.write(src.read())
+        if sub:
+            remote_dir += "\\" + sub
+        entries: list[tuple[str, float]] = []
+        for name in smbclient.listdir(remote_dir):
+            if name.startswith(f"backup_job{job.id}_"):
+                try:
+                    info = smbclient.stat(f"{remote_dir}\\{name}")
+                    entries.append((name, info.st_mtime))
+                except Exception:  # pragma: no cover
+                    entries.append((name, 0.0))
+        for name in _select_for_removal(entries, job):
+            try:
+                smbclient.remove(f"{remote_dir}\\{name}")
+                removed += 1
+            except Exception:  # pragma: no cover
+                continue
     finally:
         try:
             smbclient.delete_session(server)
         except Exception:  # pragma: no cover
             pass
+    return removed
 
 
-def _transfer(config: app_config.BackupConfig, archive_path: Path) -> str:
-    if config.target == "ftp":
-        _upload_ftp(config, archive_path)
-        return f"ftp://{config.ftp_host}{config.ftp_remote_dir}"
-    if config.target == "smb":
-        _upload_smb(config, archive_path)
-        return f"\\\\{config.smb_server}\\{config.smb_share}"
-    return str(archive_path)
+# -- run + test ------------------------------------------------------------
 
-
-# -- public API ------------------------------------------------------------
-
-def create_backup(config: Optional[app_config.BackupConfig] = None) -> dict:
-    """Create a backup, verify it, transfer it and record the history entry."""
-    if config is None:
-        config = app_config.load_backup_config()
-
-    entry: dict = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "target": config.target,
-        "result": "error",
-        "message": "",
-        "size_bytes": 0,
-    }
+def run_job(db: Session, job, *, triggered_by: str = "manual") -> "object":
+    """Execute ``job``: build, verify, transfer, prune, record history."""
+    started = datetime.now()
+    status = "error"
+    message = ""
+    size = 0
+    local_file: Optional[str] = None
     try:
-        archive_path = _build_archive(config.include_logs)
-        ok, message = verify_integrity(archive_path)
+        archive_path, warnings = _build_archive(job, BACKUP_DIR)
+        ok, integrity_msg = verify_integrity(archive_path)
         size = archive_path.stat().st_size if archive_path.exists() else 0
-        entry["name"] = archive_path.name
-        entry["size_bytes"] = size
-        entry["size_human"] = paths.format_size(size)
         if not ok:
-            entry["message"] = f"Integritätsprüfung fehlgeschlagen: {message}"
-            LOGGER.error("Backup-Integritätsprüfung fehlgeschlagen: %s", message)
-            _append_history(entry)
-            return entry
-        location = _transfer(config, archive_path)
-        entry["location"] = location
-        entry["result"] = "success"
-        entry["message"] = message
-        removed = apply_retention(config)
-        if removed:
-            entry["message"] += f" · {removed} alte Sicherung(en) entfernt"
-        LOGGER.info("Backup erstellt (%s) -> %s", config.target, location)
-    except Exception as exc:  # pragma: no cover - depends on remote target
-        # Never log credentials – only the exception text.
-        entry["message"] = f"{type(exc).__name__}: {exc}"
-        LOGGER.error("Backup fehlgeschlagen (%s): %s", config.target, exc)
-    _append_history(entry)
-    return entry
+            message = f"Integritätsprüfung fehlgeschlagen: {integrity_msg}"
+            LOGGER.error("Backup-Job %s: %s", job.name, message)
+            archive_path.unlink(missing_ok=True)
+        else:
+            location, local_file = _transfer(job, archive_path)
+            removed = apply_retention(job)
+            status = "warning" if warnings else "success"
+            parts = [integrity_msg, f"Ziel: {location}"]
+            if warnings:
+                parts.append("Warnungen: " + "; ".join(warnings))
+            if removed:
+                parts.append(f"{removed} alte Sicherung(en) entfernt")
+            message = " · ".join(parts)
+            LOGGER.info("Backup-Job '%s' (%s) – %s", job.name, triggered_by, status)
+    except Exception as exc:  # pragma: no cover - depends on target
+        message = f"{type(exc).__name__}: {exc}"
+        LOGGER.error("Backup-Job '%s' fehlgeschlagen: %s", job.name, exc)
+
+    finished = datetime.now()
+    run = crud.add_backup_run(
+        db,
+        job_id=job.id,
+        job_name=job.name,
+        target_type=job.target_type,
+        started_at=started,
+        finished_at=finished,
+        duration_seconds=(finished - started).total_seconds(),
+        size_bytes=size,
+        status=status,
+        message=message,
+        filename=local_file,
+    )
+    crud.update_backup_job(db, job.id, last_run_at=finished, last_status=status)
+    crud.prune_backup_runs(db, job.id)
+    return run
 
 
-def test_connection(config: app_config.BackupConfig) -> tuple[bool, str]:
-    """Verify connectivity to the configured remote target without uploading."""
+def test_connection(job) -> tuple[bool, str]:
+    """Verify the job's target is reachable without creating a backup."""
     try:
-        if config.target == "ftp":
+        if job.target_type == "local":
+            directory = Path(job.local_path) if job.local_path else BACKUP_DIR
+            directory.mkdir(parents=True, exist_ok=True)
+            probe = directory / ".write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return True, f"Lokaler Pfad beschreibbar: {directory}"
+        if job.target_type == "ftp":
             import ftplib
 
-            cls = ftplib.FTP_TLS if config.ftp_use_tls else ftplib.FTP
+            cls = ftplib.FTP_TLS if job.ftp_use_tls else ftplib.FTP
             ftp = cls()
-            ftp.connect(config.ftp_host, config.ftp_port, timeout=15)
-            ftp.login(config.ftp_username, config.ftp_password)
+            ftp.connect(job.ftp_host, job.ftp_port or 21, timeout=15)
+            ftp.login(job.ftp_username, job.ftp_password)
             if isinstance(ftp, ftplib.FTP_TLS):
                 ftp.prot_p()
             ftp.voidcmd("NOOP")
             ftp.quit()
             return True, "FTP-Verbindung erfolgreich"
-        if config.target == "smb":
-            import smbclient
-
-            server, share = _smb_url_parts(config)
-            username = config.smb_username
-            if config.smb_domain and "\\" not in username and "@" not in username:
-                username = f"{config.smb_domain}\\{username}"
-            smbclient.register_session(server, username=username, password=config.smb_password)
-            smbclient.listdir(f"\\\\{server}\\{share}")
-            smbclient.delete_session(server)
+        if job.target_type == "smb":
+            smbclient, server = _smb_register(job)
+            try:
+                _srv, share, sub = _parse_unc(job.smb_path)
+                remote_dir = f"\\\\{server}\\{share}"
+                if sub:
+                    remote_dir += "\\" + sub
+                smbclient.listdir(remote_dir)
+            finally:
+                try:
+                    smbclient.delete_session(server)
+                except Exception:  # pragma: no cover
+                    pass
             return True, "SMB3-Verbindung erfolgreich"
-        return True, "Lokales Ziel ist immer verfügbar"
+        return False, "Unbekannter Backup-Typ"
     except ModuleNotFoundError as exc:
         return False, f"Erforderliche Bibliothek fehlt: {exc.name}"
-    except Exception as exc:  # pragma: no cover - depends on remote target
+    except Exception as exc:  # pragma: no cover - depends on target
         return False, f"Verbindung fehlgeschlagen: {type(exc).__name__}: {exc}"
-
-
-def list_backups() -> list[dict]:
-    backups: list[dict] = []
-    if BACKUP_DIR.exists():
-        for path in sorted(BACKUP_DIR.glob("backup_*.zip"), reverse=True):
-            try:
-                stat = path.stat()
-            except OSError:  # pragma: no cover
-                continue
-            backups.append(
-                {
-                    "name": path.name,
-                    "path": str(path),
-                    "size_bytes": stat.st_size,
-                    "size_human": paths.format_size(stat.st_size),
-                    "created": datetime.fromtimestamp(stat.st_mtime),
-                }
-            )
-    return backups
-
-
-def backup_summary() -> dict:
-    backups = list_backups()
-    latest = backups[0] if backups else None
-    return {
-        "count": len(backups),
-        "location": str(BACKUP_DIR),
-        "latest": latest,
-        "backups": backups,
-        "history": history(),
-    }

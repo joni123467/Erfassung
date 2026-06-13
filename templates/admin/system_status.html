@@ -122,12 +122,13 @@
 <section class="card">
     <h2>Backups</h2>
     <p class="card-header__hint">
-        {% if backups.latest %}
-            Letzte Sicherung: {{ backups.latest.created.strftime('%d.%m.%Y %H:%M') }} ({{ backups.latest.size_human }}).
+        {% if latest_backup %}
+            Letzte Sicherung: {{ latest_backup.started_at.strftime('%d.%m.%Y %H:%M') }}
+            ({{ latest_backup.job_name }}, Status: {{ latest_backup.status }}).
         {% else %}
             Noch keine Sicherung vorhanden.
         {% endif %}
-        <a href="/admin/system/backups">Zur Backup-Übersicht</a>
+        <a href="/admin/system/backups">Zu den Backup-Jobs</a>
     </p>
 </section>
 {% endblock %}

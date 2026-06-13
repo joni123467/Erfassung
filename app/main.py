@@ -32,6 +32,7 @@ from . import __version__ as APP_VERSION
 from . import (
     app_config,
     backup_manager,
+    backup_scheduler,
     crud,
     database,
     holiday_calculator,
@@ -1049,6 +1050,71 @@ def ensure_seed_data():
             raise
     _apply_versioned_migrations()
     _ensure_holiday_data()
+    _migrate_legacy_backup_config()
+    if os.environ.get("ERFASSUNG_DISABLE_SCHEDULER", "").lower() not in {"1", "true", "yes"}:
+        try:
+            interval = int(os.environ.get("BACKUP_SCHEDULER_INTERVAL", "60"))
+        except ValueError:
+            interval = 60
+        backup_scheduler.start(interval)
+
+
+@app.on_event("shutdown")
+def _stop_scheduler():
+    backup_scheduler.stop()
+
+
+def _migrate_legacy_backup_config() -> None:
+    """Carry a pre-0.9.2 single backup configuration over into a Backup-Job."""
+    from pathlib import Path
+
+    legacy_path = paths.CONFIG_DIR / "backup.json"
+    if not legacy_path.exists():
+        return
+    db = database.SessionLocal()
+    try:
+        if crud.get_backup_jobs(db):
+            return
+        cfg = app_config.load_backup_config()
+        contents = "database,config" + (",logs" if getattr(cfg, "include_logs", False) else "")
+        smb_path = cfg.smb_server or ""
+        if cfg.smb_share:
+            server = cfg.smb_server.strip("\\/")
+            share = cfg.smb_share.strip("\\/")
+            smb_path = "\\\\" + server + "\\" + share
+            if cfg.smb_path:
+                smb_path += "\\" + cfg.smb_path.strip("\\/")
+        smb_user = cfg.smb_username
+        if cfg.smb_domain and smb_user and "\\" not in smb_user and "@" not in smb_user:
+            smb_user = f"{cfg.smb_domain}\\{smb_user}"
+        crud.create_backup_job(
+            db,
+            name="Übernommener Backup-Job",
+            active=False,
+            schedule="manual",
+            contents=contents,
+            target_type=cfg.target,
+            ftp_host=cfg.ftp_host,
+            ftp_port=cfg.ftp_port,
+            ftp_username=cfg.ftp_username,
+            ftp_password=cfg.ftp_password,
+            ftp_path=cfg.ftp_remote_dir,
+            ftp_use_tls=cfg.ftp_use_tls,
+            smb_path=smb_path,
+            smb_username=smb_user,
+            smb_password=cfg.smb_password,
+            retention_count=cfg.retention_count,
+            retention_days=cfg.retention_days,
+        )
+        try:
+            legacy_path.rename(legacy_path.with_suffix(".json.migrated"))
+        except OSError:
+            pass
+        logging_setup.log_application("Alte Backup-Konfiguration in Backup-Job übernommen")
+    except Exception:  # pragma: no cover - never block startup
+        logging_setup.log_error("Migration der Backup-Konfiguration fehlgeschlagen")
+    finally:
+        db.close()
 
 
 def _apply_versioned_migrations() -> None:
@@ -3988,7 +4054,7 @@ def admin_system_status(request: Request, db: Session = Depends(database.get_db)
         user,
         admin_active="system_status",
         status_data=system_info.system_status(db),
-        backups=system_info.backup_summary(),
+        latest_backup=system_info.latest_backup_run(db),
     )
 
 
@@ -4143,6 +4209,11 @@ async def admin_system_settings_import(request: Request, db: Session = Depends(d
     )
 
 
+BACKUP_TARGETS = ("local", "ftp", "smb")
+BACKUP_SCHEDULES = ("manual", "daily", "weekly", "monthly")
+BACKUP_CONTENTS = ("database", "config", "logs")
+
+
 @app.get("/admin/system/backups", response_class=HTMLResponse)
 def admin_system_backups(request: Request, db: Session = Depends(database.get_db)):
     user, redirect = _require_system_admin(request, db)
@@ -4155,95 +4226,174 @@ def admin_system_backups(request: Request, db: Session = Depends(database.get_db
         message=request.query_params.get("msg"),
         error=request.query_params.get("error"),
         admin_active="system_backups",
-        backups=backup_manager.backup_summary(),
-        backup_config=app_config.load_backup_config(),
-        backup_targets=app_config.BACKUP_TARGETS,
+        jobs=crud.get_backup_jobs(db),
+        runs=crud.get_backup_runs(db, limit=100),
+        backup_targets=BACKUP_TARGETS,
+        backup_schedules=BACKUP_SCHEDULES,
+        backup_contents=BACKUP_CONTENTS,
+        active_tab=request.query_params.get("tab", "jobs"),
     )
 
 
-def _backup_config_from_form(form) -> app_config.BackupConfig:
-    return app_config.BackupConfig.from_dict(
-        {
-            "target": form.get("target", "local"),
-            "include_logs": _parse_checkbox(form.get("include_logs")),
-            "retention_count": form.get("retention_count", "10"),
-            "retention_days": form.get("retention_days", "30"),
-            "ftp_host": form.get("ftp_host", ""),
-            "ftp_port": form.get("ftp_port", "21"),
-            "ftp_username": form.get("ftp_username", ""),
-            "ftp_password": form.get("ftp_password", ""),
-            "ftp_remote_dir": form.get("ftp_remote_dir", "/"),
-            "ftp_use_tls": _parse_checkbox(form.get("ftp_use_tls")),
-            "smb_server": form.get("smb_server", ""),
-            "smb_share": form.get("smb_share", ""),
-            "smb_path": form.get("smb_path", ""),
-            "smb_username": form.get("smb_username", ""),
-            "smb_password": form.get("smb_password", ""),
-            "smb_domain": form.get("smb_domain", ""),
-        }
-    )
+def _backup_job_fields_from_form(form, *, keep_passwords_from=None) -> dict:
+    contents = [c for c in form.getlist("contents") if c in BACKUP_CONTENTS]
+    target = form.get("target_type", "local")
+    if target not in BACKUP_TARGETS:
+        target = "local"
+    schedule = form.get("schedule", "manual")
+    if schedule not in BACKUP_SCHEDULES:
+        schedule = "manual"
+    fields = {
+        "name": (form.get("name") or "Backup-Job").strip(),
+        "active": _parse_checkbox(form.get("active")),
+        "schedule": schedule,
+        "cron": (form.get("cron") or "").strip(),
+        "contents": ",".join(contents) if contents else "database,config",
+        "target_type": target,
+        "local_path": (form.get("local_path") or "").strip(),
+        "ftp_host": (form.get("ftp_host") or "").strip(),
+        "ftp_port": _safe_int(form.get("ftp_port"), 21),
+        "ftp_username": (form.get("ftp_username") or "").strip(),
+        "ftp_password": form.get("ftp_password") or "",
+        "ftp_path": (form.get("ftp_path") or "/").strip() or "/",
+        "ftp_use_tls": _parse_checkbox(form.get("ftp_use_tls")),
+        "smb_path": (form.get("smb_path") or "").strip(),
+        "smb_username": (form.get("smb_username") or "").strip(),
+        "smb_password": form.get("smb_password") or "",
+        "retention_count": _safe_int(form.get("retention_count"), 10),
+        "retention_days": _safe_int(form.get("retention_days"), 30),
+    }
+    # Keep stored passwords when the form leaves them blank (masked field).
+    if keep_passwords_from is not None:
+        if not fields["ftp_password"]:
+            fields["ftp_password"] = keep_passwords_from.ftp_password
+        if not fields["smb_password"]:
+            fields["smb_password"] = keep_passwords_from.smb_password
+    return fields
 
 
-@app.post("/admin/system/backups/settings")
-async def admin_system_backups_settings(request: Request, db: Session = Depends(database.get_db)):
+def _safe_int(value, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+@app.post("/admin/system/backups/jobs")
+async def admin_backup_job_save(request: Request, db: Session = Depends(database.get_db)):
     user, redirect = _require_system_admin(request, db)
     if redirect:
         return redirect
     form = await request.form()
-    # Preserve stored passwords when the form leaves them blank/masked.
-    current = app_config.load_backup_config()
-    config = _backup_config_from_form(form)
-    if not config.ftp_password:
-        config.ftp_password = current.ftp_password
-    if not config.smb_password:
-        config.smb_password = current.smb_password
-    app_config.save_backup_config(config)
-    logging_setup.log_audit("Backup-Konfiguration geändert", user=user, detail=f"Ziel={config.target}")
+    job_id = _safe_int(form.get("job_id"), 0)
+    if job_id:
+        existing = crud.get_backup_job(db, job_id)
+        if not existing:
+            return RedirectResponse(
+                url=_build_redirect("/admin/system/backups", error="Backup-Job nicht gefunden"),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        fields = _backup_job_fields_from_form(form, keep_passwords_from=existing)
+        crud.update_backup_job(db, job_id, **fields)
+        logging_setup.log_audit("Backup-Job geändert", user=user, detail=fields["name"])
+        msg = "Backup-Job gespeichert"
+    else:
+        fields = _backup_job_fields_from_form(form)
+        crud.create_backup_job(db, **fields)
+        logging_setup.log_audit("Backup-Job angelegt", user=user, detail=fields["name"])
+        msg = "Backup-Job angelegt"
     return RedirectResponse(
-        url="/admin/system/backups?msg=Backup-Einstellungen+gespeichert",
+        url=_build_redirect("/admin/system/backups", msg=msg), status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.post("/admin/system/backups/jobs/{job_id}/run")
+def admin_backup_job_run(request: Request, job_id: int, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    job = crud.get_backup_job(db, job_id)
+    if not job:
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/backups", error="Backup-Job nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    run = backup_manager.run_job(db, job, triggered_by=f"manuell ({user.username})")
+    logging_setup.log_audit("Backup-Job ausgeführt", user=user, detail=f"{job.name}: {run.status}")
+    key = "msg" if run.status in {"success", "warning"} else "error"
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/backups", **{key: f"{job.name}: {run.message}"}),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/backups/jobs/{job_id}/toggle")
+def admin_backup_job_toggle(request: Request, job_id: int, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    job = crud.get_backup_job(db, job_id)
+    if job:
+        crud.update_backup_job(db, job_id, active=not bool(job.active))
+        logging_setup.log_audit(
+            "Backup-Job " + ("aktiviert" if not job.active else "deaktiviert"), user=user, detail=job.name
+        )
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/backups", msg="Backup-Job aktualisiert"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/backups/jobs/{job_id}/delete")
+def admin_backup_job_delete(request: Request, job_id: int, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    job = crud.get_backup_job(db, job_id)
+    name = job.name if job else ""
+    crud.delete_backup_job(db, job_id)
+    logging_setup.log_audit("Backup-Job gelöscht", user=user, detail=name)
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/backups", msg="Backup-Job gelöscht"),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
 @app.post("/admin/system/backups/test")
-async def admin_system_backups_test(request: Request, db: Session = Depends(database.get_db)):
+async def admin_backup_job_test(request: Request, db: Session = Depends(database.get_db)):
+    """Connection test for the values currently entered in the modal (JSON)."""
     user, redirect = _require_system_admin(request, db)
     if redirect:
-        return redirect
+        return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
     form = await request.form()
-    current = app_config.load_backup_config()
-    config = _backup_config_from_form(form)
-    if not config.ftp_password:
-        config.ftp_password = current.ftp_password
-    if not config.smb_password:
-        config.smb_password = current.smb_password
-    ok, message = backup_manager.test_connection(config)
+    job_id = _safe_int(form.get("job_id"), 0)
+    existing = crud.get_backup_job(db, job_id) if job_id else None
+    fields = _backup_job_fields_from_form(form, keep_passwords_from=existing)
+    probe = models.BackupJob(**fields)
+    ok, message = backup_manager.test_connection(probe)
     logging_setup.log_audit(
-        "Backup-Verbindungstest", user=user, detail=f"{config.target}: {'ok' if ok else 'fehlgeschlagen'}"
+        "Backup-Verbindungstest", user=user, detail=f"{probe.target_type}: {'ok' if ok else 'fehlgeschlagen'}"
     )
-    key = "msg" if ok else "error"
-    return RedirectResponse(
-        url=_build_redirect("/admin/system/backups", **{key: message}),
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+    return JSONResponse({"ok": ok, "message": message})
 
 
-@app.post("/admin/system/backups/create")
-def admin_system_backups_create(request: Request, db: Session = Depends(database.get_db)):
+@app.get("/admin/system/backups/runs/{run_id}/download")
+def admin_backup_run_download(request: Request, run_id: int, db: Session = Depends(database.get_db)):
     user, redirect = _require_system_admin(request, db)
     if redirect:
         return redirect
-    info = backup_manager.create_backup()
-    if info.get("result") == "success":
-        logging_setup.log_audit("Backup erstellt", user=user, detail=info.get("name", ""))
+    run = crud.get_backup_run(db, run_id)
+    if not run or not run.filename or not Path(run.filename).exists():
         return RedirectResponse(
-            url=_build_redirect("/admin/system/backups", msg=f"Backup erstellt: {info.get('message','')}"),
+            url=_build_redirect("/admin/system/backups", error="Backup-Datei nicht verfügbar"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    logging_setup.log_error(f"Backup fehlgeschlagen: {info.get('message','')}", exc_info=False)
-    return RedirectResponse(
-        url=_build_redirect("/admin/system/backups", error=f"Backup fehlgeschlagen: {info.get('message','')}"),
-        status_code=status.HTTP_303_SEE_OTHER,
+    path = Path(run.filename)
+    logging_setup.log_audit("Backup heruntergeladen", user=user, detail=path.name)
+    return StreamingResponse(
+        path.open("rb"),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={path.name}"},
     )
 
 

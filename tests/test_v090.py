@@ -71,7 +71,7 @@ def login(client, username="admin", password="Admin!0000"):
 # --- Version ---------------------------------------------------------------
 
 def test_version_is_090(client):
-    assert client.main.APP_VERSION == "0.9.1"
+    assert client.main.APP_VERSION == "0.9.2"
 
 
 def test_health_check(client):
@@ -79,7 +79,7 @@ def test_health_check(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["version"] == "0.9.1"
+    assert body["version"] == "0.9.2"
     assert body["checks"]["database"] is True
     assert body["checks"]["volumes"] is True
 
@@ -224,17 +224,43 @@ def test_settings_import_rejects_invalid(client):
 
 
 def test_backup_create(client):
-    from app import system_info
+    """Job-based backup: create a local job, run it, expect a history entry."""
+    from app import crud, database
 
     login(client)
     token = _csrf(client, "/admin/system/backups")
+    client.post(
+        "/admin/system/backups/jobs",
+        data={
+            "name": "Lokal",
+            "active": "on",
+            "schedule": "manual",
+            "contents": ["database", "config"],
+            "target_type": "local",
+            "retention_count": "5",
+            "retention_days": "30",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    db = database.SessionLocal()
+    try:
+        job = crud.get_backup_jobs(db)[0]
+    finally:
+        db.close()
+    token = _csrf(client, "/admin/system/backups")
     response = client.post(
-        "/admin/system/backups/create",
+        f"/admin/system/backups/jobs/{job.id}/run",
         data={"csrf_token": token},
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert system_info.list_backups(), "expected a backup archive to be created"
+    db = database.SessionLocal()
+    try:
+        runs = crud.get_backup_runs(db)
+        assert runs and runs[0].status in {"success", "warning"}
+    finally:
+        db.close()
 
 
 # --- Holidays import/export -----------------------------------------------

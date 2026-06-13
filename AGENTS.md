@@ -131,6 +131,27 @@ Persistente Einstellungen liegen als JSON im `config`-Volume
 - Pfade immer über `paths.*` beziehen, nichts relativ zum Arbeitsverzeichnis
   ablegen und keine Datei im falschen Volume speichern.
 
+## Backups (Job-basiert, ab 0.9.2)
+
+- Backups laufen über **Backup-Jobs** (`models.BackupJob`) mit Historie
+  (`models.BackupRun`). Engine/Transfer/Retention/Integritätsprüfung liegen in
+  `app/backup_manager.py`, die Zeitplanung in `app/backup_scheduler.py`.
+- SMB nutzt **ein** UNC-Pfadfeld und **ein** Benutzerfeld – keine separaten
+  Felder für Freigabe/Share/Unterordner/Domain. UNC wird über
+  `backup_manager._parse_unc` zerlegt; `DOMAIN\\user` und `user@domain` gehen
+  direkt an `smbclient`.
+- Passwörter nie im Klartext loggen. Nach jeder Sicherung Integrität prüfen
+  (Datei vorhanden, plausible Größe, Archiv lesbar). DB-Snapshots müssen
+  konsistent sein (SQLite Online-Backup-API, MySQL `mysqldump`).
+
+## Administration-Navigation
+
+- Die Admin-Navigation (`templates/admin/_nav.html`) ist in einklappbare
+  Gruppen (`<details>`) organisiert. Neue Admin-Seiten in die passende Gruppe
+  einsortieren (Benutzer / Zeitverwaltung / Sicherung / System / Einstellungen)
+  und einen eindeutigen `admin_active`-Key setzen; die Gruppe der aktiven Seite
+  öffnet automatisch.
+
 ## Weitere Konventionen
 
 - **Offline-PWA**: `static/sw.js` cached Assets versioniert über `?v=`;

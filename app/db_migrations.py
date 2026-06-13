@@ -76,12 +76,26 @@ def _add_holiday_source(engine: Engine) -> None:
     )
 
 
+def _add_backup_job_tables(engine: Engine) -> None:
+    """Create the job-based backup tables (§0.9.2) if they do not exist yet.
+
+    ``create_all`` only adds missing tables and is dialect-agnostic, so this is
+    idempotent and safe on both SQLite and MySQL.
+    """
+
+    models.Base.metadata.create_all(
+        bind=engine,
+        tables=[models.BackupJob.__table__, models.BackupRun.__table__],
+    )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
     (3, _add_time_entry_external_columns),
     (4, _add_user_auto_break_deduction),
     (5, _add_holiday_source),
+    (6, _add_backup_job_tables),
 ]
 
 

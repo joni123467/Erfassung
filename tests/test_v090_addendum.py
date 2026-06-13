@@ -220,89 +220,198 @@ def test_sync_page_renders(client):
     assert "Synchronisation" in response.text
 
 
-# --- §25/§26 Backups -------------------------------------------------------
+# --- §1–§10 Job-based Backups ---------------------------------------------
 
-def test_backup_settings_save_and_password_persist(client):
-    from app import app_config
+def _create_local_job(client, **overrides):
+    token = _csrf(client, "/admin/system/backups")
+    data = {
+        "name": overrides.get("name", "Lokal-Job"),
+        "active": "on",
+        "schedule": overrides.get("schedule", "manual"),
+        "contents": overrides.get("contents", ["database", "config"]),
+        "target_type": overrides.get("target_type", "local"),
+        "retention_count": str(overrides.get("retention_count", 10)),
+        "retention_days": str(overrides.get("retention_days", 30)),
+        "csrf_token": token,
+    }
+    data.update({k: v for k, v in overrides.items() if k.startswith(("ftp_", "smb_", "local_"))})
+    return client.post("/admin/system/backups/jobs", data=data, follow_redirects=False)
+
+
+def test_backup_job_crud(client):
+    from app import crud, database
 
     login(client)
+    assert _create_local_job(client, name="Job A").status_code == 303
+    db = database.SessionLocal()
+    try:
+        jobs = crud.get_backup_jobs(db)
+        assert len(jobs) == 1 and jobs[0].name == "Job A"
+        job_id = jobs[0].id
+    finally:
+        db.close()
+
+    # edit
     token = _csrf(client, "/admin/system/backups")
     client.post(
-        "/admin/system/backups/settings",
-        data={
-            "target": "ftp",
-            "retention_count": "5",
-            "retention_days": "14",
-            "ftp_host": "ftp.example.com",
-            "ftp_username": "backupuser",
-            "ftp_password": "secret",
-            "csrf_token": token,
-        },
+        "/admin/system/backups/jobs",
+        data={"job_id": str(job_id), "name": "Job A2", "active": "on", "schedule": "daily",
+              "contents": ["database"], "target_type": "local", "retention_count": "3",
+              "retention_days": "0", "csrf_token": token},
         follow_redirects=False,
     )
-    config = app_config.load_backup_config()
-    assert config.target == "ftp"
-    assert config.retention_count == 5
-    assert config.ftp_password == "secret"
-    # masked variant must not leak the password
-    assert config.safe_dict()["ftp_password"] == "***"
+    db = database.SessionLocal()
+    try:
+        job = crud.get_backup_job(db, job_id)
+        assert job.name == "Job A2" and job.schedule == "daily" and job.retention_count == 3
+    finally:
+        db.close()
 
-    # re-saving with a blank password keeps the stored one
+    # toggle + delete
+    token = _csrf(client, "/admin/system/backups")
+    client.post(f"/admin/system/backups/jobs/{job_id}/toggle", data={"csrf_token": token}, follow_redirects=False)
+    token = _csrf(client, "/admin/system/backups")
+    client.post(f"/admin/system/backups/jobs/{job_id}/delete", data={"csrf_token": token}, follow_redirects=False)
+    db = database.SessionLocal()
+    try:
+        assert crud.get_backup_jobs(db) == []
+    finally:
+        db.close()
+
+
+def test_backup_job_run_history_and_integrity(client):
+    from app import crud, database, backup_manager
+    from pathlib import Path
+
+    login(client)
+    _create_local_job(client, name="RunJob")
+    db = database.SessionLocal()
+    try:
+        job = crud.get_backup_jobs(db)[0]
+    finally:
+        db.close()
+    token = _csrf(client, "/admin/system/backups")
+    resp = client.post(f"/admin/system/backups/jobs/{job.id}/run", data={"csrf_token": token}, follow_redirects=False)
+    assert resp.status_code == 303
+    db = database.SessionLocal()
+    try:
+        runs = crud.get_backup_runs(db)
+        assert runs and runs[0].status == "success"
+        assert runs[0].filename and Path(runs[0].filename).exists()
+        ok, _ = backup_manager.verify_integrity(Path(runs[0].filename))
+        assert ok
+    finally:
+        db.close()
+
+
+def test_backup_password_persists_on_edit(client):
+    from app import crud, database
+
+    login(client)
+    # create an FTP job with a password
     token = _csrf(client, "/admin/system/backups")
     client.post(
-        "/admin/system/backups/settings",
-        data={"target": "ftp", "ftp_host": "ftp.example.com", "ftp_password": "", "csrf_token": token},
+        "/admin/system/backups/jobs",
+        data={"name": "FTP", "active": "on", "schedule": "manual", "contents": ["database"],
+              "target_type": "ftp", "ftp_host": "ftp.example.com", "ftp_username": "backupuser",
+              "ftp_password": "secret", "retention_count": "5", "retention_days": "0",
+              "csrf_token": token},
         follow_redirects=False,
     )
-    assert app_config.load_backup_config().ftp_password == "secret"
+    db = database.SessionLocal()
+    try:
+        job = crud.get_backup_jobs(db)[0]
+        assert job.ftp_password == "secret"
+        job_id = job.id
+    finally:
+        db.close()
+    # edit without re-entering the password -> kept
+    token = _csrf(client, "/admin/system/backups")
+    client.post(
+        "/admin/system/backups/jobs",
+        data={"job_id": str(job_id), "name": "FTP", "active": "on", "schedule": "manual",
+              "contents": ["database"], "target_type": "ftp", "ftp_host": "ftp.example.com",
+              "ftp_username": "backupuser", "ftp_password": "", "retention_count": "5",
+              "retention_days": "0", "csrf_token": token},
+        follow_redirects=False,
+    )
+    db = database.SessionLocal()
+    try:
+        assert crud.get_backup_job(db, job_id).ftp_password == "secret"
+    finally:
+        db.close()
 
 
-def test_backup_create_records_history_and_integrity(client):
-    from app import backup_manager
-
+def test_backup_connection_test_local_json(client):
     login(client)
     token = _csrf(client, "/admin/system/backups")
     response = client.post(
-        "/admin/system/backups/create", data={"csrf_token": token}, follow_redirects=False
+        "/admin/system/backups/test",
+        data={"target_type": "local", "name": "x", "csrf_token": token},
+        headers={"x-csrf-token": token},
     )
-    assert response.status_code == 303
-    history = backup_manager.history()
-    assert history, "expected a history entry"
-    assert history[0]["result"] == "success"
-    # integrity: the created archive is a readable zip
-    backups = backup_manager.list_backups()
-    assert backups
-    ok, _ = backup_manager.verify_integrity(__import__("pathlib").Path(backups[0]["path"]))
-    assert ok
-
-
-def test_backup_local_connection_test(client):
-    from app import app_config, backup_manager
-
-    ok, message = backup_manager.test_connection(app_config.BackupConfig(target="local"))
-    assert ok is True
-    assert "Lokales" in message
+    body = response.json()
+    assert body["ok"] is True
 
 
 def test_backup_retention(client):
-    from app import app_config, backup_manager
+    from app import backup_manager, models, paths
 
-    # create more archives than the retention count, then prune
+    login(client)
+    job = models.BackupJob(id=999, name="ret", target_type="local", contents="config",
+                           retention_count=2, retention_days=0)
+    # create several archives for this job id
     for _ in range(4):
-        backup_manager.create_backup(app_config.BackupConfig(target="local", retention_count=0))
-    removed = backup_manager.apply_retention(app_config.BackupConfig(retention_count=2, retention_days=0))
+        path, _w = backup_manager._build_archive(job, paths.DATA_DIR / "backups")
+    removed = backup_manager.apply_retention(job)
     assert removed >= 1
-    assert len(backup_manager.list_backups()) <= 2
+    remaining = list((paths.DATA_DIR / "backups").glob(f"backup_job{job.id}_*.zip"))
+    assert len(remaining) <= 2
+
+
+def test_smb_unc_parsing():
+    from app import backup_manager
+
+    assert backup_manager._parse_unc(r"\\192.168.1.10\backup") == ("192.168.1.10", "backup", "")
+    assert backup_manager._parse_unc(r"\\server\backup") == ("server", "backup", "")
+    assert backup_manager._parse_unc(r"\\nas\firma\backups\daily") == ("nas", "firma", "backups\\daily")
+
+
+def test_scheduler_due_logic():
+    from datetime import datetime, timedelta
+    from app import backup_scheduler, models
+
+    now = datetime(2026, 6, 13, 12, 0, 0)
+    daily_due = models.BackupJob(name="d", active=True, schedule="daily",
+                                 last_run_at=now - timedelta(days=2))
+    daily_fresh = models.BackupJob(name="d2", active=True, schedule="daily",
+                                   last_run_at=now - timedelta(hours=1))
+    manual = models.BackupJob(name="m", active=True, schedule="manual", last_run_at=None)
+    never_run = models.BackupJob(name="n", active=True, schedule="weekly", last_run_at=None)
+    inactive = models.BackupJob(name="i", active=False, schedule="daily", last_run_at=None)
+    assert backup_scheduler.job_due(daily_due, now) is True
+    assert backup_scheduler.job_due(daily_fresh, now) is False
+    assert backup_scheduler.job_due(manual, now) is False
+    assert backup_scheduler.job_due(never_run, now) is True
+    assert backup_scheduler.job_due(inactive, now) is False
 
 
 def test_password_not_logged(client):
-    from app import app_config, backup_manager, paths
+    from app import backup_manager, models, paths
 
     login(client)
-    backup_manager.test_connection(
-        app_config.BackupConfig(target="ftp", ftp_host="localhost", ftp_password="topsecret")
-    )
+    job = models.BackupJob(name="ftp", target_type="ftp", ftp_host="localhost",
+                           ftp_password="topsecret", contents="config")
+    backup_manager.test_connection(job)
     for name in ("application.log", "audit.log", "error.log"):
         path = paths.LOGS_DIR / name
         if path.exists():
             assert "topsecret" not in path.read_text(encoding="utf-8")
+
+
+def test_admin_nav_grouped(client):
+    login(client)
+    html = client.get("/admin/system/status").text
+    assert 'class="adminnav"' in html
+    for label in ("System", "Benutzer", "Zeitverwaltung", "Sicherung", "Einstellungen"):
+        assert ">" + label + "<" in html

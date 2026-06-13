@@ -1,32 +1,83 @@
-<nav class="timetac-subnav" aria-label="Administration">
-    {% if admin_permissions.users %}
-        <a href="/admin/users" class="timetac-subnav__link {% if admin_active == 'users' %}is-active{% endif %}">Benutzer</a>
-    {% endif %}
-    {% if admin_permissions.groups %}
-        <a href="/admin/groups" class="timetac-subnav__link {% if admin_active == 'groups' %}is-active{% endif %}">Gruppen</a>
-    {% endif %}
-    {% if admin_permissions.companies %}
-        <a href="/admin/companies" class="timetac-subnav__link {% if admin_active == 'companies' %}is-active{% endif %}">Firmen</a>
-    {% endif %}
-    {% if admin_permissions.holidays %}
-        <a href="/admin/holidays" class="timetac-subnav__link {% if admin_active == 'holidays' %}is-active{% endif %}">Feiertage</a>
-    {% endif %}
-    {% if admin_permissions.approvals %}
-        <a href="/admin/approvals" class="timetac-subnav__link {% if admin_active == 'approvals' %}is-active{% endif %}">Freigaben</a>
-    {% endif %}
-    {% if admin_permissions.reports %}
-        <a href="/admin/reports/time" class="timetac-subnav__link {% if admin_active == 'reports' %}is-active{% endif %}">Zeitübersichten</a>
-        <a href="/admin/reports/users" class="timetac-subnav__link {% if admin_active == 'user_reports' %}is-active{% endif %}">Benutzerauswertung</a>
-    {% endif %}
-    {% if admin_permissions.integrations %}
-        <a href="/admin/integrations/timemoto" class="timetac-subnav__link {% if admin_active == 'timemoto' %}is-active{% endif %}">TimeMoto TM-616</a>
-    {% endif %}
-    {% if admin_permissions.system %}
-        <a href="/admin/system/status" class="timetac-subnav__link {% if admin_active == 'system_status' %}is-active{% endif %}">Systemstatus</a>
-        <a href="/admin/system/logs" class="timetac-subnav__link {% if admin_active == 'system_logs' %}is-active{% endif %}">Logs</a>
-        <a href="/admin/system/sync" class="timetac-subnav__link {% if admin_active == 'system_sync' %}is-active{% endif %}">Synchronisation</a>
-        <a href="/admin/system/errors" class="timetac-subnav__link {% if admin_active == 'system_errors' %}is-active{% endif %}">Fehlerübersicht</a>
-        <a href="/admin/system/backups" class="timetac-subnav__link {% if admin_active == 'system_backups' %}is-active{% endif %}">Backups</a>
-        <a href="/admin/system/settings" class="timetac-subnav__link {% if admin_active == 'system_settings' %}is-active{% endif %}">Systemeinstellungen</a>
-    {% endif %}
+{#
+  Grouped, collapsible administration navigation (§0.9.2).
+  Uses native <details>/<summary> so it works as an accordion on desktop and
+  mobile without a framework; open/closed state is remembered in localStorage.
+  A group is forced open when it contains the currently active page.
+#}
+{% set nav_groups = [
+    {
+        'id': 'users', 'label': 'Benutzer', 'show': admin_permissions.users or admin_permissions.groups or admin_permissions.companies,
+        'items': [
+            {'href': '/admin/users', 'label': 'Benutzer', 'key': 'users', 'show': admin_permissions.users},
+            {'href': '/admin/groups', 'label': 'Rollen & Berechtigungen', 'key': 'groups', 'show': admin_permissions.groups},
+            {'href': '/admin/companies', 'label': 'Firmen', 'key': 'companies', 'show': admin_permissions.companies},
+        ],
+    },
+    {
+        'id': 'time', 'label': 'Zeitverwaltung', 'show': admin_permissions.holidays or admin_permissions.approvals or admin_permissions.reports,
+        'items': [
+            {'href': '/admin/holidays', 'label': 'Feiertage', 'key': 'holidays', 'show': admin_permissions.holidays},
+            {'href': '/admin/approvals', 'label': 'Freigaben', 'key': 'approvals', 'show': admin_permissions.approvals},
+            {'href': '/admin/reports/time', 'label': 'Zeitübersichten', 'key': 'reports', 'show': admin_permissions.reports},
+            {'href': '/admin/reports/users', 'label': 'Benutzerauswertung', 'key': 'user_reports', 'show': admin_permissions.reports},
+        ],
+    },
+    {
+        'id': 'backup', 'label': 'Sicherung', 'show': admin_permissions.system,
+        'items': [
+            {'href': '/admin/system/backups', 'label': 'Backup-Jobs', 'key': 'system_backups', 'show': admin_permissions.system},
+            {'href': '/admin/system/backups?tab=history', 'label': 'Backup-Historie', 'key': 'system_backups_history', 'show': admin_permissions.system},
+        ],
+    },
+    {
+        'id': 'system', 'label': 'System', 'show': admin_permissions.system,
+        'items': [
+            {'href': '/admin/system/status', 'label': 'Systemstatus', 'key': 'system_status', 'show': admin_permissions.system},
+            {'href': '/admin/system/errors', 'label': 'Fehlerübersicht', 'key': 'system_errors', 'show': admin_permissions.system},
+            {'href': '/admin/system/logs', 'label': 'Logs', 'key': 'system_logs', 'show': admin_permissions.system},
+            {'href': '/admin/system/sync', 'label': 'Synchronisation', 'key': 'system_sync', 'show': admin_permissions.system},
+        ],
+    },
+    {
+        'id': 'settings', 'label': 'Einstellungen', 'show': admin_permissions.system or admin_permissions.integrations,
+        'items': [
+            {'href': '/admin/system/settings', 'label': 'Systemeinstellungen', 'key': 'system_settings', 'show': admin_permissions.system},
+            {'href': '/admin/integrations/timemoto', 'label': 'TimeMoto TM-616', 'key': 'timemoto', 'show': admin_permissions.integrations},
+        ],
+    },
+] %}
+<nav class="adminnav" aria-label="Administration" data-adminnav>
+    {% for group in nav_groups %}
+        {% if group.show %}
+            {% set group_active = group['items'] | selectattr('key', 'equalto', admin_active) | list | length > 0 %}
+            <details class="adminnav__group" data-group="{{ group.id }}" {% if group_active %}open{% endif %}>
+                <summary class="adminnav__summary">{{ group.label }}</summary>
+                <div class="adminnav__links">
+                    {% for item in group['items'] %}
+                        {% if item.show %}
+                            <a href="{{ item.href }}" class="adminnav__link {% if admin_active == item.key %}is-active{% endif %}">{{ item.label }}</a>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </details>
+        {% endif %}
+    {% endfor %}
 </nav>
+<script>
+(function () {
+    const nav = document.querySelector('[data-adminnav]');
+    if (!nav) return;
+    const KEY = 'erfassung.adminnav.open';
+    let openState = {};
+    try { openState = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { openState = {}; }
+    nav.querySelectorAll('.adminnav__group').forEach((group) => {
+        const id = group.dataset.group;
+        // Active group always wins; otherwise restore remembered state.
+        if (!group.open && openState[id]) group.open = true;
+        group.addEventListener('toggle', () => {
+            openState[id] = group.open;
+            try { localStorage.setItem(KEY, JSON.stringify(openState)); } catch (e) {}
+        });
+    });
+})();
+</script>
