@@ -27,22 +27,36 @@ Berührt eine Änderung `app/models.py`, ist IMMER ein Migrationspfad
 erforderlich (siehe unten). `Base.metadata.create_all()` legt nur fehlende
 Tabellen an – **keine** fehlenden Spalten in bestehenden Tabellen.
 
+## Datenbank-Backends (SQLite & MySQL)
+
+- Standard ist SQLite; MySQL 8+/MariaDB wird über `DATABASE_URL`
+  (`mysql+pymysql://…`) unterstützt. `app/database.py` erkennt das Backend
+  (`DB_BACKEND`, `IS_SQLITE`).
+- **String-Spalten immer mit Länge** definieren (`String(255)`), sonst
+  scheitert `create_all` auf MySQL.
+- Migrations-DDL muss portabel sein (Typen wie `INTEGER`, `BOOLEAN`, `FLOAT`,
+  `VARCHAR(n)`, `TEXT`, `DATE`, `TIME`, `DATETIME`). SQLite-spezifische Schritte
+  (PRAGMA, Tabellen-Rebuild) mit `if database.IS_SQLITE:` kapseln.
+
 ## Migrationen
 
 Es gibt zwei Mechanismen, die beide gepflegt werden müssen:
 
 1. **`app/main.py` → `ensure_schema()`**
-   Läuft bei jedem Anwendungsstart. Ergänzt fehlende Spalten/Indizes per
-   `ALTER TABLE` idempotent (erst `PRAGMA table_info` prüfen, dann ändern).
-   Neue Spalten hier mit sinnvollem `DEFAULT` hinzufügen, damit bestehende
-   Zeilen sofort gültige Werte haben.
+   Läuft bei jedem Anwendungsstart. Ergänzt fehlende Spalten/Indizes
+   idempotent. SQLite-spezifische Teile sind mit `database.IS_SQLITE`
+   gekapselt.
 
-2. **`app/db_migrations.py` → `MIGRATIONS`**
-   Versionierter Runner auf Basis von `PRAGMA user_version`. Für jede
-   Schemaänderung einen neuen Eintrag `(n, funktion)` mit der nächsten
-   freien Nummer anhängen. Bestehende Einträge niemals ändern oder
-   umnummerieren. Downgrades werden nicht unterstützt – Migrationen müssen
-   deshalb vorwärts immer sicher sein.
+2. **`app/db_migrations.py` → `MIGRATIONS`** (dialect-aware)
+   Versionierter Runner; der Versionsstand wird in der portablen Tabelle
+   `schema_migrations` geführt (`app/db_schema.py`). Bestehende SQLite-
+   Installationen werden aus `PRAGMA user_version` einmalig übernommen.
+   Migrationen laufen automatisch beim Start (`_apply_versioned_migrations`)
+   **und** via CLI (`python -m app.db_migrations`). Für jede Schemaänderung
+   einen neuen Eintrag `(n, funktion)` anhängen; Spalten über
+   `db_schema.add_column(...)` ergänzen (dialect-sicher, mit `default` und
+   `backfill_null_to`). Bestehende Einträge nie ändern/umnummerieren;
+   Downgrades werden nicht unterstützt.
 
 ### Anforderungen an jede Migration
 

@@ -18,7 +18,7 @@
         <article class="metric-tile">
             <span class="metric-tile__label">Datenbank</span>
             <strong class="metric-tile__value">{{ 'erreichbar' if status_data.database.reachable else 'nicht erreichbar' }}</strong>
-            <span class="metric-tile__sub">{{ status_data.database.type }} · {{ status_data.database.size_human }}</span>
+            <span class="metric-tile__sub">{{ status_data.database.type }}{% if status_data.database.server_version %} {{ status_data.database.server_version }}{% endif %}</span>
         </article>
         <article class="metric-tile">
             <span class="metric-tile__label">Benutzer</span>
@@ -41,6 +41,20 @@
 </section>
 
 <section class="card">
+    <h2>Datenbank</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Typ</th><td>{{ status_data.database.type }}</td></tr>
+                <tr><th>Version</th><td>{{ status_data.database.server_version or '–' }}</td></tr>
+                <tr><th>Letzte Migration</th><td>{{ status_data.database.last_migration }}</td></tr>
+                <tr><th>Ausstehende Migrationen</th><td>{% if status_data.database.pending_migrations %}{{ status_data.database.pending_migrations|join(', ') }}{% else %}keine{% endif %}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
     <h2>Speicherinformationen</h2>
     <div class="table-scroll">
         <table class="striped-table">
@@ -59,13 +73,15 @@
     <div class="table-scroll">
         <table class="striped-table">
             <tbody>
-                <tr><th>Gerät konfiguriert</th><td>{{ 'ja' if status_data.sync.configured else 'nein' }}</td></tr>
-                <tr><th>Letzte Synchronisation</th><td>{{ status_data.sync.last_sync_at or '–' }}</td></tr>
-                <tr><th>Offene Offline-Aktionen</th><td>{{ status_data.pending_sync }}</td></tr>
-                <tr><th>Fehler (24h)</th><td>{{ status_data.sync.errors_last_24h }}</td></tr>
+                <tr><th>Offene Offline-Aktionen</th><td>{{ status_data.sync_diagnostics.open_actions }}</td></tr>
+                <tr><th>Laufende Synchronisationen</th><td>{{ status_data.sync_diagnostics.running_syncs }}</td></tr>
+                <tr><th>Fehlerhafte Synchronisationen (24h)</th><td>{{ status_data.sync_diagnostics.failed_syncs_24h }}</td></tr>
+                <tr><th>Letzte erfolgreiche Synchronisation</th><td>{{ status_data.sync_diagnostics.last_successful_sync or status_data.sync_diagnostics.device_last_sync or '–' }}</td></tr>
+                <tr><th>Verarbeitete Offline-Aktionen (gesamt)</th><td>{{ status_data.sync_diagnostics.processed_offline_actions }}</td></tr>
             </tbody>
         </table>
     </div>
+    <p class="card-header__hint">Details unter <a href="/admin/system/sync">Synchronisation</a>.</p>
 </section>
 
 <section class="card">

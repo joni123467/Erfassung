@@ -31,6 +31,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import __version__ as APP_VERSION
 from . import (
     app_config,
+    backup_manager,
     crud,
     database,
     holiday_calculator,
@@ -328,6 +329,13 @@ def _should_force_password_change(path: str) -> bool:
 
 
 def ensure_schema() -> None:
+    # ensure_schema() is a legacy SQLite upgrade helper using SQLite-specific
+    # SQL (PRAGMA, "CREATE UNIQUE INDEX IF NOT EXISTS", length-less VARCHAR).
+    # On MySQL the full current schema is created by metadata.create_all() and
+    # any incremental column changes are applied by the dialect-aware versioned
+    # migrations (app/db_migrations.py + app/db_schema.py).
+    if not database.IS_SQLITE:
+        return
     with database.engine.begin() as connection:
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
@@ -1039,7 +1047,23 @@ def ensure_seed_data():
                 exc_info=True,
             )
             raise
+    _apply_versioned_migrations()
     _ensure_holiday_data()
+
+
+def _apply_versioned_migrations() -> None:
+    """Apply all versioned, dialect-aware migrations automatically at start-up.
+
+    Works for SQLite and MySQL/MariaDB. Migration state is tracked in the
+    portable ``schema_migrations`` table, so every schema change is applied
+    exactly once and existing data is preserved (§23).
+    """
+    try:
+        from . import db_migrations
+
+        db_migrations._apply_migrations(database.engine, db_migrations.MIGRATIONS)
+    except Exception:  # pragma: no cover - never block startup on migrations
+        logging_setup.log_error("Automatische Migrationen fehlgeschlagen")
 
 
 @app.middleware("http")
@@ -2493,6 +2517,15 @@ def admin_companies_edit(request: Request, company_id: int, db: Session = Depend
     )
 
 
+def _resolve_holiday_state(db: Session, raw_state: Optional[str]) -> str:
+    if raw_state:
+        candidate = raw_state.upper()
+        if candidate in HOLIDAY_STATE_CODES:
+            return candidate
+    default_region = crud.get_default_holiday_region(db)
+    return default_region if default_region in HOLIDAY_STATE_CODES else "DE"
+
+
 @app.get("/admin/holidays", response_class=HTMLResponse)
 def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
@@ -2502,43 +2535,10 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    selected_state_param = request.query_params.get("state")
-    if selected_state_param:
-        selected_state_param = selected_state_param.upper()
-    selected_year_param = request.query_params.get("holiday_year")
-    refresh_requested = request.query_params.get("refresh") == "1"
-    default_region = crud.get_default_holiday_region(db)
-    selected_state = selected_state_param if selected_state_param in HOLIDAY_STATE_CODES else None
-    if not selected_state:
-        selected_state = default_region if default_region in HOLIDAY_STATE_CODES else "DE"
-    try:
-        selected_year = int(selected_year_param) if selected_year_param else date.today().year
-    except ValueError:
-        selected_year = date.today().year
+    # §22: kein Jahres-Dropdown mehr – es gilt automatisch das aktuelle Jahr.
     current_year = date.today().year
-    min_year = 2000
-    max_year = 2100
-    year_options = list(
-        range(
-            max(min_year, current_year - 5),
-            min(max_year, current_year + 6),
-        )
-    )
-    if selected_year not in year_options:
-        year_options.append(selected_year)
-        year_options.sort()
-    holidays = []
-    auto_synced = False
-    if refresh_requested:
-        holidays = holiday_calculator.ensure_holidays(db, selected_year, selected_state)
-        auto_synced = True
-    else:
-        holidays = crud.get_holidays_for_year(db, selected_year, selected_state)
-        if not holidays:
-            holidays = holiday_calculator.ensure_holidays(db, selected_year, selected_state)
-            auto_synced = True
-    if auto_synced and not message:
-        message = f"{len(holidays)} Feiertage aktualisiert"
+    selected_state = _resolve_holiday_state(db, request.query_params.get("state"))
+    holidays = crud.get_holidays_for_year(db, current_year, selected_state)
     return _admin_template(
         "admin/holidays.html",
         request,
@@ -2548,9 +2548,38 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
         holidays=holidays,
         holiday_states=HOLIDAY_STATE_CHOICES,
         selected_state=selected_state,
-        selected_year=selected_year,
-        holiday_year_options=year_options,
+        current_year=current_year,
     )
+
+
+@app.post("/admin/holidays/apply")
+def admin_holidays_apply(
+    request: Request,
+    state: str = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    """§22: Gesetzliche Feiertage des aktuellen Jahres für das gewählte
+    Bundesland übernehmen. Eigene (benutzerdefinierte) Feiertage bleiben
+    erhalten, es entstehen keine Duplikate."""
+    user = get_logged_in_user(request, db)
+    if not user or not _ensure_admin(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    selected_state = state.upper() if state and state.upper() in HOLIDAY_STATE_CODES else "DE"
+    current_year = date.today().year
+    statutory = list(holiday_calculator.calculate_german_holidays(current_year, selected_state))
+    result = crud.apply_statutory_holidays(db, selected_state, current_year, statutory)
+    logging_setup.log_audit(
+        "Feiertage übernommen",
+        user=user,
+        detail=f"{selected_state} {current_year}: {result['created']} gesetzlich, "
+        f"{result['preserved_custom']} eigene erhalten",
+    )
+    redirect = _build_redirect(
+        "/admin/holidays",
+        msg=f"{result['created']} gesetzliche Feiertage übernommen, {result['preserved_custom']} eigene erhalten",
+        state=selected_state,
+    )
+    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/admin/approvals", response_class=HTMLResponse)
@@ -3963,6 +3992,20 @@ def admin_system_status(request: Request, db: Session = Depends(database.get_db)
     )
 
 
+@app.get("/admin/system/sync", response_class=HTMLResponse)
+def admin_system_sync(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_sync.html",
+        request,
+        user,
+        admin_active="system_sync",
+        diagnostics=system_info.sync_diagnostics(db),
+    )
+
+
 @app.get("/admin/system/errors", response_class=HTMLResponse)
 def admin_system_errors(request: Request, db: Session = Depends(database.get_db)):
     user, redirect = _require_system_admin(request, db)
@@ -4112,7 +4155,76 @@ def admin_system_backups(request: Request, db: Session = Depends(database.get_db
         message=request.query_params.get("msg"),
         error=request.query_params.get("error"),
         admin_active="system_backups",
-        backups=system_info.backup_summary(),
+        backups=backup_manager.backup_summary(),
+        backup_config=app_config.load_backup_config(),
+        backup_targets=app_config.BACKUP_TARGETS,
+    )
+
+
+def _backup_config_from_form(form) -> app_config.BackupConfig:
+    return app_config.BackupConfig.from_dict(
+        {
+            "target": form.get("target", "local"),
+            "include_logs": _parse_checkbox(form.get("include_logs")),
+            "retention_count": form.get("retention_count", "10"),
+            "retention_days": form.get("retention_days", "30"),
+            "ftp_host": form.get("ftp_host", ""),
+            "ftp_port": form.get("ftp_port", "21"),
+            "ftp_username": form.get("ftp_username", ""),
+            "ftp_password": form.get("ftp_password", ""),
+            "ftp_remote_dir": form.get("ftp_remote_dir", "/"),
+            "ftp_use_tls": _parse_checkbox(form.get("ftp_use_tls")),
+            "smb_server": form.get("smb_server", ""),
+            "smb_share": form.get("smb_share", ""),
+            "smb_path": form.get("smb_path", ""),
+            "smb_username": form.get("smb_username", ""),
+            "smb_password": form.get("smb_password", ""),
+            "smb_domain": form.get("smb_domain", ""),
+        }
+    )
+
+
+@app.post("/admin/system/backups/settings")
+async def admin_system_backups_settings(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    form = await request.form()
+    # Preserve stored passwords when the form leaves them blank/masked.
+    current = app_config.load_backup_config()
+    config = _backup_config_from_form(form)
+    if not config.ftp_password:
+        config.ftp_password = current.ftp_password
+    if not config.smb_password:
+        config.smb_password = current.smb_password
+    app_config.save_backup_config(config)
+    logging_setup.log_audit("Backup-Konfiguration geändert", user=user, detail=f"Ziel={config.target}")
+    return RedirectResponse(
+        url="/admin/system/backups?msg=Backup-Einstellungen+gespeichert",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/backups/test")
+async def admin_system_backups_test(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    form = await request.form()
+    current = app_config.load_backup_config()
+    config = _backup_config_from_form(form)
+    if not config.ftp_password:
+        config.ftp_password = current.ftp_password
+    if not config.smb_password:
+        config.smb_password = current.smb_password
+    ok, message = backup_manager.test_connection(config)
+    logging_setup.log_audit(
+        "Backup-Verbindungstest", user=user, detail=f"{config.target}: {'ok' if ok else 'fehlgeschlagen'}"
+    )
+    key = "msg" if ok else "error"
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/backups", **{key: message}),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
@@ -4121,17 +4233,17 @@ def admin_system_backups_create(request: Request, db: Session = Depends(database
     user, redirect = _require_system_admin(request, db)
     if redirect:
         return redirect
-    try:
-        info = system_info.create_backup()
-    except Exception as exc:  # pragma: no cover - depends on filesystem
-        logging_setup.log_error(f"Backup fehlgeschlagen: {exc}")
+    info = backup_manager.create_backup()
+    if info.get("result") == "success":
+        logging_setup.log_audit("Backup erstellt", user=user, detail=info.get("name", ""))
         return RedirectResponse(
-            url="/admin/system/backups?error=Backup+fehlgeschlagen",
+            url=_build_redirect("/admin/system/backups", msg=f"Backup erstellt: {info.get('message','')}"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    logging_setup.log_audit("Backup erstellt", user=user, detail=info["name"])
+    logging_setup.log_error(f"Backup fehlgeschlagen: {info.get('message','')}", exc_info=False)
     return RedirectResponse(
-        url="/admin/system/backups?msg=Backup+erstellt", status_code=status.HTTP_303_SEE_OTHER
+        url=_build_redirect("/admin/system/backups", error=f"Backup fehlgeschlagen: {info.get('message','')}"),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 

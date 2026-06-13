@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -14,8 +12,6 @@ from sqlalchemy.orm import Session
 from . import __version__ as APP_VERSION
 from . import database, log_tools, models, paths
 from .integrations import timemoto
-
-BACKUP_DIR = paths.DATA_DIR / "backups"
 
 
 def _database_path() -> Optional[Path]:
@@ -30,30 +26,46 @@ def _database_path() -> Optional[Path]:
 
 
 def database_status(db: Session) -> dict[str, object]:
-    url = database.SQLALCHEMY_DATABASE_URL
-    db_type = url.split(":", 1)[0] if ":" in url else "unbekannt"
+    from . import db_migrations, db_schema
+
+    backend = database.DB_BACKEND  # "sqlite" / "mysql"
+    db_type = "SQLite" if backend == "sqlite" else backend.upper()
     reachable = True
+    server_version = None
     try:
         db.execute(text("SELECT 1"))
+        if backend == "sqlite":
+            row = db.execute(text("SELECT sqlite_version()")).fetchone()
+            server_version = row[0] if row else None
+        else:
+            row = db.execute(text("SELECT VERSION()")).fetchone()
+            server_version = row[0] if row else None
     except Exception:  # pragma: no cover - depends on backend
         reachable = False
+
     db_path = _database_path()
     size = db_path.stat().st_size if db_path and db_path.exists() else 0
-    user_version = None
-    if db_path and db_path.exists():
-        try:
-            with sqlite3.connect(db_path) as conn:
-                row = conn.execute("PRAGMA user_version").fetchone()
-                user_version = int(row[0]) if row else None
-        except sqlite3.Error:  # pragma: no cover
-            user_version = None
+
+    try:
+        applied = db_schema.applied_versions(database.engine)
+        last_migration = max(applied) if applied else 0
+        all_versions = {version for version, _ in db_migrations.MIGRATIONS}
+        pending = sorted(all_versions - applied)
+    except Exception:  # pragma: no cover
+        last_migration = None
+        pending = []
+
     return {
         "type": db_type,
+        "backend": backend,
+        "server_version": server_version,
         "reachable": reachable,
         "size_bytes": size,
-        "size_human": paths.format_size(size),
-        "schema_version": user_version,
-        "path": str(db_path) if db_path else url,
+        "size_human": paths.format_size(size) if backend == "sqlite" else "–",
+        "schema_version": last_migration,
+        "last_migration": last_migration,
+        "pending_migrations": pending,
+        "path": str(db_path) if db_path else database.SQLALCHEMY_DATABASE_URL,
     }
 
 
@@ -101,11 +113,74 @@ def pwa_status() -> dict[str, object]:
     }
 
 
-def pending_sync_count(db: Session) -> int:
+def processed_offline_actions(db: Session) -> int:
+    """Lifetime count of offline actions the server has *already* processed.
+
+    ``MobileSyncAction`` is an idempotency/dedup log written *after* a punch or
+    vacation action has been applied – it is NOT a pending queue. The actual
+    pending queue lives only in the client's IndexedDB and is drained as soon as
+    the device is online.
+    """
     try:
         return int(db.query(func.count(models.MobileSyncAction.id)).scalar() or 0)
     except Exception:  # pragma: no cover
         return 0
+
+
+def last_offline_action_at(db: Session):
+    try:
+        return db.query(func.max(models.MobileSyncAction.created_at)).scalar()
+    except Exception:  # pragma: no cover
+        return None
+
+
+def sync_diagnostics(db: Session) -> dict[str, object]:
+    """Accurate synchronisation diagnostics (§24/§26).
+
+    The server processes offline actions synchronously, so there is no
+    server-side backlog: ``open_actions`` is always 0. We additionally surface
+    the lifetime count of processed offline actions, the last successful sync
+    and recent sync failures (parsed from ``sync.log``).
+    """
+
+    from . import log_tools
+
+    sync_lines = log_tools.read_log("sync", limit=5000)
+    last_success = None
+    failed_24h = 0
+    retries = 0
+    now = datetime.now()
+    for line in sync_lines:
+        message = (line.message or "")
+        is_error = line.level in {"ERROR", "CRITICAL"} or "fehlgeschlagen" in message.lower()
+        if is_error:
+            if line.timestamp and (now - line.timestamp).total_seconds() <= 24 * 3600:
+                failed_24h += 1
+        elif line.timestamp and last_success is None:
+            last_success = line.timestamp
+        if "wiederhol" in message.lower() or "retry" in message.lower():
+            retries += 1
+
+    try:
+        config = timemoto.TimeMotoConfig.load()
+        device_last_sync = config.last_sync_at
+        configured = bool(config.host)
+    except Exception:  # pragma: no cover
+        device_last_sync = None
+        configured = False
+
+    return {
+        "open_actions": 0,  # no server-side backlog (synchronous processing)
+        "running_syncs": 0,  # no background sync runner
+        "processed_offline_actions": processed_offline_actions(db),
+        "last_offline_action_at": last_offline_action_at(db),
+        "queue_size": int(db.query(func.count(models.MobileSyncAction.id)).scalar() or 0),
+        "failed_syncs_24h": failed_24h,
+        "retries": retries,
+        "last_successful_sync": last_success.strftime("%d.%m.%Y %H:%M:%S") if last_success else None,
+        "device_last_sync": device_last_sync,
+        "device_configured": configured,
+    }
 
 
 def volume_overview() -> list[dict[str, object]]:
@@ -143,7 +218,7 @@ def system_status(db: Session) -> dict[str, object]:
             "free_human": paths.format_size(paths.free_space_bytes()),
         },
         "sync": sync_status(),
-        "pending_sync": pending_sync_count(db),
+        "sync_diagnostics": sync_diagnostics(db),
         "pwa": pwa_status(),
         "volumes": volume_overview(),
     }
@@ -188,58 +263,21 @@ def health_report(db: Session) -> dict[str, object]:
     }
 
 
-# -- Backups ---------------------------------------------------------------
+# -- Backups (delegated to app.backup_manager) ----------------------------
 
 def list_backups() -> list[dict[str, object]]:
-    backups: list[dict[str, object]] = []
-    if BACKUP_DIR.exists():
-        for path in sorted(BACKUP_DIR.glob("*.zip"), reverse=True):
-            try:
-                stat = path.stat()
-            except OSError:  # pragma: no cover
-                continue
-            backups.append(
-                {
-                    "name": path.name,
-                    "path": str(path),
-                    "size_bytes": stat.st_size,
-                    "size_human": paths.format_size(stat.st_size),
-                    "created": datetime.fromtimestamp(stat.st_mtime),
-                }
-            )
-    return backups
+    from . import backup_manager
+
+    return backup_manager.list_backups()
 
 
 def backup_summary() -> dict[str, object]:
-    backups = list_backups()
-    latest = backups[0] if backups else None
-    return {
-        "count": len(backups),
-        "location": str(BACKUP_DIR),
-        "latest": latest,
-        "backups": backups,
-    }
+    from . import backup_manager
+
+    return backup_manager.backup_summary()
 
 
-def create_backup() -> dict[str, object]:
-    """Create a ZIP backup of the database and the configuration volume."""
+def create_backup(config=None) -> dict[str, object]:
+    from . import backup_manager
 
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archive_path = BACKUP_DIR / f"backup_{timestamp}.zip"
-    db_path = _database_path()
-    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        if db_path and db_path.exists():
-            archive.write(db_path, arcname=f"data/{db_path.name}")
-        if paths.CONFIG_DIR.exists():
-            for entry in paths.CONFIG_DIR.rglob("*"):
-                if entry.is_file():
-                    archive.write(entry, arcname=f"config/{entry.relative_to(paths.CONFIG_DIR)}")
-    stat = archive_path.stat()
-    return {
-        "name": archive_path.name,
-        "path": str(archive_path),
-        "size_bytes": stat.st_size,
-        "size_human": paths.format_size(stat.st_size),
-        "created": datetime.fromtimestamp(stat.st_mtime),
-    }
+    return backup_manager.create_backup(config)

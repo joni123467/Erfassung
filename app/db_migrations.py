@@ -1,69 +1,79 @@
-"""Lightweight SQLite migration runner for Erfassung."""
+"""Versioned, dialect-aware migration runner for Erfassung.
+
+Works on both SQLite (default) and MySQL 8+/MariaDB. Migration state is tracked
+in the portable ``schema_migrations`` table (see :mod:`app.db_schema`). Each
+migration is idempotent and forward-only; existing data is always preserved.
+"""
 
 from __future__ import annotations
 
 import argparse
-import sqlite3
+import logging
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import database
+from sqlalchemy.engine import Engine
+
+from . import database, db_schema
 from . import models  # noqa: F401 - ensure models are imported for side-effects
 
-try:
-    # ensure_schema lives in app.main and maintains legacy structures
+try:  # ensure_schema lives in app.main and maintains legacy structures
     from .main import ensure_schema
 except Exception:  # pragma: no cover - fallback if import fails
     ensure_schema = None  # type: ignore[assignment]
 
-MigrationFn = Callable[[sqlite3.Connection], None]
+LOGGER = logging.getLogger("erfassung.application")
+
+MigrationFn = Callable[[Engine], None]
 
 
-def _baseline(_connection: sqlite3.Connection) -> None:
-    """Baseline migration keeps hook for future schema steps."""
-    # No-op by design; user_version will be set by the runner.
+def _baseline(_engine: Engine) -> None:
+    """Baseline migration keeps a hook for future schema steps."""
     return None
 
 
-def _add_group_time_report_permission(connection: sqlite3.Connection) -> None:
-    cursor = connection.execute("PRAGMA table_info('groups')")
-    columns = {row[1] for row in cursor.fetchall()}
-    if "can_view_time_reports" not in columns:
-        connection.execute(
-            "ALTER TABLE groups ADD COLUMN can_view_time_reports INTEGER DEFAULT 0"
-        )
-        connection.execute(
-            "UPDATE groups SET can_view_time_reports = 1 WHERE is_admin = 1"
-        )
-        connection.commit()
+def _add_group_time_report_permission(engine: Engine) -> None:
+    if db_schema.add_column(
+        engine, "groups", "can_view_time_reports", "INTEGER", default="0"
+    ):
+        with engine.begin() as connection:
+            from sqlalchemy import text
+
+            connection.execute(
+                text("UPDATE groups SET can_view_time_reports = 1 WHERE is_admin = 1")
+            )
 
 
-def _add_time_entry_external_columns(connection: sqlite3.Connection) -> None:
-    cursor = connection.execute("PRAGMA table_info('time_entries')")
-    columns = {row[1] for row in cursor.fetchall()}
-    if "source" not in columns:
-        connection.execute("ALTER TABLE time_entries ADD COLUMN source TEXT")
-    if "external_id" not in columns:
-        connection.execute("ALTER TABLE time_entries ADD COLUMN external_id TEXT")
-    connection.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_time_entries_source_external ON time_entries(source, external_id)"
+def _add_time_entry_external_columns(engine: Engine) -> None:
+    db_schema.add_column(engine, "time_entries", "source", "VARCHAR(255)")
+    db_schema.add_column(engine, "time_entries", "external_id", "VARCHAR(255)")
+    # The unique index is created dialect-safely by ensure_schema/create_all.
+
+
+def _add_user_auto_break_deduction(engine: Engine) -> None:
+    # Default 1 keeps the existing behaviour (statutory breaks applied) for
+    # every user created before this migration.
+    db_schema.add_column(
+        engine, "users", "auto_break_deduction", "BOOLEAN", default="1", backfill_null_to="1"
     )
-    connection.commit()
 
 
-def _add_user_auto_break_deduction(connection: sqlite3.Connection) -> None:
-    cursor = connection.execute("PRAGMA table_info('users')")
-    columns = {row[1] for row in cursor.fetchall()}
-    if "auto_break_deduction" not in columns:
-        # Default 1 keeps the existing behaviour (statutory breaks applied)
-        # for every user created before this migration.
-        connection.execute(
-            "ALTER TABLE users ADD COLUMN auto_break_deduction INTEGER DEFAULT 1"
-        )
-    connection.execute(
-        "UPDATE users SET auto_break_deduction = 1 WHERE auto_break_deduction IS NULL"
+def _add_holiday_source(engine: Engine) -> None:
+    """Distinguish statutory (auto-loaded) holidays from custom ones (§22).
+
+    Existing rows default to 'custom' so that nothing an administrator entered
+    manually is ever overwritten by the "Feiertage übernehmen" action. Freshly
+    loaded statutory holidays are written with source='statutory'.
+    """
+
+    db_schema.add_column(
+        engine,
+        "holidays",
+        "source",
+        "VARCHAR(20)",
+        default="'custom'",
+        backfill_null_to="'custom'",
     )
-    connection.commit()
 
 
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
@@ -71,36 +81,37 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (2, _add_group_time_report_permission),
     (3, _add_time_entry_external_columns),
     (4, _add_user_auto_break_deduction),
+    (5, _add_holiday_source),
 ]
 
 
-def _apply_migrations(connection: sqlite3.Connection, migrations: Iterable[tuple[int, MigrationFn]]) -> None:
-    cursor = connection.execute("PRAGMA user_version")
-    row = cursor.fetchone()
-    current_version = int(row[0]) if row else 0
+def _apply_migrations(engine: Engine, migrations: Iterable[tuple[int, MigrationFn]]) -> None:
+    applied = db_schema.applied_versions(engine)
     for version, upgrade in migrations:
-        if version <= current_version:
+        if version in applied:
             continue
-        upgrade(connection)
-        connection.execute(f"PRAGMA user_version = {version}")
-        connection.commit()
+        LOGGER.info("Migration %s wird angewendet", version)
+        upgrade(engine)
+        db_schema.mark_applied(engine, version)
 
 
-def run(database_path: Path) -> None:
-    database_path.parent.mkdir(parents=True, exist_ok=True)
+def run(database_path: Path | None = None) -> None:
+    if database.IS_SQLITE and database_path is not None:
+        database_path.parent.mkdir(parents=True, exist_ok=True)
     if ensure_schema is not None:
         ensure_schema()
-    with sqlite3.connect(database_path) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
-        _apply_migrations(connection, MIGRATIONS)
+    _apply_migrations(database.engine, MIGRATIONS)
 
 
 def main(argv: list[str] | None = None) -> None:
-    default_path = Path(database.SQLALCHEMY_DATABASE_URL.replace("sqlite:///", ""))
-    parser = argparse.ArgumentParser(description="Führt SQLite-Migrationen für Erfassung aus.")
-    parser.add_argument("--database", default=str(default_path), help="Pfad zur SQLite-Datenbank")
+    parser = argparse.ArgumentParser(description="Führt Datenbankmigrationen für Erfassung aus.")
+    parser.add_argument(
+        "--database",
+        default=None,
+        help="Optionaler Pfad zur SQLite-Datenbank (nur für SQLite relevant)",
+    )
     args = parser.parse_args(argv)
-    run(Path(args.database))
+    run(Path(args.database) if args.database else None)
 
 
 if __name__ == "__main__":

@@ -179,13 +179,34 @@ Anmeldung verlangt (`--no-force-change` deaktiviert das).
 - Alle Befehle geben bei Fehlern (unbekannter Benutzer, doppelter Benutzername/E-Mail,
   zu schwaches Passwort) eine verständliche Meldung und den Exit-Code `1` zurück.
 
+## Datenbank (SQLite oder MySQL)
+
+Standard ist SQLite. Optional kann MySQL 8+/MariaDB über `DATABASE_URL`
+genutzt werden (Treiber `PyMySQL` ist enthalten):
+
+```
+DATABASE_URL: mysql+pymysql://benutzer:passwort@db-host:3306/erfassung
+```
+
+Schemaänderungen werden beim Start automatisch und dialektübergreifend
+angewandt (Versionsstand in der Tabelle `schema_migrations`). Upgrades von
+älteren Versionen (0.6.x/0.7.x/0.8.x) sind ohne Datenverlust möglich.
+
+## Backups
+
+Unter **Administration → Backups** lassen sich Sicherungen (Datenbank +
+Konfiguration, optional Logs) lokal sowie auf **FTP/FTPS** oder **SMB3**
+ablegen. Zugangsdaten werden persistent im `config`-Volume gespeichert und nie
+im Klartext protokolliert. Es gibt einen Verbindungstest, konfigurierbare
+Aufbewahrung, eine Integritätsprüfung nach jeder Sicherung und eine Historie.
+
 ## Persistenz (wichtig)
 
 Für produktiven Betrieb sollten folgende Pfade persistent gemountet werden:
 
-- `/app/data` (inkl. SQLite-DB `erfassung.db`)
-- `/app/logs`
-- `/app/config` (z. B. Integrationskonfigurationen wie TimeMoto)
+- `/app/data` (inkl. SQLite-DB `erfassung.db` und `data/backups`)
+- `/app/logs` (strukturierte Logdateien)
+- `/app/config` (Konfigurationen: System, Logging, Backup-Ziele, TimeMoto)
 
 Optional zusätzlich:
 
