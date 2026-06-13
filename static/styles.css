@@ -3093,9 +3093,13 @@ tr.company-deleted td {
     align-items: center;
     gap: 0.4rem;
     white-space: nowrap;
+    border-radius: var(--radius-sm);
 }
 
 .adminnav__summary::-webkit-details-marker { display: none; }
+
+.adminnav__summary:hover { background: var(--surface-muted); }
+.adminnav__summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
 .adminnav__summary::after {
     content: "▾";
@@ -3104,7 +3108,7 @@ tr.company-deleted td {
     transition: transform 0.15s ease;
 }
 
-.adminnav__group[open] > .adminnav__summary { color: var(--brand); }
+.adminnav__group[open] > .adminnav__summary { color: var(--brand); background: var(--surface-muted); }
 .adminnav__group[open] > .adminnav__summary::after { transform: rotate(180deg); }
 
 .adminnav__links {
@@ -3123,6 +3127,7 @@ tr.company-deleted td {
 }
 
 .adminnav__link:hover { background: var(--surface-muted); }
+.adminnav__link:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
 
 .adminnav__link.is-active {
     background: var(--accent);
@@ -3130,13 +3135,13 @@ tr.company-deleted td {
     font-weight: 600;
 }
 
-/* Desktop: groups behave as dropdown panels. */
+/* Desktop: groups behave as dropdown panels (no gap -> no hover flicker). */
 @media (min-width: 769px) {
     .adminnav__links {
         position: absolute;
         top: 100%;
         left: 0;
-        margin-top: 0.25rem;
+        margin-top: 0;
         min-width: 220px;
         z-index: 30;
         background: var(--surface);
@@ -3157,4 +3162,94 @@ tr.company-deleted td {
     flex-wrap: wrap;
     gap: 0.3rem;
     align-items: center;
+}
+
+/* --- Scrollable modal with sticky header/footer (§0.9.3) ------------- */
+.modal__dialog--scroll {
+    max-width: 600px;
+    max-height: 90vh;
+    width: 100%;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.modal__head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal__head h3 { margin: 0; font-size: 1.1rem; }
+
+.modal__dialog--scroll .modal__close {
+    position: static;
+    line-height: 1;
+}
+
+.modal__scrollform {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.modal__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 1rem 1.25rem;
+}
+
+/* Compact field layout inside the modal so more fits without scrolling. */
+.modal__body.form-grid { gap: 0.6rem 1rem; }
+.modal__body label { font-weight: 600; }
+
+.modal__foot {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    padding: 0.8rem 1.25rem;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.bj-fieldset {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.75rem;
+    margin: 0;
+}
+
+.bj-fieldset legend {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    padding: 0 0.3rem;
+}
+
+.bj-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+/* Dynamic target groups: only the relevant one is shown, no empty space. */
+.bj-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.6rem 1rem;
+}
+
+.bj-group[hidden] { display: none !important; }
+
+@media (max-width: 768px) {
+    .modal__dialog--scroll { max-height: 92vh; }
+    .modal { padding: 0.75rem; }
 }

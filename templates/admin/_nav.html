@@ -67,17 +67,38 @@
 (function () {
     const nav = document.querySelector('[data-adminnav]');
     if (!nav) return;
-    const KEY = 'erfassung.adminnav.open';
-    let openState = {};
-    try { openState = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { openState = {}; }
-    nav.querySelectorAll('.adminnav__group').forEach((group) => {
-        const id = group.dataset.group;
-        // Active group always wins; otherwise restore remembered state.
-        if (!group.open && openState[id]) group.open = true;
+    const groups = Array.from(nav.querySelectorAll('.adminnav__group'));
+    // Hover only on real pointer devices with enough width; otherwise accordion.
+    const desktop = window.matchMedia('(hover: hover) and (min-width: 769px)');
+    let hoverTimer = null;
+
+    const closeOthers = (except) => {
+        groups.forEach((g) => { if (g !== except) g.open = false; });
+    };
+
+    // Single-open accordion: opening one group closes the rest. Covers click,
+    // keyboard and touch (the native <details> "toggle" event).
+    groups.forEach((group) => {
         group.addEventListener('toggle', () => {
-            openState[id] = group.open;
-            try { localStorage.setItem(KEY, JSON.stringify(openState)); } catch (e) {}
+            if (group.open) closeOthers(group);
         });
     });
+
+    // Desktop: hover opens (and closes the others); leaving the nav closes all.
+    groups.forEach((group) => {
+        group.addEventListener('mouseenter', () => {
+            if (!desktop.matches) return;
+            clearTimeout(hoverTimer);
+            group.open = true;
+        });
+    });
+    nav.addEventListener('mouseleave', () => {
+        if (!desktop.matches) return;
+        hoverTimer = setTimeout(() => closeOthers(null), 120);
+    });
+    nav.addEventListener('mouseenter', () => clearTimeout(hoverTimer));
+
+    // When switching to a non-hover layout, collapse everything for a clean start.
+    desktop.addEventListener('change', () => closeOthers(null));
 })();
 </script>

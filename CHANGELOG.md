@@ -5,6 +5,29 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.3] – 2026-06-13
+
+### Fixed – Backup-Job-Modal vollständig bedienbar
+
+- Das Modal „Neuer Backup-Job" wird nie höher als der Viewport (`max-height:
+  90vh`). Kopfzeile (Titel) und Fußzeile (Abbrechen, Verbindung testen,
+  Speichern) bleiben immer sichtbar; nur der Inhaltsbereich scrollt. Damit
+  werden die unteren Buttons auf Notebook-/Tablet-Auflösungen nicht mehr
+  abgeschnitten.
+- Kompakteres Layout (geringere Abstände, gruppierte Felder); dynamische Felder
+  je Typ (Lokal/FTP/SMB) ohne Leerflächen. Zusätzlicher „Abbrechen"-Button.
+
+### Changed – Administration-Navigation als echtes Akkordeon
+
+- Es ist immer **maximal eine** Hauptgruppe geöffnet: Beim Öffnen einer Gruppe
+  schließen sich die übrigen automatisch.
+- **Desktop**: Gruppen öffnen per Hover und schließen automatisch, wenn der
+  Mauszeiger die Navigation verlässt; Klick funktioniert weiterhin.
+- **Mobile/Touch**: Accordion per Klick (kein Hover); das Öffnen einer Gruppe
+  schließt die vorherige.
+- Überarbeitete Hover-, Fokus- und Active-States; Dropdown-Panels ohne Lücke
+  (kein Flackern beim Hover).
+
 ## [0.9.2] – 2026-06-13
 
 ### Added – Job-basierte Backup-Verwaltung

@@ -415,3 +415,31 @@ def test_admin_nav_grouped(client):
     assert 'class="adminnav"' in html
     for label in ("System", "Benutzer", "Zeitverwaltung", "Sicherung", "Einstellungen"):
         assert ">" + label + "<" in html
+
+
+def test_admin_nav_single_open_accordion(client):
+    """0.9.3: nav closes other groups (closeOthers) and supports desktop hover."""
+    login(client)
+    html = client.get("/admin/system/status").text
+    assert "closeOthers" in html
+    assert "mouseenter" in html and "mouseleave" in html
+    assert "(hover: hover) and (min-width: 769px)" in html
+
+
+def test_backup_modal_scrollable_with_sticky_footer(client):
+    """0.9.3: modal has a scrollable body and a sticky footer with all actions."""
+    login(client)
+    html = client.get("/admin/system/backups").text
+    assert "modal__dialog--scroll" in html
+    assert "modal__body" in html and "modal__foot" in html
+    for action in ("Abbrechen", "Verbindung testen", "Speichern"):
+        assert action in html
+
+
+def test_backup_modal_css_max_height(client):
+    """The scrollable dialog is capped to the viewport height."""
+    from app import paths
+
+    css = (paths.PROJECT_ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+    assert ".modal__dialog--scroll" in css
+    assert "max-height: 90vh" in css
