@@ -391,6 +391,29 @@ section h2 {
     box-shadow: var(--shadow-sm);
 }
 
+.metric-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.metric-tile__label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.metric-tile__value {
+    font-size: 1.5rem;
+    line-height: 1.1;
+}
+
+.metric-tile__sub {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -2970,4 +2993,77 @@ tr.company-deleted td {
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.50);
     --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.55);
     --ring: 0 0 0 3px rgba(59, 130, 246, 0.35);
+}
+
+/* --- Administration → System (Logs / Status) ------------------------- */
+.log-channel-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1rem 0;
+}
+
+.log-channel-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.log-channel-tab.is-active {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--accent, #3b82f6);
+    font-weight: 600;
+}
+
+.log-channel-tab__size {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.log-viewer {
+    max-height: 60vh;
+    overflow: auto;
+}
+
+.log-table td,
+.log-table th {
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.log-table .log-message {
+    white-space: normal;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.log-level {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-xs);
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: var(--surface-muted);
+    color: var(--text-muted);
+}
+
+.log-level--warning { background: #fef3c7; color: #92400e; }
+.log-level--error,
+.log-level--critical { background: #fee2e2; color: #991b1b; }
+.log-level--info { background: #dbeafe; color: #1e40af; }
+.log-level--debug { background: #e5e7eb; color: #374151; }
+
+.checkbox-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-direction: row;
 }

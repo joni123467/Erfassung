@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Systemeinstellungen – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_settings' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Systemeinstellungen</h1>
+            <p class="card-header__hint">Logging und Synchronisation. Persistent im <code>config</code>-Volume gespeichert.</p>
+        </div>
+        <div class="card-header__actions">
+            <a class="button ghost" href="/admin/system/settings/export">Export (JSON)</a>
+        </div>
+    </div>
+    <form method="post" action="/admin/system/settings" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+
+        <h2 class="full-width">Logging</h2>
+        <label>
+            Log-Level
+            <select name="level">
+                {% for choice in level_choices %}
+                    <option value="{{ choice }}" {% if choice == logging_config.level %}selected{% endif %}>{{ choice }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="api_logging" {% if logging_config.api_logging %}checked{% endif %}> API-Logging
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="security_logging" {% if logging_config.security_logging %}checked{% endif %}> Security-Logging
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="audit_logging" {% if logging_config.audit_logging %}checked{% endif %}> Audit-Logging
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="sync_logging" {% if logging_config.sync_logging %}checked{% endif %}> Sync-Logging
+        </label>
+
+        <h2 class="full-width">Log-Rotation</h2>
+        <label>
+            Maximale Dateigröße (MB)
+            <input type="number" name="rotation_max_mb" min="0.1" step="0.1" value="{{ (logging_config.rotation_max_bytes / 1048576)|round(1) }}">
+        </label>
+        <label>
+            Generationen (Backups)
+            <input type="number" name="rotation_backup_count" min="0" value="{{ logging_config.rotation_backup_count }}">
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="auto_cleanup_enabled" {% if logging_config.auto_cleanup_enabled %}checked{% endif %}> Automatische Logbereinigung
+        </label>
+        <label>
+            Bereinigung nach (Tagen)
+            <input type="number" name="auto_cleanup_days" min="1" value="{{ logging_config.auto_cleanup_days }}">
+        </label>
+
+        <h2 class="full-width">Synchronisation</h2>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="sync_enabled" {% if system_settings.sync_enabled %}checked{% endif %}> Synchronisation aktiv
+        </label>
+        <label>
+            Intervall (Minuten)
+            <input type="number" name="sync_interval_minutes" min="1" value="{{ system_settings.sync_interval_minutes }}">
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="sync_full_on_start" {% if system_settings.sync_full_on_start %}checked{% endif %}> Vollsynchronisation beim Start
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="auto_holiday_management" {% if system_settings.auto_holiday_management %}checked{% endif %}> Automatische Feiertagsverwaltung
+        </label>
+
+        <button type="submit" class="button primary full-width">Einstellungen speichern</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Einstellungen importieren</h2>
+    <p class="card-header__hint">JSON wird vor der Übernahme validiert.</p>
+    <form method="post" action="/admin/system/settings/import" class="form-grid" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label class="full-width">
+            JSON-Datei
+            <input type="file" name="settings_file" accept="application/json,.json">
+        </label>
+        <label class="full-width">
+            oder JSON einfügen
+            <textarea name="settings_json" rows="6" placeholder='{"logging": {...}, "system": {...}}'></textarea>
+        </label>
+        <button type="submit" class="button full-width">Importieren</button>
+    </form>
+</section>
+{% endblock %}

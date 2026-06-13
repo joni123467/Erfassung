@@ -29,7 +29,20 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
-from . import crud, database, holiday_calculator, models, schemas, security, services
+from . import (
+    app_config,
+    crud,
+    database,
+    holiday_calculator,
+    log_tools,
+    logging_setup,
+    models,
+    paths,
+    schemas,
+    security,
+    services,
+    system_info,
+)
 from .integrations import timemoto
 from .excel_export import export_time_entries, export_user_summary_excel
 from .pdf_export import (
@@ -969,6 +982,44 @@ def _ensure_holiday_data() -> None:
         db.close()
 
 
+def _initialize_runtime() -> None:
+    """Prepare persistent volumes and the logging system on start-up.
+
+    Section 16 of the 0.9.0 spec: verify that config/data/logs exist, create
+    them if missing and document the result in ``application.log``.
+    """
+
+    volume_report = paths.ensure_directories()
+    logging_config = app_config.load_logging_config()
+    logging_setup.configure_logging(logging_config)
+
+    logging_setup.log_application(f"Erfassung {APP_VERSION} startet")
+    for name, info in volume_report.items():
+        if info.get("error"):
+            logging_setup.log_error(
+                f"Volume '{name}' konnte nicht angelegt werden: {info['error']}",
+                exc_info=False,
+            )
+        elif info.get("created"):
+            logging_setup.log_application(f"Volume '{name}' neu angelegt: {info['path']}")
+        else:
+            logging_setup.log_application(
+                f"Volume '{name}' vorhanden: {info['path']} "
+                f"(schreibbar={info['writable']})"
+            )
+    if logging_config.auto_cleanup_enabled:
+        removed = log_tools.cleanup_old_logs(logging_config.auto_cleanup_days)
+        if removed:
+            logging_setup.log_application(
+                f"Automatische Logbereinigung: {removed} alte Dateien entfernt"
+            )
+
+
+@app.on_event("startup")
+def initialize_runtime():
+    _initialize_runtime()
+
+
 @app.on_event("startup")
 def ensure_seed_data():
     ensure_schema()
@@ -1008,6 +1059,22 @@ async def db_session_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def api_logging_middleware(request: Request, call_next):
+    path = request.url.path
+    is_api = path.startswith("/api/")
+    response = await call_next(request)
+    if is_api:
+        try:
+            logging_setup.log_api(
+                f"{request.method} {path} -> {response.status_code}",
+                level=logging.WARNING if response.status_code >= 400 else logging.INFO,
+            )
+        except Exception:  # pragma: no cover - logging must never break a request
+            pass
+    return response
+
+
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
@@ -1030,19 +1097,28 @@ def login_submit(
 ):
     user = crud.get_user_by_username(db, username.strip())
     if not user or not security.verify_password(password, user.password_hash):
+        logging_setup.log_security(
+            f"Fehlgeschlagener Login für '{username.strip()}'",
+            level=logging.WARNING,
+            user=username.strip() or "-",
+        )
         return templates.TemplateResponse(
             "login.html",
             {"request": request, "error": "Benutzername oder Kennwort ist ungültig.", "user": None},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     request.session["user_id"] = user.id
+    logging_setup.log_security("Erfolgreiche Anmeldung", user=user)
     if user.must_change_password:
         return RedirectResponse(url="/account/password", status_code=status.HTTP_303_SEE_OTHER)
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/logout")
-def logout(request: Request):
+def logout(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if user:
+        logging_setup.log_security("Abmeldung", user=user)
     request.session.clear()
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -1092,6 +1168,8 @@ def account_password_update(
     user.password_hash = security.hash_password(new_password)
     user.must_change_password = False
     db.commit()
+    logging_setup.log_audit("Passwort geändert", user=user)
+    logging_setup.log_security("Passwortänderung durchgeführt", user=user)
     return RedirectResponse(url="/dashboard?msg=Kennwort+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2175,6 +2253,7 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
         "reports": _can_view_time_reports(user),
         "edit_time_entries": _can_edit_time_entries(user),
         "integrations": _ensure_admin(user),
+        "system": _ensure_admin(user),
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
     permissions["create_companies"] = _can_create_companies(user)
@@ -2821,6 +2900,7 @@ def create_group_html(
             url="/admin/groups/new?error=Gruppe+existiert+bereits",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    logging_setup.log_audit("Gruppe/Rolle angelegt", user=user, detail=name)
     return RedirectResponse(url="/admin/groups?msg=Gruppe+angelegt", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2881,6 +2961,7 @@ def update_group_html(
             url="/admin/groups?error=Gruppe+nicht+gefunden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    logging_setup.log_audit("Gruppe/Rolle geändert", user=user, detail=name)
     return RedirectResponse(url="/admin/groups?msg=Gruppe+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2895,6 +2976,7 @@ def delete_group_html(request: Request, group_id: int, db: Session = Depends(dat
             url="/admin/groups?error=Gruppe+konnte+nicht+gelöscht+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    logging_setup.log_audit("Gruppe/Rolle gelöscht", user=user, detail=f"id={group_id}")
     return RedirectResponse(url="/admin/groups?msg=Gruppe+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2972,6 +3054,7 @@ def create_user_html(
             url=f"/admin/users/new?error={message}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    logging_setup.log_audit("Benutzer angelegt", user=user, detail=username)
     return RedirectResponse(url="/admin/users?msg=Benutzer+angelegt", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -3058,6 +3141,7 @@ def update_user_html(
             url="/admin/users?error=Benutzer+nicht+gefunden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    logging_setup.log_audit("Benutzer geändert", user=user, detail=f"id={user_id}")
     return RedirectResponse(url="/admin/users?msg=Benutzer+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -3073,6 +3157,7 @@ def delete_user_html(request: Request, user_id: int, db: Session = Depends(datab
             url="/admin/users?error=Benutzer+konnte+nicht+gelöscht+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    logging_setup.log_audit("Benutzer gelöscht", user=user, detail=f"id={user_id}")
     return RedirectResponse(url="/admin/users?msg=Benutzer+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -3338,6 +3423,7 @@ def set_vacation_status_admin(
     if not updated:
         redirect = _build_redirect("/admin/approvals", error="Urlaubsantrag nicht gefunden")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    logging_setup.log_audit("Urlaubsfreigabe", user=user, detail=f"{message} (id={vacation_id})")
     redirect = _build_redirect("/admin/approvals", msg=message)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -3378,6 +3464,9 @@ def create_holiday_admin(
             holiday_year=str(holiday_date.year),
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    logging_setup.log_audit(
+        "Feiertag angelegt", user=user, detail=f"{name.strip()} {holiday_date} ({target_region})"
+    )
     redirect = _build_redirect(
         "/admin/holidays",
         msg="Feiertag+gespeichert",
@@ -3407,6 +3496,7 @@ def delete_holiday_admin(
             holiday_year=str(year),
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    logging_setup.log_audit("Feiertag gelöscht", user=user, detail=f"id={holiday_id}")
     redirect = _build_redirect(
         "/admin/holidays", msg="Feiertag gelöscht", state=state, holiday_year=str(year)
     )
@@ -3561,6 +3651,9 @@ def admin_timemoto_sync(
     try:
         result = timemoto.synchronize(db, config, full_sync=full_flag)
     except timemoto.TimeMotoError as exc:
+        logging_setup.log_sync(
+            f"Synchronisierung fehlgeschlagen: {exc}", level=logging.ERROR, user=user
+        )
         return _admin_template(
             "admin/timemoto.html",
             request,
@@ -3569,6 +3662,10 @@ def admin_timemoto_sync(
             config=config,
             sync_result=None,
         )
+    logging_setup.log_sync(
+        f"Synchronisierung (full={full_flag}) – {result.created_entries} neue Buchungen",
+        user=user,
+    )
     try:
         config.save()
     except timemoto.TimeMotoError as exc:
@@ -3615,7 +3712,13 @@ def api_timemoto_sync(
     try:
         result = timemoto.synchronize(db, config, full_sync=bool(full))
     except timemoto.TimeMotoError as exc:
+        logging_setup.log_sync(
+            f"API-Synchronisierung fehlgeschlagen: {exc}", level=logging.ERROR, user=user
+        )
         raise HTTPException(status_code=502, detail=str(exc))
+    logging_setup.log_sync(
+        f"API-Synchronisierung – {result.created_entries} neue Buchungen", user=user
+    )
     try:
         config.save()
     except timemoto.TimeMotoError as exc:
@@ -3726,8 +3829,384 @@ def export_user_time_entries(user_id: int, db: Session = Depends(database.get_db
 
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok"}
+def health_check(db: Session = Depends(database.get_db)):
+    report = system_info.health_report(db)
+    status_code = status.HTTP_200_OK if report["status"] == "ok" else status.HTTP_503_SERVICE_UNAVAILABLE
+    return JSONResponse(report, status_code=status_code)
+
+
+# ---------------------------------------------------------------------------
+# Administration → System (Logs, Status, Fehler, Einstellungen, Backups)
+# ---------------------------------------------------------------------------
+
+LOG_LEVEL_CHOICES = list(app_config.VALID_LEVELS)
+
+
+def _require_system_admin(request: Request, db: Session):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return None, RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _ensure_admin(user):
+        return None, RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    return user, None
+
+
+@app.get("/admin/system/logs", response_class=HTMLResponse)
+def admin_system_logs(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    params = request.query_params
+    channel = params.get("channel") or "application"
+    if channel not in logging_setup.CHANNELS:
+        channel = "application"
+    search = params.get("search", "")
+    level = params.get("level", "")
+    start = _parse_date_param(params.get("start"))
+    end = _parse_date_param(params.get("end"))
+    try:
+        lines = log_tools.read_log(
+            channel, search=search, level=level, start=start, end=end, limit=2000
+        )
+    except KeyError:
+        lines = []
+    return _admin_template(
+        "admin/system_logs.html",
+        request,
+        user,
+        message=params.get("msg"),
+        error=params.get("error"),
+        admin_active="system_logs",
+        logs=log_tools.available_logs(),
+        selected_channel=channel,
+        log_lines=lines,
+        search=search,
+        level_filter=level,
+        level_choices=LOG_LEVEL_CHOICES,
+        start_value=params.get("start", ""),
+        end_value=params.get("end", ""),
+        auto_refresh=params.get("auto_refresh") == "1",
+    )
+
+
+@app.get("/admin/system/logs/download")
+def admin_system_logs_download(request: Request, name: str = "", db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    if name not in logging_setup.CHANNELS:
+        return RedirectResponse(
+            url="/admin/system/logs?error=Unbekanntes+Log", status_code=status.HTTP_303_SEE_OTHER
+        )
+    content = log_tools.single_log_bytes(name)
+    logging_setup.log_audit("Log heruntergeladen", user=user, detail=name)
+    return Response(
+        content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={logging_setup.CHANNELS[name]}"},
+    )
+
+
+@app.get("/admin/system/logs/download-zip")
+def admin_system_logs_download_zip(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    requested = request.query_params.getlist("names")
+    buffer = log_tools.build_zip(requested)
+    logging_setup.log_audit("Logs als ZIP heruntergeladen", user=user, detail=",".join(requested) or "alle")
+    filename = f"logs_{date.today().strftime('%Y-%m-%d')}.zip"
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/admin/system/logs/clear")
+def admin_system_logs_clear(
+    request: Request,
+    channel: str = Form("all"),
+    db: Session = Depends(database.get_db),
+):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    if channel == "all":
+        log_tools.clear_all_logs()
+        logging_setup.log_audit("Alle Logs geleert", user=user)
+    elif channel in logging_setup.CHANNELS:
+        log_tools.clear_log(channel)
+        logging_setup.log_audit("Log geleert", user=user, detail=channel)
+    else:
+        return RedirectResponse(
+            url="/admin/system/logs?error=Unbekanntes+Log", status_code=status.HTTP_303_SEE_OTHER
+        )
+    return RedirectResponse(
+        url=f"/admin/system/logs?channel={channel if channel != 'all' else 'application'}&msg=Logs+geleert",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.get("/admin/system/status", response_class=HTMLResponse)
+def admin_system_status(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_status.html",
+        request,
+        user,
+        admin_active="system_status",
+        status_data=system_info.system_status(db),
+        backups=system_info.backup_summary(),
+    )
+
+
+@app.get("/admin/system/errors", response_class=HTMLResponse)
+def admin_system_errors(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_errors.html",
+        request,
+        user,
+        admin_active="system_errors",
+        errors=log_tools.error_overview(),
+    )
+
+
+@app.get("/admin/system/settings", response_class=HTMLResponse)
+def admin_system_settings(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_settings.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        admin_active="system_settings",
+        logging_config=app_config.load_logging_config(),
+        system_settings=app_config.load_system_settings(),
+        level_choices=LOG_LEVEL_CHOICES,
+    )
+
+
+@app.post("/admin/system/settings")
+def admin_system_settings_save(
+    request: Request,
+    level: str = Form("INFO"),
+    api_logging: Optional[str] = Form(None),
+    security_logging: Optional[str] = Form(None),
+    audit_logging: Optional[str] = Form(None),
+    sync_logging: Optional[str] = Form(None),
+    rotation_max_mb: str = Form("5"),
+    rotation_backup_count: str = Form("5"),
+    auto_cleanup_enabled: Optional[str] = Form(None),
+    auto_cleanup_days: str = Form("90"),
+    sync_enabled: Optional[str] = Form(None),
+    sync_interval_minutes: str = Form("60"),
+    sync_full_on_start: Optional[str] = Form(None),
+    auto_holiday_management: Optional[str] = Form(None),
+    db: Session = Depends(database.get_db),
+):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    try:
+        max_mb = max(float(rotation_max_mb.replace(",", ".")), 0.1)
+    except ValueError:
+        max_mb = 5.0
+    logging_config = app_config.LoggingConfig.from_dict(
+        {
+            "level": level,
+            "api_logging": _parse_checkbox(api_logging),
+            "security_logging": _parse_checkbox(security_logging),
+            "audit_logging": _parse_checkbox(audit_logging),
+            "sync_logging": _parse_checkbox(sync_logging),
+            "rotation_max_bytes": int(max_mb * 1024 * 1024),
+            "rotation_backup_count": rotation_backup_count,
+            "auto_cleanup_enabled": _parse_checkbox(auto_cleanup_enabled),
+            "auto_cleanup_days": auto_cleanup_days,
+        }
+    )
+    system_settings = app_config.SystemSettings.from_dict(
+        {
+            "sync_enabled": _parse_checkbox(sync_enabled),
+            "sync_interval_minutes": sync_interval_minutes,
+            "sync_full_on_start": _parse_checkbox(sync_full_on_start),
+            "auto_holiday_management": _parse_checkbox(auto_holiday_management),
+        }
+    )
+    # Audit the change while the previous logging policy is still active, so the
+    # entry is never lost when the new settings disable audit logging.
+    logging_setup.log_audit("Systemeinstellungen geändert", user=user, detail=f"level={logging_config.level}")
+    app_config.save_logging_config(logging_config)
+    app_config.save_system_settings(system_settings)
+    logging_setup.configure_logging(logging_config)
+    return RedirectResponse(
+        url="/admin/system/settings?msg=Einstellungen+gespeichert", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/admin/system/settings/export")
+def admin_system_settings_export(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    import json
+
+    payload = json.dumps(app_config.export_all(), indent=2, sort_keys=True)
+    logging_setup.log_audit("Systemeinstellungen exportiert", user=user)
+    filename = f"erfassung_settings_{date.today().strftime('%Y-%m-%d')}.json"
+    return Response(
+        payload,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/admin/system/settings/import")
+async def admin_system_settings_import(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    import json
+
+    form = await request.form()
+    upload = form.get("settings_file")
+    raw = form.get("settings_json") or ""
+    if upload is not None and hasattr(upload, "read"):
+        raw = (await upload.read()).decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return RedirectResponse(
+            url="/admin/system/settings?error=Ungültiges+JSON", status_code=status.HTTP_303_SEE_OTHER
+        )
+    valid, message = app_config.validate_import(payload)
+    if not valid:
+        return RedirectResponse(
+            url=f"/admin/system/settings?error={message}", status_code=status.HTTP_303_SEE_OTHER
+        )
+    app_config.import_all(payload)
+    logging_setup.configure_logging(app_config.load_logging_config())
+    logging_setup.log_audit("Systemeinstellungen importiert", user=user)
+    return RedirectResponse(
+        url="/admin/system/settings?msg=Einstellungen+importiert", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/admin/system/backups", response_class=HTMLResponse)
+def admin_system_backups(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_backups.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        admin_active="system_backups",
+        backups=system_info.backup_summary(),
+    )
+
+
+@app.post("/admin/system/backups/create")
+def admin_system_backups_create(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    try:
+        info = system_info.create_backup()
+    except Exception as exc:  # pragma: no cover - depends on filesystem
+        logging_setup.log_error(f"Backup fehlgeschlagen: {exc}")
+        return RedirectResponse(
+            url="/admin/system/backups?error=Backup+fehlgeschlagen",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit("Backup erstellt", user=user, detail=info["name"])
+    return RedirectResponse(
+        url="/admin/system/backups?msg=Backup+erstellt", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/admin/holidays/export")
+def admin_holidays_export(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    import json
+
+    holidays = crud.get_holidays(db)
+    payload = json.dumps(
+        {
+            "version": 1,
+            "holidays": [
+                {"name": h.name, "date": h.date.isoformat(), "region": h.region}
+                for h in holidays
+            ],
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+    logging_setup.log_audit("Feiertage exportiert", user=user, detail=f"{len(holidays)} Einträge")
+    filename = f"feiertage_{date.today().strftime('%Y-%m-%d')}.json"
+    return Response(
+        payload,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/admin/holidays/import")
+async def admin_holidays_import(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    import json
+
+    form = await request.form()
+    upload = form.get("holidays_file")
+    raw = form.get("holidays_json") or ""
+    if upload is not None and hasattr(upload, "read"):
+        raw = (await upload.read()).decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return RedirectResponse(
+            url="/admin/holidays?error=Ungültiges+JSON", status_code=status.HTTP_303_SEE_OTHER
+        )
+    entries = payload.get("holidays") if isinstance(payload, dict) else payload
+    if not isinstance(entries, list):
+        return RedirectResponse(
+            url="/admin/holidays?error=Ungültiges+Format", status_code=status.HTTP_303_SEE_OTHER
+        )
+    to_create: list[schemas.HolidayCreate] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        try:
+            to_create.append(
+                schemas.HolidayCreate(
+                    name=str(item["name"]).strip(),
+                    date=date.fromisoformat(str(item["date"])),
+                    region=str(item.get("region") or "DE").strip() or "DE",
+                )
+            )
+        except (KeyError, ValueError):
+            continue
+    if to_create:
+        crud.upsert_holidays(db, to_create)
+    logging_setup.log_audit("Feiertage importiert", user=user, detail=f"{len(to_create)} Einträge")
+    return RedirectResponse(
+        url=f"/admin/holidays?msg={len(to_create)}+Feiertage+importiert",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 if __name__ == "__main__":

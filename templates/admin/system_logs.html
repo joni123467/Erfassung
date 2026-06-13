@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Logs – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_logs' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Logs</h1>
+            <p class="card-header__hint">Strukturierte Protokolle mit Zeitstempel, Log-Level und Benutzerbezug.</p>
+        </div>
+        <div class="card-header__actions">
+            <a class="button ghost" href="/admin/system/logs/download?name={{ selected_channel }}">Diese Datei laden</a>
+            <a class="button" href="/admin/system/logs/download-zip">Alle als ZIP</a>
+        </div>
+    </div>
+
+    <nav class="log-channel-tabs">
+        {% for log in logs %}
+            <a class="log-channel-tab {% if log.channel == selected_channel %}is-active{% endif %}"
+               href="/admin/system/logs?channel={{ log.channel }}">
+                {{ log.channel }}
+                <span class="log-channel-tab__size">{{ log.size_human }}</span>
+            </a>
+        {% endfor %}
+    </nav>
+
+    <form method="get" action="/admin/system/logs" class="filter-bar">
+        <input type="hidden" name="channel" value="{{ selected_channel }}">
+        <label>
+            Suchtext
+            <input type="search" name="search" value="{{ search }}" placeholder="z. B. Benutzername">
+        </label>
+        <label>
+            Log-Level
+            <select name="level">
+                <option value="">Alle</option>
+                {% for choice in level_choices %}
+                    <option value="{{ choice }}" {% if choice == level_filter %}selected{% endif %}>{{ choice }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Von
+            <input type="date" name="start" value="{{ start_value }}">
+        </label>
+        <label>
+            Bis
+            <input type="date" name="end" value="{{ end_value }}">
+        </label>
+        <label class="checkbox-inline">
+            <input type="checkbox" name="auto_refresh" value="1" {% if auto_refresh %}checked{% endif %}>
+            Auto-Refresh (10 s)
+        </label>
+        <button type="submit" class="button">Filtern</button>
+        <a class="button ghost" href="/admin/system/logs?channel={{ selected_channel }}">Zurücksetzen</a>
+    </form>
+
+    <div class="table-scroll log-viewer">
+        <table class="striped-table log-table">
+            <thead>
+                <tr>
+                    <th>Zeit</th>
+                    <th>Level</th>
+                    <th>Kanal</th>
+                    <th>Benutzer</th>
+                    <th>Meldung</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in log_lines %}
+                    <tr class="log-row log-row--{{ line.level|lower }}">
+                        <td>{{ line.timestamp.strftime('%d.%m.%Y %H:%M:%S') if line.timestamp else '–' }}</td>
+                        <td><span class="log-level log-level--{{ line.level|lower }}">{{ line.level or '–' }}</span></td>
+                        <td>{{ line.channel or '–' }}</td>
+                        <td>{{ line.user or '–' }}</td>
+                        <td class="log-message">{{ line.message }}</td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="5">Keine Einträge für diese Auswahl.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <form method="post" action="/admin/system/logs/clear" class="inline-form"
+          onsubmit="return confirm('Diese Logdatei wirklich unwiderruflich leeren?');">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <input type="hidden" name="channel" value="{{ selected_channel }}">
+        <button type="submit" class="button danger small">„{{ selected_channel }}“ leeren</button>
+    </form>
+    <form method="post" action="/admin/system/logs/clear" class="inline-form"
+          onsubmit="return confirm('ALLE Logdateien wirklich unwiderruflich leeren?');">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <input type="hidden" name="channel" value="all">
+        <button type="submit" class="button danger small">Alle Logs leeren</button>
+    </form>
+</section>
+{% if auto_refresh %}
+<script>
+    setTimeout(function () { window.location.reload(); }, 10000);
+</script>
+{% endif %}
+{% endblock %}

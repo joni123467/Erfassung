@@ -32,7 +32,10 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
                         </button>
                         <span class="info-tip__bubble" role="tooltip">
-                            <strong>Arbeitsschutz (ArbZG):</strong> Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich, nach 9 Stunden mindestens 45 Minuten. Bitte stempel deine Pause entsprechend.
+                            <strong>Hinweis:</strong> Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.
+                            {% if user.auto_break_deduction %}
+                                Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.
+                            {% endif %}
                         </span>
                     </span>
                 </h2>
@@ -324,19 +327,6 @@
                     {% endif %}
                 </div>
             </div>
-            <div class="dashboard-metrics-card__section dashboard-metrics-card__section--holidays">
-                <h2>Nächste Feiertage</h2>
-                <ul class="dashboard-holiday-list">
-                    {% for holiday in metrics.upcoming_holidays %}
-                        <li class="dashboard-holiday-list__item">
-                            <span class="dashboard-holiday-list__name">{{ holiday.name }}</span>
-                            <span class="dashboard-holiday-list__date">{{ holiday.date.strftime('%d.%m.%Y') }}</span>
-                        </li>
-                    {% else %}
-                        <li class="dashboard-holiday-list__item dashboard-holiday-list__item--empty">Keine kommenden Feiertage hinterlegt.</li>
-                    {% endfor %}
-                </ul>
-            </div>
             <div class="dashboard-metrics-card__section dashboard-metrics-card__section--vacation">
                 <h2>Urlaubsübersicht</h2>
                 <div class="dashboard-summary-card__body">
@@ -372,6 +362,19 @@
                         {% endif %}
                     </p>
                 </div>
+            </div>
+            <div class="dashboard-metrics-card__section dashboard-metrics-card__section--holidays">
+                <h2>Feiertagsübersicht</h2>
+                <ul class="dashboard-holiday-list">
+                    {% for holiday in metrics.upcoming_holidays %}
+                        <li class="dashboard-holiday-list__item">
+                            <span class="dashboard-holiday-list__name">{{ holiday.name }}</span>
+                            <span class="dashboard-holiday-list__date">{{ holiday.date.strftime('%d.%m.%Y') }}</span>
+                        </li>
+                    {% else %}
+                        <li class="dashboard-holiday-list__item dashboard-holiday-list__item--empty">Keine kommenden Feiertage hinterlegt.</li>
+                    {% endfor %}
+                </ul>
             </div>
         </section>
     </aside>
@@ -429,18 +432,9 @@
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
     <p class="form-hint">Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.</p>
-    <p class="form-hint">Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.</p>
-</section>
-
-<section class="card">
-    <h2>Feiertage ({{ holiday_region_label }})</h2>
-    <ul>
-        {% for holiday in holidays %}
-            <li>{{ holiday.date.strftime('%d.%m.%Y') }} – {{ holiday.name }}</li>
-        {% else %}
-            <li>Keine Feiertage eingetragen. Bitte Synchronisation ausführen.</li>
-        {% endfor %}
-    </ul>
+    {% if user.auto_break_deduction %}
+        <p class="form-hint">Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.</p>
+    {% endif %}
     <p><a class="button" href="/records">Zu meinen Buchungen wechseln</a></p>
 </section>
 <script>

@@ -6,6 +6,9 @@
 <section class="card">
     <div class="card-header">
         <h1>Feiertage verwalten</h1>
+        <div class="card-header__actions">
+            <a class="button ghost" href="/admin/holidays/export">Export (JSON)</a>
+        </div>
     </div>
     <div class="card-body card-body--form card-body--separated">
         <form method="get" action="/admin/holidays" class="filter-bar">
@@ -48,6 +51,18 @@
                 </div>
                 <div class="holiday-form__actions">
                     <button type="submit" class="button">Feiertag hinzufügen</button>
+                </div>
+            </form>
+            <form method="post" action="/admin/holidays/import" class="holiday-form" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                <div class="holiday-form__grid">
+                    <label>
+                        Feiertage importieren (JSON)
+                        <input type="file" name="holidays_file" accept="application/json,.json">
+                    </label>
+                </div>
+                <div class="holiday-form__actions">
+                    <button type="submit" class="button ghost">Importieren</button>
                 </div>
             </form>
         </div>
