@@ -25,13 +25,17 @@
                     <strong>{{ daily_total_minutes|format_minutes }} Std</strong>
                 </div>
             </header>
-            <p class="dashboard-summary__hint dashboard-day-card__hint">
-                <strong>Hinweis (Arbeitsschutz):</strong>
-                Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich,
-                nach 9 Stunden mindestens 45 Minuten (ArbZG). Bitte stempel deine Pause entsprechend.
-            </p>
             <section class="dashboard-day-card__actions">
-                <h2 class="dashboard-section-heading">Schnell stempeln</h2>
+                <h2 class="dashboard-section-heading">Schnell stempeln
+                    <span class="info-tip">
+                        <button type="button" class="info-tip__trigger" aria-expanded="false" aria-label="Hinweis zum Arbeitsschutz anzeigen">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                        </button>
+                        <span class="info-tip__bubble" role="tooltip">
+                            <strong>Arbeitsschutz (ArbZG):</strong> Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich, nach 9 Stunden mindestens 45 Minuten. Bitte stempel deine Pause entsprechend.
+                        </span>
+                    </span>
+                </h2>
                 {% if active_entry %}
                     <div class="punch-status">
                         <p class="status-line">

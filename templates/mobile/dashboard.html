@@ -82,7 +82,16 @@
     <div class="mobile-panels">
         <section class="mobile-panel {% if tab == 'buchung' %}is-active{% endif %}" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung" {% if tab != 'buchung' %}hidden{% endif %}>
             <div class="mobile-card">
-                <h2 class="mobile-card__title">Schnell stempeln</h2>
+                <h2 class="mobile-card__title">Schnell stempeln
+                    <span class="info-tip">
+                        <button type="button" class="info-tip__trigger" aria-expanded="false" aria-label="Hinweis zum Arbeitsschutz anzeigen">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                        </button>
+                        <span class="info-tip__bubble" role="tooltip">
+                            <strong>Arbeitsschutz (ArbZG):</strong> Nach 6 Stunden Arbeit mindestens 30 Minuten Pause einlegen, nach 9 Stunden mindestens 45 Minuten.
+                        </span>
+                    </span>
+                </h2>
                 <div class="mobile-card__section" data-state="active" {% if not active_entry %}hidden{% endif %}>
                     <p class="mobile-card__text">
                         Gestartet um <span data-field="work-start">{{ active_entry.start_time.strftime('%H:%M') if active_entry else '' }}</span> Uhr.
@@ -197,10 +206,6 @@
                 </div>
             {% endif %}
 
-            <div class="mobile-card mobile-card--hint">
-                <h2 class="mobile-card__title">Hinweis</h2>
-                <p class="mobile-card__text">Nach 6 Stunden Arbeit mindestens 30 Minuten Pause einlegen, nach 9 Stunden mindestens 45 Minuten (ArbZG).</p>
-            </div>
         </section>
 
         <section class="mobile-panel {% if tab == 'uebersicht' %}is-active{% endif %}" id="mobile-panel-uebersicht" data-tab-panel="uebersicht" role="tabpanel" aria-labelledby="mobile-tab-uebersicht" {% if tab != 'uebersicht' %}hidden{% endif %}>
