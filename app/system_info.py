@@ -216,13 +216,9 @@ def sync_diagnostics(db: Session) -> dict[str, object]:
         if "wiederhol" in message.lower() or "retry" in message.lower():
             retries += 1
 
-    try:
-        config = timemoto.TimeMotoConfig.load()
-        device_last_sync = config.last_sync_at
-        configured = bool(config.host)
-    except Exception:  # pragma: no cover
-        device_last_sync = None
-        configured = False
+    terminals_overview = terminal_status(db)
+    device_last_sync = terminals_overview.get("last_sync")
+    configured = bool(terminals_overview.get("total"))
 
     return {
         "open_actions": 0,  # no server-side backlog (synchronous processing)
@@ -235,6 +231,41 @@ def sync_diagnostics(db: Session) -> dict[str, object]:
         "last_successful_sync": last_success.strftime("%d.%m.%Y %H:%M:%S") if last_success else None,
         "device_last_sync": device_last_sync,
         "device_configured": configured,
+    }
+
+
+def terminal_status(db: Session) -> dict[str, object]:
+    """Terminal counts and last synchronisation overview (§0.9.8)."""
+
+    from . import crud
+
+    try:
+        terminals = crud.get_terminals(db)
+    except Exception:  # pragma: no cover - defensive
+        terminals = []
+
+    online = sum(1 for t in terminals if t.status == "online")
+    offline = sum(1 for t in terminals if t.status in ("offline", "error"))
+
+    last_sync = None
+    last_error = None
+    for terminal in terminals:
+        if terminal.last_sync_at and (last_sync is None or terminal.last_sync_at > last_sync):
+            last_sync = terminal.last_sync_at
+        if terminal.status == "error" and terminal.last_error:
+            if last_error is None:
+                last_error = f"{terminal.name}: {terminal.last_error}"
+
+    def _fmt(value):
+        return value.strftime("%d.%m.%Y %H:%M") if value else None
+
+    return {
+        "total": len(terminals),
+        "online": online,
+        "offline": offline,
+        "active": sum(1 for t in terminals if t.active),
+        "last_sync": _fmt(last_sync),
+        "last_error": last_error,
     }
 
 
@@ -274,6 +305,7 @@ def system_status(db: Session) -> dict[str, object]:
         },
         "sync": sync_status(),
         "sync_diagnostics": sync_diagnostics(db),
+        "terminals": terminal_status(db),
         "pwa": pwa_status(),
         "volumes": volume_overview(),
         "database_log": database_log_overview(),

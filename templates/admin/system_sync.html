@@ -38,8 +38,8 @@
             <tbody>
                 <tr><th>Laufende Synchronisationen</th><td>{{ diagnostics.running_syncs }}</td></tr>
                 <tr><th>Letzte erfolgreiche Synchronisation</th><td>{{ diagnostics.last_successful_sync or '–' }}</td></tr>
-                <tr><th>Letzte Geräte-Synchronisation (TimeMoto)</th><td>{{ diagnostics.device_last_sync or '–' }}</td></tr>
-                <tr><th>TimeMoto konfiguriert</th><td>{{ 'ja' if diagnostics.device_configured else 'nein' }}</td></tr>
+                <tr><th>Letzte Terminal-Synchronisation</th><td>{{ diagnostics.device_last_sync or '–' }}</td></tr>
+                <tr><th>Terminals konfiguriert</th><td>{{ 'ja' if diagnostics.device_configured else 'nein' }}</td></tr>
                 <tr><th>Verarbeitete Offline-Aktionen (gesamt)</th><td>{{ diagnostics.processed_offline_actions }}</td></tr>
                 <tr><th>Letzte verarbeitete Offline-Aktion</th><td>{{ diagnostics.last_offline_action_at.strftime('%d.%m.%Y %H:%M') if diagnostics.last_offline_action_at else '–' }}</td></tr>
             </tbody>

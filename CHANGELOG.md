@@ -5,6 +5,73 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.8] – 2026-06-14
+
+### Added – Generische Terminalverwaltung (ersetzt TimeMoto)
+
+- **Neuer Bereich Administration → Zeiterfassung → Terminals**
+  (`/admin/terminals`): Zeiterfassungsterminals werden jetzt über eine
+  generische Terminalverwaltung gepflegt – optisch und funktional analog zu den
+  Backup-Jobs und der Benutzerverwaltung (Kartenlayout, Tabelle, Modal,
+  Dark-Mode-kompatibel, responsive).
+- **Tabellenansicht** mit Name, Typ, Status, letzter Verbindung, letzter
+  Synchronisation sowie Aktionen (Bearbeiten, Synchronisieren, Aktivieren/
+  Deaktivieren, Löschen). Über „Neues Terminal“ (oben rechts) öffnet sich ein
+  kompaktes Modal analog zu „Neuer Backup-Job“.
+- **Treiber-/Plugin-Architektur** (`app/integrations/terminals/`): Jeder
+  Terminaltyp ist ein Treiber, der sich in einer Registry registriert. Die UI
+  enthält **keine hartkodierte TimeMoto-Logik** mehr; weitere Typen (ZKTeco,
+  Suprema, generische REST-/CSV-Terminals) lassen sich ohne Umbauten ergänzen.
+- **Terminaltyp TimeMoto** als erster Treiber: Anlegen, Bearbeiten, Verbindung
+  testen, Synchronisieren, Aktivieren/Deaktivieren. Felder: Name, Host/IP, Port,
+  Benutzer, Passwort/API-Key, Zeitzone, Synchronisationsintervall, SSL und
+  Aktiv-Status.
+- **Statusanzeige je Terminal**: Online (erreichbar), Warnung (instabil),
+  Offline (nicht erreichbar) und Fehler (Authentifizierung fehlgeschlagen).
+- **Synchronisationsergebnis**: letzte Synchronisation, Anzahl importierter
+  Buchungen und Anzahl Fehler – je Lauf in der Historie (`terminal_sync_history`).
+- **Neuer Logkanal `terminal`** → `logs/terminal.log` (in Administration → Logs
+  filter-/such-/downloadbar). Erfasst Terminal erstellt/geändert/gelöscht,
+  Verbindungstest, Synchronisation gestartet/erfolgreich/fehlgeschlagen sowie
+  Aktivierung/Deaktivierung. Über das neue Logging-Setting „Terminal-Logging“
+  steuerbar.
+- **Systemstatus erweitert**: Anzahl Terminals, Online-/Offline-Terminals,
+  letzte Synchronisation und letzter Synchronisationsfehler.
+- **REST-Endpunkt** `POST /api/terminals/{id}/sync` für automatisierte
+  Synchronisation einzelner Terminals.
+
+### Changed
+
+- **TimeMoto-Konfigurationspunkt entfernt**: Der bisherige Menüpunkt
+  „TimeMoto TM-616“ unter Einstellungen entfällt. Die alte URL
+  `/admin/integrations/timemoto` leitet dauerhaft auf `/admin/terminals` um.
+- **Navigationsgruppe „Zeitverwaltung“ → „Zeiterfassung“** umbenannt; der neue
+  Punkt „Terminals“ liegt darunter.
+- **Datenbank-Konfiguration korrigiert**: Beim Wechsel des Datenbanktyps werden
+  die Eingabefelder jetzt korrekt aktualisiert. SQLite zeigt nur den
+  Datenbankpfad; MySQL/MariaDB/PostgreSQL zeigen Host, Port, Datenbankname,
+  Benutzer, Passwort und SSL. Der Standardport wird beim Wechsel automatisch
+  gesetzt (MySQL/MariaDB 3306, PostgreSQL 5432) und der Platzhalter aktualisiert
+  – ein selbst eingetragener Port bleibt jedoch erhalten, ebenso bereits
+  gespeicherte Werte (z. B. der Host). Der Verbindungstest läuft stets gegen die
+  aktuell eingestellte Konfiguration.
+- Version auf **0.9.8** angehoben (Frontend, Backend, Footer, Loginseite,
+  Systemstatus, API-Version, Release- und Buildinformationen).
+
+### Database
+
+- Neue Tabellen `terminals` und `terminal_sync_history` (Migration 9,
+  automatisch, idempotent, ohne Datenverlust).
+- **Automatische Übernahme** einer vorhandenen `config/timemoto.json` in die
+  Terminalverwaltung beim Upgrade – bestehende TimeMoto-Installationen
+  funktionieren ohne Neukonfiguration weiter.
+
+### Migrationshinweise
+
+- Upgradepfade `0.9.5 → 0.9.8`, `0.9.6 → 0.9.8` und `0.9.7 → 0.9.8` werden
+  unterstützt. Die Migrationen laufen beim Start automatisch und sind idempotent.
+  Eine vorhandene TimeMoto-Konfiguration wird einmalig als Terminal angelegt.
+
 ## [0.9.7] – 2026-06-14
 
 ### Added – Datenbankverwaltung & -migration über die Oberfläche

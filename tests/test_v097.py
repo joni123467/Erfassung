@@ -71,8 +71,8 @@ def login(client):
 # --- version ---------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.7"
-    assert client.get("/health").json()["version"] == "0.9.7"
+    assert client.main.APP_VERSION == "0.9.8"
+    assert client.get("/health").json()["version"] == "0.9.8"
 
 
 # --- navigation + page -----------------------------------------------------

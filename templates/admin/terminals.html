@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Terminals – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'terminals' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Terminals</h1>
+            <p class="card-header__hint">Zeiterfassungsterminals verwalten – verbinden, testen und Buchungen synchronisieren. Protokoll: <a href="/admin/system/logs?channel=terminal">terminal.log</a>.</p>
+        </div>
+        <div class="card-header__actions">
+            <button type="button" class="button primary" id="terminal-new">Neues Terminal</button>
+        </div>
+    </div>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+                <tr>
+                    <th>Name</th><th>Typ</th><th>Status</th>
+                    <th>Letzte Verbindung</th><th>Letzte Synchronisation</th><th>Aktionen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for terminal in terminals %}
+                    <tr>
+                        <td>{{ terminal.name }}{% if not terminal.active %} <span class="text-muted">(inaktiv)</span>{% endif %}</td>
+                        <td>{{ (terminal_types | selectattr('key', 'equalto', terminal.type) | map(attribute='label') | first) or terminal.type }}</td>
+                        <td>
+                            <span class="log-level log-level--{{ 'info' if terminal.status == 'online' else ('warning' if terminal.status == 'warning' else ('error' if terminal.status in ('offline', 'error') else 'debug')) }}">
+                                {{ status_labels.get(terminal.status, terminal.status) }}
+                            </span>
+                        </td>
+                        <td>{{ terminal.last_connection_at.strftime('%d.%m.%Y %H:%M') if terminal.last_connection_at else '–' }}</td>
+                        <td>
+                            {% if terminal.last_sync_at %}
+                                {{ terminal.last_sync_at.strftime('%d.%m.%Y %H:%M') }}<br>
+                                <span class="text-muted">{{ terminal.last_sync_count }} importiert / {{ terminal.last_sync_errors }} Fehler</span>
+                            {% else %}–{% endif %}
+                        </td>
+                        <td class="backup-actions">
+                            <button type="button" class="button ghost small terminal-edit"
+                                data-id="{{ terminal.id }}"
+                                data-name="{{ terminal.name }}"
+                                data-type="{{ terminal.type }}"
+                                data-active="{{ '1' if terminal.active else '0' }}"
+                                data-host="{{ terminal.host }}"
+                                data-port="{{ terminal.port }}"
+                                data-username="{{ terminal.username }}"
+                                data-use-ssl="{{ '1' if terminal.use_ssl else '0' }}"
+                                data-verify-ssl="{{ '1' if terminal.verify_ssl else '0' }}"
+                                data-timezone="{{ terminal.timezone }}"
+                                data-interval="{{ terminal.sync_interval_minutes }}"
+                                data-has-pw="{{ '1' if terminal.password else '0' }}">Bearbeiten</button>
+                            <form method="post" action="/admin/terminals/{{ terminal.id }}/sync" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <button type="submit" class="button small">Synchronisieren</button>
+                            </form>
+                            <form method="post" action="/admin/terminals/{{ terminal.id }}/toggle" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <button type="submit" class="button ghost small">{{ 'Deaktivieren' if terminal.active else 'Aktivieren' }}</button>
+                            </form>
+                            <form method="post" action="/admin/terminals/{{ terminal.id }}/delete" class="inline-form" onsubmit="return confirm('Terminal „{{ terminal.name }}“ wirklich löschen?');">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <button type="submit" class="button danger small">Löschen</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="6">Noch keine Terminals. Lege oben rechts ein neues Terminal an.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<div class="modal" id="terminal-modal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__dialog modal__dialog--scroll">
+        <header class="modal__head">
+            <h3 id="terminal-modal-title">Neues Terminal</h3>
+            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+        </header>
+        <form method="post" action="/admin/terminals" class="modal__scrollform" id="terminal-form">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+            <input type="hidden" name="terminal_id" id="t-id" value="">
+            <div class="modal__body form-grid">
+                <label>Terminaltyp
+                    <select name="type" id="t-type">
+                        {% for option in terminal_types %}<option value="{{ option.key }}">{{ option.label }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label>Name<input type="text" name="name" id="t-name" required></label>
+                <label>Host/IP-Adresse<input type="text" name="host" id="t-host" placeholder="192.168.1.50"></label>
+                <label>Port<input type="number" name="port" id="t-port" min="1" max="65535" value="80"></label>
+                <label>Benutzer<input type="text" name="username" id="t-username" autocomplete="off"></label>
+                <label>Passwort / API-Key<input type="password" name="password" id="t-password" autocomplete="new-password"></label>
+                <label>Zeitzone<input type="text" name="timezone" id="t-timezone" value="Europe/Berlin"></label>
+                <label>Synchronisationsintervall (Min.)<input type="number" name="sync_interval_minutes" id="t-interval" min="1" value="60"></label>
+                <label class="checkbox-inline"><input type="checkbox" name="use_ssl" id="t-use-ssl"> HTTPS (SSL)</label>
+                <label class="checkbox-inline"><input type="checkbox" name="verify_ssl" id="t-verify-ssl" checked> Zertifikat prüfen</label>
+                <label class="checkbox-inline"><input type="checkbox" name="active" id="t-active" checked> Aktiv</label>
+                <p class="form-hint full-width" id="t-test-result" role="status"></p>
+            </div>
+            <div class="modal__foot">
+                <button type="button" class="button ghost" data-close>Abbrechen</button>
+                <button type="button" class="button ghost" id="t-test">Verbindung testen</button>
+                <button type="submit" class="button primary">Speichern</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+(function () {
+    const modal = document.getElementById('terminal-modal');
+    const form = document.getElementById('terminal-form');
+    const csrf = form.querySelector('input[name=csrf_token]').value;
+
+    const show = (visible) => {
+        modal.classList.toggle('is-visible', visible);
+        modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        document.body.classList.toggle('modal-open', visible);
+    };
+    const resetForm = () => {
+        form.reset();
+        document.getElementById('t-id').value = '';
+        document.getElementById('t-test-result').textContent = '';
+        document.getElementById('t-password').placeholder = '';
+        document.getElementById('terminal-modal-title').textContent = 'Neues Terminal';
+    };
+
+    document.getElementById('terminal-new').addEventListener('click', () => { resetForm(); show(true); });
+    modal.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', () => show(false)));
+
+    document.querySelectorAll('.terminal-edit').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const d = btn.dataset;
+            resetForm();
+            document.getElementById('terminal-modal-title').textContent = 'Terminal bearbeiten';
+            document.getElementById('t-id').value = d.id;
+            document.getElementById('t-type').value = d.type;
+            document.getElementById('t-name').value = d.name;
+            document.getElementById('t-host').value = d.host || '';
+            document.getElementById('t-port').value = d.port || '80';
+            document.getElementById('t-username').value = d.username || '';
+            document.getElementById('t-timezone').value = d.timezone || 'Europe/Berlin';
+            document.getElementById('t-interval').value = d.interval || '60';
+            document.getElementById('t-use-ssl').checked = d.useSsl === '1';
+            document.getElementById('t-verify-ssl').checked = d.verifySsl === '1';
+            document.getElementById('t-active').checked = d.active === '1';
+            if (d.hasPw === '1') document.getElementById('t-password').placeholder = 'unverändert';
+            show(true);
+        });
+    });
+
+    document.getElementById('t-test').addEventListener('click', async () => {
+        const result = document.getElementById('t-test-result');
+        result.textContent = 'Teste Verbindung …';
+        result.style.color = '';
+        try {
+            const response = await fetch('/admin/terminals/test', {
+                method: 'POST', headers: { 'x-csrf-token': csrf }, body: new FormData(form),
+            });
+            const data = await response.json();
+            result.textContent = (data.ok ? '✓ ' : '✗ ') + data.message;
+            result.style.color = data.ok ? 'var(--success, #16a34a)' : 'var(--danger, #dc2626)';
+        } catch (err) {
+            result.textContent = '✗ Test fehlgeschlagen: ' + err;
+            result.style.color = 'var(--danger, #dc2626)';
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('is-visible')) show(false);
+    });
+})();
+</script>
+{% endblock %}

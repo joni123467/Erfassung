@@ -413,7 +413,7 @@ def test_admin_nav_grouped(client):
     login(client)
     html = client.get("/admin/system/status").text
     assert 'class="adminnav"' in html
-    for label in ("System", "Benutzer", "Zeitverwaltung", "Sicherung", "Einstellungen"):
+    for label in ("System", "Benutzer", "Zeiterfassung", "Sicherung", "Einstellungen"):
         assert ">" + label + "<" in html
 
 

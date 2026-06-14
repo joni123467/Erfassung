@@ -844,6 +844,65 @@ def prune_backup_runs(db: Session, job_id: int, keep: int = 200) -> None:
         db.commit()
 
 
+# --- Terminalverwaltung (§0.9.8) ------------------------------------------
+
+def get_terminals(db: Session) -> List[models.Terminal]:
+    return db.query(models.Terminal).order_by(models.Terminal.name).all()
+
+
+def get_terminal(db: Session, terminal_id: int) -> Optional[models.Terminal]:
+    return db.query(models.Terminal).filter(models.Terminal.id == terminal_id).first()
+
+
+def get_active_terminals(db: Session) -> List[models.Terminal]:
+    return db.query(models.Terminal).filter(models.Terminal.active.is_(True)).all()
+
+
+def create_terminal(db: Session, **fields) -> models.Terminal:
+    terminal = models.Terminal(**fields)
+    db.add(terminal)
+    db.commit()
+    db.refresh(terminal)
+    return terminal
+
+
+def update_terminal(db: Session, terminal_id: int, **fields) -> Optional[models.Terminal]:
+    terminal = get_terminal(db, terminal_id)
+    if not terminal:
+        return None
+    for key, value in fields.items():
+        setattr(terminal, key, value)
+    db.commit()
+    db.refresh(terminal)
+    return terminal
+
+
+def delete_terminal(db: Session, terminal_id: int) -> bool:
+    terminal = get_terminal(db, terminal_id)
+    if not terminal:
+        return False
+    db.delete(terminal)
+    db.commit()
+    return True
+
+
+def add_terminal_sync_run(db: Session, **fields) -> models.TerminalSyncRun:
+    run = models.TerminalSyncRun(**fields)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_terminal_sync_runs(db: Session, limit: int = 100) -> List[models.TerminalSyncRun]:
+    return (
+        db.query(models.TerminalSyncRun)
+        .order_by(models.TerminalSyncRun.started_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 # --- Restore-Historie (§0.9.4) --------------------------------------------
 
 def add_restore_run(db: Session, **fields) -> models.RestoreRun:
