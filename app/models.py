@@ -344,6 +344,8 @@ class RestoreRun(Base):
     id = Column(Integer, primary_key=True, index=True)
     started_at = Column(DateTime, default=datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Float, default=0.0)
+    log_token = Column(String(40), default="")
     username = Column(String(255), default="")
     backup_file = Column(String(500), default="")
     backup_version = Column(String(40), default="")

@@ -273,15 +273,31 @@ def latest_backup_run(db: Session):
     return runs[0] if runs else None
 
 
+def last_migration_run() -> Optional[str]:
+    """Timestamp of the most recently applied migration, if available."""
+    try:
+        from . import db_schema
+
+        with database.engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT MAX(applied_at) FROM {db_schema._VERSION_TABLE}")
+            ).fetchone()
+        return row[0] if row and row[0] else None
+    except Exception:  # pragma: no cover
+        return None
+
+
 def backup_overview(db: Session) -> dict[str, object]:
     """Backup/restore highlights for the system status page (§20)."""
-    from . import crud, log_tools
+    from . import crud, log_tools, restore_jobs
 
     runs = crud.get_backup_runs(db, limit=200)
     last_success = next((r for r in runs if r.status == "success"), None)
     last_error = next((r for r in runs if r.status == "error"), None)
-    restores = crud.get_restore_runs(db, limit=1)
+    restores = crud.get_restore_runs(db, limit=200)
     last_restore = restores[0] if restores else None
+    last_restore_success = next((r for r in restores if r.status in ("success", "warning")), None)
+    last_restore_failed = next((r for r in restores if r.status == "error"), None)
 
     last_verify = None
     try:
@@ -292,6 +308,8 @@ def backup_overview(db: Session) -> dict[str, object]:
     except Exception:  # pragma: no cover
         last_verify = None
 
+    active = restore_jobs.active_job()
+
     def _fmt(value):
         return value.strftime("%d.%m.%Y %H:%M") if value else None
 
@@ -301,5 +319,9 @@ def backup_overview(db: Session) -> dict[str, object]:
         "last_backup_error_message": getattr(last_error, "message", None),
         "last_restore": _fmt(getattr(last_restore, "started_at", None)),
         "last_restore_status": getattr(last_restore, "status", None),
+        "last_restore_success": _fmt(getattr(last_restore_success, "started_at", None)),
+        "last_restore_failed": _fmt(getattr(last_restore_failed, "started_at", None)),
+        "active_restore": active.get("state") if active else None,
+        "last_migration_run": last_migration_run(),
         "last_verify": _fmt(last_verify),
     }

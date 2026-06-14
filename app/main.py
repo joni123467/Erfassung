@@ -40,6 +40,7 @@ from . import (
     logging_setup,
     models,
     paths,
+    restore_jobs,
     restore_manager,
     schemas,
     security,
@@ -4550,9 +4551,13 @@ def admin_restore_run(
     confirm: str = Form(""),
     db: Session = Depends(database.get_db),
 ):
+    """Validate and *queue* a restore. The actual restore runs asynchronously
+    in a background worker so the database swap never tears down this request
+    (§0.9.5 – no more "Internal Server Error")."""
     user, redirect = _require_system_admin(request, db)
     if redirect:
         return redirect
+    # Schritt 2: validate permissions (above), confirmation, file, integrity & compatibility.
     if confirm.strip() != "WIEDERHERSTELLEN":
         return RedirectResponse(
             url=_build_redirect("/admin/system/restore", error="Bestätigung fehlt oder falsch"),
@@ -4564,13 +4569,50 @@ def admin_restore_run(
             url=_build_redirect("/admin/system/restore", error="Datei nicht gefunden"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    logging_setup.log_audit("Backup wiederhergestellt (gestartet)", user=user, detail=path.name)
-    result = restore_manager.restore_from_archive(db, path, user=user)
-    key = "msg" if result["status"] in {"success", "warning"} else "error"
+    ok, reason, _meta = restore_manager.validate_restore(path)
+    if not ok:
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore", error=reason),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if restore_jobs.is_active():
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/restore/progress", error="Es läuft bereits eine Wiederherstellung"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    # Schritt 3+4: create the job, respond immediately (redirect to progress).
+    token = restore_jobs.start_restore(path, username=user.username)
+    logging_setup.log_audit("Backup wiederhergestellt (gestartet)", user=user, detail=f"{path.name} (Job {token})")
     return RedirectResponse(
-        url=_build_redirect("/admin/system/restore/history", **{key: result["message"]}),
-        status_code=status.HTTP_303_SEE_OTHER,
+        url="/admin/system/restore/progress", status_code=status.HTTP_303_SEE_OTHER
     )
+
+
+@app.get("/admin/system/restore/progress", response_class=HTMLResponse)
+def admin_restore_progress(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_restore_progress.html",
+        request,
+        user,
+        admin_active="system_restore",
+        status=restore_jobs.read_status(),
+    )
+
+
+@app.get("/api/restore/status")
+def api_restore_status(request: Request):
+    """Lightweight status endpoint (§ Restore-Status API).
+
+    Reads only the JSON status file – it never touches the database, so it keeps
+    working while the database is being swapped. Authorisation is by session
+    only (no DB lookup) so polling survives the restore window.
+    """
+    if not request.session.get("user_id"):
+        return JSONResponse({"state": "unauthorized"}, status_code=401)
+    return JSONResponse(restore_jobs.read_status())
 
 
 @app.post("/admin/system/restore/delete")

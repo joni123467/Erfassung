@@ -5,6 +5,50 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.5] – 2026-06-14
+
+### Fixed – „Internal Server Error" bei der Wiederherstellung
+
+- **Ursache**: Die Wiederherstellung lief synchron im HTTP-Request und tauschte
+  die SQLite-Datei aus bzw. verwarf den Engine-Pool (`engine.dispose()`) –
+  dadurch wurde genau die Verbindung zerstört, die der laufende Request nutzte,
+  und die Antwort endete als 500, obwohl der Restore teils/ganz erfolgreich war.
+- **Lösung**: Restore läuft jetzt **asynchron** in einem Hintergrund-Worker. Der
+  Request validiert nur (Berechtigung, Datei, Integrität, Kompatibilität),
+  erzeugt einen Restore-Job und antwortet sofort mit Weiterleitung auf eine
+  Fortschrittsseite.
+
+### Added – Asynchrones Restore mit Statusüberwachung
+
+- Hintergrund-Worker (`app/restore_jobs.py`) mit persistenter Status-Datei im
+  `data`-Volume (übersteht DB-Tausch und Neustarts).
+- **Status-API** `GET /api/restore/status` (nur Session-basiert, ohne
+  Datenbankzugriff) mit Zuständen `queued`, `creating_backup`, `restoring`,
+  `restarting`, `running_migrations`, `completed`, `failed` inkl. Fortschritt,
+  Meldung, Start-/Endzeit.
+- **Fortschrittsseite** mit Fortschrittsbalken, Statusschritten,
+  **Neustarterkennung** (bei kurzzeitig nicht erreichbarem Backend wird „Anwendung
+  wird neu gestartet, Verbindung wird wiederhergestellt …" angezeigt und weiter
+  gepollt) sowie **Countdown (5→1)** und automatischer Weiterleitung zu `/login`.
+- **Fehleranzeige** mit Ursache, Zeitpunkt und Log-ID statt nacktem 500.
+- Sauberes Schließen/Neuinitialisieren der DB-Verbindungen vor/nach dem Restore
+  (SQLite & MySQL).
+
+### Added – Logging, Historie & Systemstatus
+
+- `backup.log` um detaillierte Restore-Schritte erweitert (Restore gestartet,
+  Sicherheitsbackup erstellt, Migration gestartet/erfolgreich/fehlgeschlagen,
+  Anwendung wird neu gestartet/wieder verfügbar, Restore erfolgreich/fehlgeschlagen).
+- Restore-Historie um **Dauer** und **Log-ID** erweitert.
+- Systemstatus zeigt zusätzlich letzte erfolgreiche/fehlgeschlagene
+  Wiederherstellung, aktiven Restore-Job und letzte Migrationsausführung.
+
+### Notes
+
+- Schemaänderung: `restore_runs.duration_seconds` und `restore_runs.log_token`
+  (Migration 8, idempotent, dialect-aware). Upgradepfade 0.6.x–0.9.4 → 0.9.5
+  (SQLite & MySQL) verifiziert; keine Datenverluste.
+
 ## [0.9.4] – 2026-06-13
 
 ### Added – Enterprise Backup & Restore
