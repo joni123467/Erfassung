@@ -127,6 +127,10 @@
                 <tr><th>Letztes erfolgreiches Backup</th><td>{{ backup_overview.last_successful_backup or '–' }}</td></tr>
                 <tr><th>Letzter Backupfehler</th><td>{{ backup_overview.last_backup_error or '–' }}</td></tr>
                 <tr><th>Letzte Wiederherstellung</th><td>{{ backup_overview.last_restore or '–' }}{% if backup_overview.last_restore_status %} ({{ backup_overview.last_restore_status }}){% endif %}</td></tr>
+                <tr><th>Letzte Wiederherstellung erfolgreich</th><td>{{ backup_overview.last_restore_success or '–' }}</td></tr>
+                <tr><th>Letzte Wiederherstellung fehlgeschlagen</th><td>{{ backup_overview.last_restore_failed or '–' }}</td></tr>
+                <tr><th>Aktiver Restore-Job</th><td>{{ backup_overview.active_restore or 'keiner' }}</td></tr>
+                <tr><th>Letzte Migrationsausführung</th><td>{{ backup_overview.last_migration_run or '–' }}</td></tr>
                 <tr><th>Letzte Backupprüfung</th><td>{{ backup_overview.last_verify or '–' }}</td></tr>
             </tbody>
         </table>

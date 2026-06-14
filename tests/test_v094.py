@@ -120,7 +120,7 @@ def test_backup_archive_has_metadata(client):
     login(client)
     archive = _create_and_run_local_job(client)
     meta = backup_manager.read_metadata(archive)
-    assert meta and meta["app_version"] == "0.9.4"
+    assert meta and meta["app_version"] == "0.9.5"
     assert meta["database_type"] == "sqlite"
     assert "database" in meta["contents"]
 
@@ -215,7 +215,7 @@ def test_restore_replaces_data_and_creates_safety_backup(client):
     finally:
         db.close()
 
-    result = restore_manager.restore_from_archive(database.SessionLocal(), archive, user=admin)
+    result = restore_manager.restore_from_archive(archive, user=admin)
     assert result["status"] in {"success", "warning"}
     assert result["safety_backup"], "a pre_restore safety backup must be created"
 
@@ -272,7 +272,7 @@ def test_restore_runs_migrations_for_old_backup(client):
     finally:
         db.close()
 
-    result = restore_manager.restore_from_archive(database.SessionLocal(), archive, user=admin)
+    result = restore_manager.restore_from_archive(archive, user=admin)
     assert result["status"] in {"success", "warning"}
     # migrations 5,6,7 must have been applied during the restore
     assert set(result["migrations_applied"]) >= {5, 6, 7}

@@ -95,6 +95,13 @@ def _add_restore_history_table(engine: Engine) -> None:
     models.Base.metadata.create_all(bind=engine, tables=[models.RestoreRun.__table__])
 
 
+def _add_restore_run_details(engine: Engine) -> None:
+    """Add duration/log-token columns to the restore history (§0.9.5)."""
+
+    db_schema.add_column(engine, "restore_runs", "duration_seconds", "FLOAT", default="0")
+    db_schema.add_column(engine, "restore_runs", "log_token", "VARCHAR(40)", default="''")
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -103,6 +110,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (5, _add_holiday_source),
     (6, _add_backup_job_tables),
     (7, _add_restore_history_table),
+    (8, _add_restore_run_details),
 ]
 
 

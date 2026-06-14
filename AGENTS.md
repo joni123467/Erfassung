@@ -169,6 +169,20 @@ wiederherstellbar?**
 Kein Release, wenn: Restore fehlschlägt, Migration nach Restore fehlschlägt,
 Datenverlust möglich ist oder das Backup-Logging fehlerhaft ist.
 
+### Asynchrones Restore (ab 0.9.5, verpflichtend)
+
+Restore läuft **niemals** synchron im HTTP-Request (sonst 500 durch DB-Tausch /
+`engine.dispose()`). Der Request validiert und queued nur; der Hintergrund-Worker
+(`app/restore_jobs.py`) führt den Restore aus, Status über die Datei
+`data/restore_status.json` und `GET /api/restore/status` (ohne DB-Zugriff).
+
+Vor jedem Release zusätzlich prüfen:
+- Restore aktueller Backups (asynchron, ohne 500)
+- Restore älterer Backups (Auto-Migration)
+- Restore während laufendem Betrieb
+- Wiederverbindung/Statusanzeige nach (simuliertem) Neustart
+- Status-API liefert korrekte Zustände; Sicherheitsbackup wird erzeugt
+
 - **Restore-Regeln**: Nach dem DB-Swap immer `Base.metadata.create_all` (fehlende
   Tabellen) + `db_migrations.run()` ausführen, damit ältere Backups vollständig
   aufschließen. Uploads nur isoliert speichern, auf Dateityp/Integrität/Path-

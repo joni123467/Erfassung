@@ -3294,3 +3294,67 @@ tr.company-deleted td {
 .restore-verify-result.is-green { color: var(--success); }
 .restore-verify-result.is-yellow { color: #92400e; }
 .restore-verify-result.is-red { color: var(--danger); }
+
+/* --- Restore progress (§0.9.5) --------------------------------------- */
+.restore-progress__bar {
+    height: 0.9rem;
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin: 1rem 0;
+}
+
+.restore-progress__fill {
+    height: 100%;
+    background: var(--brand);
+    width: 0;
+    transition: width 0.4s ease;
+}
+
+.restore-steps {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.restore-steps li {
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    background: var(--surface-muted);
+}
+
+.restore-steps li.is-active {
+    color: var(--brand-dark);
+    background: var(--accent);
+    font-weight: 600;
+}
+
+.restore-steps li.is-done {
+    color: var(--success);
+}
+
+.restore-steps li.is-done::before { content: "✓ "; }
+
+.restore-progress__message { color: var(--text-muted); font-size: 0.9rem; }
+
+.restore-progress__reconnect {
+    color: #92400e;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem;
+}
+
+.alert--success {
+    background: var(--success-soft);
+    color: var(--success);
+    border: 1px solid var(--success);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+}
