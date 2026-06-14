@@ -17,12 +17,13 @@
         ],
     },
     {
-        'id': 'time', 'label': 'Zeitverwaltung', 'show': admin_permissions.holidays or admin_permissions.approvals or admin_permissions.reports,
+        'id': 'time', 'label': 'Zeiterfassung', 'show': admin_permissions.holidays or admin_permissions.approvals or admin_permissions.reports or admin_permissions.integrations,
         'items': [
             {'href': '/admin/holidays', 'label': 'Feiertage', 'key': 'holidays', 'show': admin_permissions.holidays},
             {'href': '/admin/approvals', 'label': 'Freigaben', 'key': 'approvals', 'show': admin_permissions.approvals},
             {'href': '/admin/reports/time', 'label': 'Zeitübersichten', 'key': 'reports', 'show': admin_permissions.reports},
             {'href': '/admin/reports/users', 'label': 'Benutzerauswertung', 'key': 'user_reports', 'show': admin_permissions.reports},
+            {'href': '/admin/terminals', 'label': 'Terminals', 'key': 'terminals', 'show': admin_permissions.integrations},
         ],
     },
     {
@@ -48,7 +49,6 @@
         'id': 'settings', 'label': 'Einstellungen', 'show': admin_permissions.system or admin_permissions.integrations,
         'items': [
             {'href': '/admin/system/settings', 'label': 'Systemeinstellungen', 'key': 'system_settings', 'show': admin_permissions.system},
-            {'href': '/admin/integrations/timemoto', 'label': 'TimeMoto TM-616', 'key': 'timemoto', 'show': admin_permissions.integrations},
         ],
     },
 ] %}

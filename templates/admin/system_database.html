@@ -173,6 +173,10 @@
         document.body.classList.toggle('modal-open', visible);
     };
 
+    // Remember the type the visible field values currently belong to, so a type
+    // switch can update the default port without clobbering a custom value.
+    let previousType = typeSelect.value;
+
     const updateForType = () => {
         const type = typeSelect.value;
         const isSqlite = type === 'sqlite';
@@ -184,10 +188,18 @@
         document.querySelectorAll('#db-compat-panel .db-compat__item').forEach((el) => {
             el.hidden = el.dataset.type !== type;
         });
-        // Default port when empty.
-        if (!isSqlite && (!portInput.value || portInput.value === '0')) {
-            portInput.value = DEFAULT_PORTS[type] || '';
+        // Default port: set it when empty, or when the field still holds the
+        // *previous* type's default (i.e. it was auto-filled, not customised).
+        // A value the operator typed for the same backend is preserved.
+        if (!isSqlite) {
+            const current = (portInput.value || '').trim();
+            const prevDefault = String(DEFAULT_PORTS[previousType] || '');
+            if (!current || current === '0' || current === prevDefault) {
+                portInput.value = DEFAULT_PORTS[type] || '';
+            }
+            portInput.placeholder = String(DEFAULT_PORTS[type] || '');
         }
+        previousType = type;
         // Same type -> save config; different type -> migrate with confirmation.
         const isMigration = type !== ACTIVE_TYPE;
         migrateConfirm.hidden = !isMigration;

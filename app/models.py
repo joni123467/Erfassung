@@ -336,6 +336,70 @@ class BackupRun(Base):
     job = relationship("BackupJob", back_populates="runs")
 
 
+class Terminal(Base):
+    """A time-recording terminal managed through the generic terminal area (§0.9.8).
+
+    The same row describes any terminal type via a driver key (``type``). Driver
+    specific endpoints/options live in ``config_json`` so new terminal types can
+    be added without schema changes. The password column holds either a device
+    password or an API key. Credentials are persisted (unattended sync) but never
+    written to a log file.
+    """
+
+    __tablename__ = "terminals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    # Driver key, e.g. "timemoto" (see app.integrations.terminals registry).
+    type = Column(String(64), default="timemoto", nullable=False)
+    active = Column(Boolean, default=True)
+
+    host = Column(String(255), default="")
+    port = Column(Integer, default=80)
+    username = Column(String(255), default="")
+    password = Column(String(255), default="")  # password or API key
+    use_ssl = Column(Boolean, default=False)
+    verify_ssl = Column(Boolean, default=True)
+    timezone = Column(String(64), default="Europe/Berlin")
+    sync_interval_minutes = Column(Integer, default=60)
+
+    # Driver-specific extra configuration (endpoints, limits, …) as JSON text.
+    config_json = Column(Text, default="")
+
+    # Live status / history snapshot.
+    status = Column(String(20), default="unknown")  # online/warning/offline/error/unknown
+    last_connection_at = Column(DateTime, nullable=True)
+    last_sync_at = Column(DateTime, nullable=True)
+    last_sync_count = Column(Integer, default=0)
+    last_sync_errors = Column(Integer, default=0)
+    last_error = Column(String(500), default="")
+    last_event_id = Column(Integer, nullable=True)  # incremental sync cursor
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    runs = relationship(
+        "TerminalSyncRun", back_populates="terminal", cascade="all, delete-orphan"
+    )
+
+
+class TerminalSyncRun(Base):
+    """History of a single terminal synchronisation (§0.9.8)."""
+
+    __tablename__ = "terminal_sync_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("terminals.id"), nullable=True)
+    terminal_name = Column(String(255), default="")
+    started_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    status = Column(String(20), default="error")  # success / warning / error
+    imported_count = Column(Integer, default=0)
+    error_count = Column(Integer, default=0)
+    message = Column(Text, default="")
+
+    terminal = relationship("Terminal", back_populates="runs")
+
+
 class RestoreRun(Base):
     """History of restore operations (§9)."""
 

@@ -2,7 +2,7 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.6.0`
+**Version:** `0.9.8`
 
 > Die mobile Oberfläche (`/mobile`) ist eine installierbare, offline-fähige PWA.
 > Details siehe Abschnitt [„Mobile Offline-Funktion"](#mobile-offline-funktion-mobile) und [`CHANGELOG.md`](CHANGELOG.md).
@@ -213,13 +213,36 @@ ablegen. Zugangsdaten werden persistent im `config`-Volume gespeichert und nie
 im Klartext protokolliert. Es gibt einen Verbindungstest, konfigurierbare
 Aufbewahrung, eine Integritätsprüfung nach jeder Sicherung und eine Historie.
 
+## Terminalverwaltung (Zeiterfassungsterminals)
+
+Unter **Administration → Zeiterfassung → Terminals** werden Zeiterfassungs-
+terminals zentral verwaltet (seit 0.9.8). Die Ansicht ist analog zu den
+Backup-Jobs aufgebaut: eine Tabelle mit Name, Typ, Status, letzter Verbindung
+und letzter Synchronisation sowie den Aktionen Bearbeiten, Verbindung testen,
+Synchronisieren, Aktivieren/Deaktivieren und Löschen. Über **„Neues Terminal“**
+öffnet sich ein kompaktes Modal.
+
+Die Verwaltung basiert auf einer **Treiber-/Plugin-Architektur**
+(`app/integrations/terminals/`): Jeder Terminaltyp ist ein eigener Treiber, der
+sich in einer Registry registriert. Es gibt **keine hartkodierte TimeMoto-Logik**
+in der Oberfläche – weitere Typen (z. B. ZKTeco, Suprema, generische REST-/CSV-
+Terminals) lassen sich ohne Umbauten ergänzen. Aktuell wird der Typ **TimeMoto**
+ausgeliefert.
+
+Der frühere eigene Menüpunkt „TimeMoto TM-616“ wurde durch diese
+Terminalverwaltung ersetzt; eine vorhandene `config/timemoto.json` wird beim
+Upgrade automatisch und verlustfrei als Terminal übernommen. Terminalaktionen
+werden im Logkanal `terminal` (`logs/terminal.log`) protokolliert; der
+Systemstatus zeigt Anzahl, Online-/Offline-Terminals sowie die letzte
+Synchronisation und den letzten Synchronisationsfehler.
+
 ## Persistenz (wichtig)
 
 Für produktiven Betrieb sollten folgende Pfade persistent gemountet werden:
 
 - `/app/data` (inkl. SQLite-DB `erfassung.db` und `data/backups`)
 - `/app/logs` (strukturierte Logdateien)
-- `/app/config` (Konfigurationen: System, Logging, Backup-Ziele, TimeMoto)
+- `/app/config` (Konfigurationen: System, Logging, Backup-Ziele, Datenbank)
 
 Optional zusätzlich:
 

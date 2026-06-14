@@ -92,6 +92,34 @@
 </section>
 
 <section class="card">
+    <h2>Terminals</h2>
+    <div class="metric-grid">
+        <article class="metric-tile">
+            <span class="metric-tile__label">Terminals</span>
+            <strong class="metric-tile__value">{{ status_data.terminals.total }}</strong>
+            <span class="metric-tile__sub">{{ status_data.terminals.active }} aktiv</span>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Online</span>
+            <strong class="metric-tile__value">{{ status_data.terminals.online }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Offline</span>
+            <strong class="metric-tile__value">{{ status_data.terminals.offline }}</strong>
+        </article>
+    </div>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Letzte Synchronisation</th><td>{{ status_data.terminals.last_sync or '–' }}</td></tr>
+                <tr><th>Letzter Synchronisationsfehler</th><td>{{ status_data.terminals.last_error or '–' }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="card-header__hint">Verwaltung unter <a href="/admin/terminals">Terminals</a>.</p>
+</section>
+
+<section class="card">
     <h2>PWA</h2>
     <div class="table-scroll">
         <table class="striped-table">

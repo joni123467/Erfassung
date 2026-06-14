@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -102,6 +103,105 @@ def _add_restore_run_details(engine: Engine) -> None:
     db_schema.add_column(engine, "restore_runs", "log_token", "VARCHAR(40)", default="''")
 
 
+def _add_terminal_tables(engine: Engine) -> None:
+    """Create the generic terminal-management tables (§0.9.8).
+
+    ``create_all`` only adds missing tables and is dialect-agnostic, so this is
+    idempotent and safe on SQLite and MySQL/MariaDB/PostgreSQL. Afterwards the
+    legacy ``config/timemoto.json`` (if present) is migrated into a terminal row
+    so existing TimeMoto installations keep working without reconfiguration and
+    without any data loss.
+    """
+
+    models.Base.metadata.create_all(
+        bind=engine,
+        tables=[models.Terminal.__table__, models.TerminalSyncRun.__table__],
+    )
+    _migrate_legacy_timemoto_config(engine)
+
+
+def _migrate_legacy_timemoto_config(engine: Engine) -> None:
+    """Carry a pre-0.9.8 ``timemoto.json`` over into the terminals table.
+
+    Looks in the canonical config volume (``paths.CONFIG_DIR``) as well as the
+    package-local ``config`` directory the old integration historically used, so
+    the existing TimeMoto setup survives the upgrade without reconfiguration.
+    """
+
+    import json
+
+    from sqlalchemy.orm import Session
+
+    from . import paths
+    from .integrations import timemoto
+
+    candidates = [
+        paths.CONFIG_DIR / "timemoto.json",
+        timemoto._CONFIG_PATH,  # type: ignore[attr-defined]
+        timemoto._LEGACY_CONFIG_PATH,  # type: ignore[attr-defined]
+    ]
+    payload: dict | None = None
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("host"):
+                    payload = data
+                    break
+        except (OSError, ValueError):  # pragma: no cover - defensive
+            continue
+    if not payload:
+        return
+
+    config = timemoto.TimeMotoConfig()
+    config.update_from_dict(payload)
+    if not config.host:
+        return
+
+    with Session(bind=engine) as session:
+        existing = session.execute(
+            models.Terminal.__table__.select().where(
+                models.Terminal.__table__.c.type == "timemoto"
+            )
+        ).first()
+        if existing:
+            return
+        extra = {
+            "login_path": config.login_path,
+            "users_path": config.users_path,
+            "events_path": config.events_path,
+            "events_limit": config.events_limit,
+            "timeout": config.timeout,
+        }
+        last_sync = None
+        if config.last_sync_at:
+            try:
+                last_sync = datetime.fromisoformat(config.last_sync_at)
+            except ValueError:
+                last_sync = None
+        session.add(
+            models.Terminal(
+                name="TimeMoto TM-616",
+                type="timemoto",
+                active=True,
+                host=config.host,
+                port=config.port,
+                username=config.username,
+                password=config.password,
+                use_ssl=config.use_ssl,
+                verify_ssl=config.verify_ssl,
+                timezone=config.timezone,
+                sync_interval_minutes=60,
+                config_json=json.dumps(extra),
+                status="unknown",
+                last_sync_at=last_sync,
+                last_event_id=config.last_event_id,
+            )
+        )
+        session.commit()
+        LOGGER.info("Legacy-TimeMoto-Konfiguration in Terminalverwaltung übernommen")
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -111,6 +211,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (6, _add_backup_job_tables),
     (7, _add_restore_history_table),
     (8, _add_restore_run_details),
+    (9, _add_terminal_tables),
 ]
 
 

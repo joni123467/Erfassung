@@ -49,7 +49,7 @@ from . import (
     services,
     system_info,
 )
-from .integrations import timemoto
+from .integrations import timemoto, terminals
 from .excel_export import export_time_entries, export_user_summary_excel
 from .pdf_export import (
     export_team_overview_pdf,
@@ -3614,222 +3614,271 @@ def _parse_checkbox(value: str | None) -> bool:
     return normalized in {"1", "true", "on", "yes"}
 
 
-@app.get("/admin/integrations/timemoto", response_class=HTMLResponse)
-def admin_timemoto_overview(request: Request, db: Session = Depends(database.get_db)):
-    user = get_logged_in_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    try:
-        config = timemoto.TimeMotoConfig.load()
-    except timemoto.TimeMotoError as exc:
-        config = timemoto.TimeMotoConfig()
-        error = str(exc)
+TERMINAL_STATUS_LABELS = {
+    "online": "Online",
+    "warning": "Warnung",
+    "offline": "Offline",
+    "error": "Fehler",
+    "unknown": "Unbekannt",
+}
+
+
+def _terminal_fields_from_form(form, *, keep_password_from=None) -> dict:
+    """Build terminal column values from the modal form (driver agnostic)."""
+    import json as _json
+
+    term_type = (form.get("type") or "timemoto").strip()
+    if not terminals.is_known_type(term_type):
+        term_type = "timemoto"
+    # Driver-specific extras are kept in config_json so new types need no schema.
+    extra: dict[str, object] = {}
+    for key in ("login_path", "users_path", "events_path", "events_limit", "timeout"):
+        value = (form.get(key) or "").strip()
+        if value:
+            extra[key] = value
+    fields = {
+        "name": (form.get("name") or "Terminal").strip(),
+        "type": term_type,
+        "active": _parse_checkbox(form.get("active")),
+        "host": (form.get("host") or "").strip(),
+        "port": _safe_int(form.get("port"), 80),
+        "username": (form.get("username") or "").strip(),
+        "password": form.get("password") or "",
+        "use_ssl": _parse_checkbox(form.get("use_ssl")),
+        "verify_ssl": _parse_checkbox(form.get("verify_ssl")),
+        "timezone": (form.get("timezone") or "Europe/Berlin").strip() or "Europe/Berlin",
+        "sync_interval_minutes": _safe_int(form.get("sync_interval_minutes"), 60),
+        "config_json": _json.dumps(extra) if extra else "",
+    }
+    if keep_password_from is not None and not fields["password"]:
+        fields["password"] = keep_password_from.password
+    return fields
+
+
+def _run_terminal_sync(db, terminal, user, *, full_sync: bool) -> "terminals.TerminalSyncOutcome":
+    """Execute a sync via the terminal's driver, recording history + status."""
+    driver = terminals.get_driver(terminal.type)
+    started = datetime.utcnow()
+    logging_setup.log_terminal(
+        f"Synchronisation gestartet: {terminal.name} (full={full_sync})", user=user
+    )
+    if driver is None:
+        outcome = terminals.TerminalSyncOutcome(
+            "error", message=f"Unbekannter Terminaltyp: {terminal.type}"
+        )
     else:
-        error = request.query_params.get("error")
-    message = request.query_params.get("msg")
+        outcome = driver.synchronize(db, terminal, full_sync=full_sync)
+    finished = datetime.utcnow()
+    crud.add_terminal_sync_run(
+        db,
+        terminal_id=terminal.id,
+        terminal_name=terminal.name,
+        started_at=started,
+        finished_at=finished,
+        status=outcome.status,
+        imported_count=outcome.imported,
+        error_count=outcome.errors,
+        message=outcome.message,
+    )
+    updates = {
+        "last_sync_at": finished,
+        "last_sync_count": outcome.imported,
+        "last_sync_errors": outcome.errors,
+        "status": "online" if outcome.status == "success" else (
+            "warning" if outcome.status == "warning" else "error"
+        ),
+        "last_error": "" if outcome.status != "error" else outcome.message,
+    }
+    if outcome.status != "error":
+        updates["last_connection_at"] = finished
+    if outcome.last_event_id is not None:
+        updates["last_event_id"] = outcome.last_event_id
+    crud.update_terminal(db, terminal.id, **updates)
+    level = logging.INFO if outcome.status != "error" else logging.ERROR
+    logging_setup.log_terminal(
+        f"Synchronisation {outcome.status}: {terminal.name} – {outcome.message}",
+        level=level,
+        user=user,
+    )
+    if outcome.status == "error":
+        logging_setup.log_sync(
+            f"Terminal-Synchronisation fehlgeschlagen ({terminal.name}): {outcome.message}",
+            level=logging.ERROR,
+            user=user,
+        )
+    else:
+        logging_setup.log_sync(
+            f"Terminal-Synchronisation ({terminal.name}) – {outcome.imported} neue Buchungen",
+            user=user,
+        )
+    return outcome
+
+
+@app.get("/admin/terminals", response_class=HTMLResponse)
+def admin_terminals(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
     return _admin_template(
-        "admin/timemoto.html",
+        "admin/terminals.html",
         request,
         user,
-        message=message,
-        error=error,
-        config=config,
-        sync_result=None,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        admin_active="terminals",
+        terminals=crud.get_terminals(db),
+        terminal_types=terminals.available_types(),
+        status_labels=TERMINAL_STATUS_LABELS,
     )
 
 
-@app.post("/admin/integrations/timemoto", response_class=HTMLResponse)
-def admin_timemoto_save(
-    request: Request,
-    host: str = Form(""),
-    port: str = Form(""),
-    use_ssl: str | None = Form(None),
-    verify_ssl: str | None = Form(None),
-    username: str = Form(""),
-    password: str = Form(""),
-    timezone_value: str = Form(""),
-    login_path: str = Form(""),
-    users_path: str = Form(""),
-    events_path: str = Form(""),
-    events_limit: str = Form(""),
-    timeout_value: str = Form(""),
-    db: Session = Depends(database.get_db),
-):
-    user = get_logged_in_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    try:
-        config = timemoto.TimeMotoConfig.load()
-    except timemoto.TimeMotoError:
-        config = timemoto.TimeMotoConfig()
-    payload = {
-        "host": host,
-        "port": port or None,
-        "use_ssl": _parse_checkbox(use_ssl),
-        "verify_ssl": _parse_checkbox(verify_ssl),
-        "username": username,
-        "password": password,
-        "timezone": timezone_value,
-        "login_path": login_path,
-        "users_path": users_path,
-        "events_path": events_path,
-        "events_limit": events_limit or None,
-        "timeout": timeout_value or None,
-    }
-    try:
-        config.update_from_dict(payload)
-    except timemoto.TimeMotoError as exc:
-        return _admin_template(
-            "admin/timemoto.html",
-            request,
-            user,
-            error=str(exc),
-            config=config,
-            sync_result=None,
-        )
-    if not config.host:
-        return _admin_template(
-            "admin/timemoto.html",
-            request,
-            user,
-            error="Bitte Hostname oder IP-Adresse des TimeMoto-Geräts angeben.",
-            config=config,
-            sync_result=None,
-        )
-    try:
-        config.save()
-    except timemoto.TimeMotoError as exc:
-        return _admin_template(
-            "admin/timemoto.html",
-            request,
-            user,
-            error=str(exc),
-            config=config,
-            sync_result=None,
-        )
-    redirect = _build_redirect(
-        "/admin/integrations/timemoto",
-        msg="Einstellungen gespeichert.",
+@app.post("/admin/terminals")
+async def admin_terminal_save(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    form = await request.form()
+    terminal_id = _safe_int(form.get("terminal_id"), 0)
+    if terminal_id:
+        existing = crud.get_terminal(db, terminal_id)
+        if not existing:
+            return RedirectResponse(
+                url=_build_redirect("/admin/terminals", error="Terminal nicht gefunden"),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        fields = _terminal_fields_from_form(form, keep_password_from=existing)
+        crud.update_terminal(db, terminal_id, **fields)
+        logging_setup.log_audit("Terminal geändert", user=user, detail=fields["name"])
+        logging_setup.log_terminal(f"Terminal geändert: {fields['name']}", user=user)
+        msg = "Terminal gespeichert"
+    else:
+        if not (form.get("host") or "").strip():
+            return RedirectResponse(
+                url=_build_redirect("/admin/terminals", error="Host/IP-Adresse fehlt"),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        fields = _terminal_fields_from_form(form)
+        crud.create_terminal(db, **fields)
+        logging_setup.log_audit("Terminal angelegt", user=user, detail=fields["name"])
+        logging_setup.log_terminal(f"Terminal erstellt: {fields['name']}", user=user)
+        msg = "Terminal angelegt"
+    return RedirectResponse(
+        url=_build_redirect("/admin/terminals", msg=msg), status_code=status.HTTP_303_SEE_OTHER
     )
-    return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/admin/integrations/timemoto/sync", response_class=HTMLResponse)
-def admin_timemoto_sync(
+@app.post("/admin/terminals/test")
+async def admin_terminal_test(request: Request, db: Session = Depends(database.get_db)):
+    """Connection test for the values currently entered in the modal (JSON)."""
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
+    form = await request.form()
+    terminal_id = _safe_int(form.get("terminal_id"), 0)
+    existing = crud.get_terminal(db, terminal_id) if terminal_id else None
+    fields = _terminal_fields_from_form(form, keep_password_from=existing)
+    probe = models.Terminal(**fields)
+    if existing is not None:
+        probe.last_event_id = existing.last_event_id
+    driver = terminals.get_driver(probe.type)
+    if driver is None:
+        result = terminals.TerminalTestResult(False, f"Unbekannter Terminaltyp: {probe.type}")
+    else:
+        result = driver.test_connection(probe)
+    logging_setup.log_terminal(
+        f"Verbindungstest {probe.name}: {'ok' if result.ok else 'fehlgeschlagen'}",
+        level=logging.INFO if result.ok else logging.WARNING,
+        user=user,
+    )
+    return JSONResponse(result.to_dict())
+
+
+@app.post("/admin/terminals/{terminal_id}/sync")
+def admin_terminal_sync(
     request: Request,
+    terminal_id: int,
     full_sync: str | None = Form(None),
     db: Session = Depends(database.get_db),
 ):
-    user = get_logged_in_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    try:
-        config = timemoto.TimeMotoConfig.load()
-    except timemoto.TimeMotoError as exc:
-        config = timemoto.TimeMotoConfig()
-        return _admin_template(
-            "admin/timemoto.html",
-            request,
-            user,
-            error=str(exc),
-            config=config,
-            sync_result=None,
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    terminal = crud.get_terminal(db, terminal_id)
+    if not terminal:
+        return RedirectResponse(
+            url=_build_redirect("/admin/terminals", error="Terminal nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
-    if not config.host:
-        return _admin_template(
-            "admin/timemoto.html",
-            request,
-            user,
-            error="Bitte konfigurieren Sie das TimeMoto-Gerät, bevor Sie synchronisieren.",
-            config=config,
-            sync_result=None,
-        )
-    full_flag = _parse_checkbox(full_sync)
-    try:
-        result = timemoto.synchronize(db, config, full_sync=full_flag)
-    except timemoto.TimeMotoError as exc:
-        logging_setup.log_sync(
-            f"Synchronisierung fehlgeschlagen: {exc}", level=logging.ERROR, user=user
-        )
-        return _admin_template(
-            "admin/timemoto.html",
-            request,
-            user,
-            error=str(exc),
-            config=config,
-            sync_result=None,
-        )
-    logging_setup.log_sync(
-        f"Synchronisierung (full={full_flag}) – {result.created_entries} neue Buchungen",
-        user=user,
-    )
-    try:
-        config.save()
-    except timemoto.TimeMotoError as exc:
-        return _admin_template(
-            "admin/timemoto.html",
-            request,
-            user,
-            error=f"Synchronisierung erfolgreich, aber Konfiguration konnte nicht gespeichert werden: {exc}",
-            config=config,
-            sync_result=result,
-        )
-    if result.created_entries:
-        message = (
-            f"Synchronisierung abgeschlossen – {result.created_entries} neue Buchungen übernommen."
-        )
-    else:
-        message = "Synchronisierung abgeschlossen."
-    return _admin_template(
-        "admin/timemoto.html",
-        request,
-        user,
-        message=message,
-        error=None,
-        config=config,
-        sync_result=result,
+    outcome = _run_terminal_sync(db, terminal, user, full_sync=_parse_checkbox(full_sync))
+    key = "error" if outcome.status == "error" else "msg"
+    return RedirectResponse(
+        url=_build_redirect("/admin/terminals", **{key: f"{terminal.name}: {outcome.message}"}),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
-@app.post("/api/integrations/timemoto/sync")
-def api_timemoto_sync(
+@app.post("/admin/terminals/{terminal_id}/toggle")
+def admin_terminal_toggle(request: Request, terminal_id: int, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    terminal = crud.get_terminal(db, terminal_id)
+    if terminal:
+        new_active = not bool(terminal.active)
+        crud.update_terminal(db, terminal_id, active=new_active)
+        logging_setup.log_terminal(
+            f"Terminal {'aktiviert' if new_active else 'deaktiviert'}: {terminal.name}", user=user
+        )
+        logging_setup.log_audit(
+            "Terminal " + ("aktiviert" if new_active else "deaktiviert"),
+            user=user,
+            detail=terminal.name,
+        )
+    return RedirectResponse(
+        url=_build_redirect("/admin/terminals", msg="Terminal aktualisiert"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/terminals/{terminal_id}/delete")
+def admin_terminal_delete(request: Request, terminal_id: int, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    terminal = crud.get_terminal(db, terminal_id)
+    name = terminal.name if terminal else ""
+    crud.delete_terminal(db, terminal_id)
+    logging_setup.log_terminal(f"Terminal gelöscht: {name}", user=user)
+    logging_setup.log_audit("Terminal gelöscht", user=user, detail=name)
+    return RedirectResponse(
+        url=_build_redirect("/admin/terminals", msg="Terminal gelöscht"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/api/terminals/{terminal_id}/sync")
+def api_terminal_sync(
     request: Request,
+    terminal_id: int,
     full: bool = False,
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user or not _ensure_admin(user):
         raise HTTPException(status_code=403, detail="Nur Administratoren dürfen synchronisieren.")
-    try:
-        config = timemoto.TimeMotoConfig.load()
-    except timemoto.TimeMotoError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    if not config.host:
-        raise HTTPException(status_code=400, detail="TimeMoto-Gerät ist nicht konfiguriert.")
-    try:
-        result = timemoto.synchronize(db, config, full_sync=bool(full))
-    except timemoto.TimeMotoError as exc:
-        logging_setup.log_sync(
-            f"API-Synchronisierung fehlgeschlagen: {exc}", level=logging.ERROR, user=user
-        )
-        raise HTTPException(status_code=502, detail=str(exc))
-    logging_setup.log_sync(
-        f"API-Synchronisierung – {result.created_entries} neue Buchungen", user=user
-    )
-    try:
-        config.save()
-    except timemoto.TimeMotoError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Synchronisierung erfolgreich, aber Konfiguration konnte nicht gespeichert werden: {exc}",
-        )
-    return result.to_dict()
+    terminal = crud.get_terminal(db, terminal_id)
+    if not terminal:
+        raise HTTPException(status_code=404, detail="Terminal nicht gefunden.")
+    outcome = _run_terminal_sync(db, terminal, user, full_sync=bool(full))
+    if outcome.status == "error":
+        raise HTTPException(status_code=502, detail=outcome.message)
+    return outcome.to_dict()
+
+
+@app.get("/admin/integrations/timemoto", include_in_schema=False)
+def admin_timemoto_redirect(request: Request):
+    """Backward-compatible redirect from the removed TimeMoto page (§0.9.8)."""
+    return RedirectResponse(url="/admin/terminals", status_code=status.HTTP_308_PERMANENT_REDIRECT)
 
 
 @app.post("/api/groups", response_model=schemas.Group)
@@ -4125,6 +4174,7 @@ def admin_system_settings_save(
     backup_logging: Optional[str] = Form(None),
     restore_logging: Optional[str] = Form(None),
     database_logging: Optional[str] = Form(None),
+    terminal_logging: Optional[str] = Form(None),
     rotation_max_mb: str = Form("5"),
     rotation_backup_count: str = Form("5"),
     auto_cleanup_enabled: Optional[str] = Form(None),
@@ -4152,6 +4202,7 @@ def admin_system_settings_save(
             "backup_logging": _parse_checkbox(backup_logging),
             "restore_logging": _parse_checkbox(restore_logging),
             "database_logging": _parse_checkbox(database_logging),
+            "terminal_logging": _parse_checkbox(terminal_logging),
             "rotation_max_bytes": int(max_mb * 1024 * 1024),
             "rotation_backup_count": rotation_backup_count,
             "auto_cleanup_enabled": _parse_checkbox(auto_cleanup_enabled),

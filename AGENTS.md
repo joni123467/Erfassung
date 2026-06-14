@@ -10,8 +10,13 @@ Repository. Er ergänzt `README.md` und `CHANGELOG.md`.
 - SQLite-Datenbank (`erfassung.db`), SQLAlchemy-Modelle in `app/models.py`.
 - Versionsquelle ist ausschließlich die Datei `VERSION` im Repo-Root;
   `app/__init__.py` liest sie und versorgt FastAPI (`version=`), Footer,
-  Health-API und Asset-Cache-Busting (`?v=`). Bei Releases nur `VERSION`
-  und `CHANGELOG.md` pflegen – nirgendwo Versionsnummern hartkodieren.
+  Loginseite, Systemstatus, Health-/API-Version, Release- und Build-
+  informationen sowie Asset-Cache-Busting (`?v=`). Nirgendwo Versionsnummern
+  hartkodieren.
+- Bei **jedem** Release verpflichtend gemeinsam pflegen: `VERSION`,
+  `CHANGELOG.md`, `README.md` und – sofern vorhanden – die Release Notes unter
+  `docs/RELEASE_NOTES_<version>.md`. Siehe Abschnitt „Dokumentation &
+  Versionspflege“.
 
 ## Datenbankschema prüfen (verpflichtend)
 
@@ -100,7 +105,7 @@ Benutzer aktualisieren von **beliebigen** älteren Versionen
 Seit 0.9.0 existiert ein dateibasiertes Logging-System
 (`app/logging_setup.py`) mit rotierenden Kanälen im `logs`-Volume:
 `application`, `api`, `sync`, `security`, `error`, `audit`, `backup`
-(ab 0.9.4) und `database` (ab 0.9.7).
+(ab 0.9.4), `database` (ab 0.9.7) und `terminal` (ab 0.9.8).
 
 - **Neue Logs registrieren**: zusätzliche Kanäle ausschließlich über
   `logging_setup.CHANNELS` einführen; keine eigenen Dateipfade hartkodieren.
@@ -245,7 +250,7 @@ Kein Release, wenn: ein Datenbankwechsel fehlschlägt, der Rollback fehlschlägt
   (wie „Buchungen“/„Urlaub“) gehalten: Hauptgruppen sind Reiter, die auf dem
   Desktop beim Hover ein Dropdown öffnen und auf Mobil als Accordion klappen.
   Es ist immer nur **eine** Hauptgruppe geöffnet. Neue Admin-Seiten in die
-  passende Gruppe einsortieren (Benutzer / Zeitverwaltung / Sicherung / System /
+  passende Gruppe einsortieren (Benutzer / Zeiterfassung / Sicherung / System /
   Einstellungen) und einen eindeutigen `admin_active`-Key setzen; die Gruppe der
   aktiven Seite öffnet automatisch.
 - Auf Bearbeitungs-/Formularseiten `{% set admin_nav_collapse = true %}` vor dem
@@ -268,6 +273,81 @@ Modals, Karten) prüfen:
    Dropdowns/Eingaben, ausgerichtete Labels, konsistente Buttons.
 5. **Design konsistent** – keine Bootstrap-Standardoptik; Karten/Sektionen,
    Tokens aus `static/styles.css`, Dark Mode ohne Sonderfälle.
+
+## Terminalverwaltung (ab 0.9.8, verpflichtend)
+
+Zeiterfassungsterminals werden zentral über **Administration → Zeiterfassung →
+Terminals** (`/admin/terminals`) verwaltet. Der frühere TimeMoto-
+Konfigurationspunkt entfällt; `/admin/integrations/timemoto` leitet auf
+`/admin/terminals` um.
+
+- **Treiber-/Plugin-Architektur** (`app/integrations/terminals/`): Jeder
+  Terminaltyp ist ein `TerminalDriver` (Methoden `test_connection`,
+  `synchronize`), der sich in der Registry (`register(...)`) anmeldet. **Keine
+  hartkodierte terminaltyp-spezifische Logik in der UI oder im Routing** – die
+  Oberfläche kennt nur das Treiber-Interface. Neue Typen (ZKTeco, Suprema,
+  generische REST-/CSV-Terminals) werden als zusätzlicher Treiber ergänzt und
+  registriert; das genügt, damit sie im Modal-Dropdown erscheinen.
+- Terminaldaten liegen in `models.Terminal`; treiber­spezifische Endpunkte/
+  Optionen gehören in `Terminal.config_json` (kein Schemaänderung pro Typ).
+  Synchronisationsläufe werden in `models.TerminalSyncRun` historisiert.
+- Aktionen über `logging_setup.log_terminal` im Kanal `terminal`
+  (`logs/terminal.log`) protokollieren: erstellt/geändert/gelöscht,
+  Verbindungstest, Synchronisation gestartet/erfolgreich/fehlgeschlagen,
+  aktiviert/deaktiviert. Niemals Passwörter/API-Keys loggen.
+
+### Pflichtprüfungen vor jedem Release
+
+1. Neues Terminal anlegen, bearbeiten und löschen funktioniert.
+2. Verbindung testen liefert ein verständliches Ergebnis (kein 500 bei
+   unerreichbarem Host).
+3. Synchronisation läuft, Ergebnis (importierte Buchungen/Fehler) und Status
+   (online/warning/offline/error) werden gespeichert und angezeigt.
+4. Aktivieren/Deaktivieren wirkt.
+5. `terminal.log` wird geschrieben; der Systemstatus zeigt Terminalkennzahlen.
+6. Eine vorhandene `config/timemoto.json` wird beim Upgrade automatisch als
+   Terminal übernommen (Migration 9, idempotent, ohne Datenverlust).
+
+### Release-Blocker
+
+Kein Release, wenn: TimeMoto nicht migriert wurde, die Terminalverwaltung
+(Anlegen/Bearbeiten/Löschen/Test/Synchronisation) nicht funktioniert oder
+terminaltyp-spezifische Logik hartkodiert in die UI gelangt ist.
+
+## Datenbank-Konfiguration (UI) prüfen (ab 0.9.8, verpflichtend)
+
+Im Modal unter Administration → System → Datenbank gilt:
+
+1. **Felder wechseln korrekt**: SQLite zeigt nur den Datenbankpfad;
+   MySQL/MariaDB/PostgreSQL zeigen Host, Port, Datenbankname, Benutzer,
+   Passwort und SSL.
+2. **Standardports korrekt**: beim Wechsel automatisch MySQL/MariaDB 3306,
+   PostgreSQL 5432; der Platzhalter folgt dem Typ.
+3. **Gespeicherte/eigene Werte bleiben erhalten**: ein selbst eingetragener
+   Port und bereits gesetzte Werte (z. B. Host) dürfen beim Typwechsel nicht
+   überschrieben werden (nur ein automatisch gesetzter Standardport wird auf den
+   neuen Standard angepasst).
+4. **Validierung & Verbindungstest** beziehen sich immer auf die aktuell
+   eingestellte Konfiguration, nie auf eine alte.
+
+## Dokumentation & Versionspflege (verpflichtend)
+
+Bei **jeder** Versionsänderung automatisch prüfen und pflegen:
+
+- Wurde die `README.md` aktualisiert und entspricht sie dem tatsächlichen
+  Funktionsumfang (neue/entfernte Funktionen, geänderte Menüpunkte, neue
+  Konfigurations-, Datenbank-, Backup-/Restore- und Terminalfunktionen)?
+- Stimmen die Versionsnummern in `VERSION`, `README.md`, `CHANGELOG.md`,
+  Anwendung, API, Footer, Build- und Releaseinformationen überein?
+- Existiert ein `CHANGELOG.md`-Eintrag für die neue Version mit mindestens:
+  neue Funktionen, Änderungen, Fehlerbehebungen, Datenbankänderungen,
+  Migrationshinweise?
+
+### Release-Blocker
+
+Kein Release, wenn: die README nicht aktualisiert wurde, Versionsnummern nicht
+übereinstimmen, neue Funktionen nicht dokumentiert sind oder ein Changelog-
+Eintrag fehlt.
 
 ## Weitere Konventionen
 
