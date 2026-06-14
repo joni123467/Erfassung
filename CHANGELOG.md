@@ -5,6 +5,59 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.7] – 2026-06-14
+
+### Added – Datenbankverwaltung & -migration über die Oberfläche
+
+- **Neuer Bereich Administration → System → Datenbank** (`/admin/system/database`):
+  Das aktive Datenbanksystem lässt sich jetzt direkt über die Weboberfläche
+  verwalten. Unterstützt werden **SQLite, MySQL, MariaDB und PostgreSQL**.
+  MariaDB und PostgreSQL sind als empfohlene Produktivdatenbanken
+  gekennzeichnet (⭐ Empfohlen); SQLite bleibt für Einzelplatz-, Test- und
+  Entwicklungsumgebungen verfügbar.
+- **Datenbankauswahl & -konfiguration**: Dropdown „Aktive Datenbank“ mit
+  Empfehlungskarten (Einsatzzwecke, Hinweise) sowie ein kompaktes Modal
+  („Datenbank konfigurieren“). SQLite zeigt den Datenbankpfad, die Server-
+  backends Host, Port, Datenbankname, Benutzer, Passwort, SSL und Verbindungs-
+  Timeout. Ein Info-Symbol (ⓘ) zeigt empfohlene und unterstützte Versionen.
+  Konfiguration wird persistent als `config/database.json` im config-Volume
+  gespeichert und hat Vorrang vor `DATABASE_URL`.
+- **Verlustfreie Datenbankmigration** (`app/db_migrator.py`): Wechsel zwischen
+  allen vier Systemen ohne Datenverlust. Ablauf: Zielverbindung prüfen →
+  automatisches Sicherheitsbackup (`pre_db_migration_*.zip`) → Zielschema
+  erzeugen → Daten exportieren/importieren → Integritätsprüfung →
+  Anwendung umstellen → `post_db_migration_*.zip` als sofortiger
+  Wiederherstellungspunkt. Übernommen werden Benutzer, Rollen, Arbeitszeiten,
+  Stempelungen, Urlaub, Feiertage, Logs, Backup-/Restore-Historie,
+  Offline-Synchronisationsdaten und alle weiteren Tabellen. Einstellungen liegen
+  im config-Volume und bleiben unberührt.
+- **Integritätsprüfung** nach jeder Migration: Tabellenanzahl, Datensatzanzahl
+  je Tabelle, Schlüsselentitäten (Benutzer, Rollen, Historien). Bei Abweichung
+  schlägt die Migration fehl.
+- **Rollback ohne Downtime**: Da nur in die Zieldatenbank geschrieben wird,
+  bleibt die bisherige Datenbank bei jedem Fehler unverändert aktiv. Eine nicht
+  leere Zieldatenbank bricht die Migration ab (Datenverlust-Schutz).
+- **Asynchroner Migrations-Worker** (`app/db_migration_jobs.py`) analog zum
+  Restore: Der Request validiert und queued nur, der Hintergrund-Thread führt
+  die Migration aus; Fortschritt über `data/db_migration_status.json` und
+  `GET /api/database/migration/status` mit eigener Fortschrittsseite.
+- **Neuer Logkanal `database`** → `logs/database.log` (in Administration → Logs
+  filter-/such-/downloadbar). Erfasst Migration gestartet/erfolgreich/
+  fehlgeschlagen, Rollback und Verbindungstests (Zeitpunkt, Benutzer, Quelle,
+  Ziel, Datensatzanzahl, Dauer, Ergebnis) – nie Zugangsdaten. Über das neue
+  Logging-Setting „Datenbank-Logging“ steuerbar.
+
+### Changed
+
+- **Systemstatus erweitert**: zeigt aktive Datenbank, Datenbankversion, Host,
+  Datenbankname, Tabellenanzahl, letzte Migration, letzte erfolgreiche Migration
+  und letzten Fehler.
+- **PostgreSQL-Treiber** (`psycopg2-binary`) ergänzt; `app/database.py` erkennt
+  und bedient SQLite, MySQL/MariaDB (PyMySQL) und PostgreSQL über eine
+  abstrahierte URL-/Engine-Schicht mit Laufzeit-Reconfigure.
+- Version auf **0.9.7** angehoben (Frontend, Backend, Footer, Loginseite,
+  Systemstatus, API-Version, Release- und Buildinformationen).
+
 ## [0.9.6] – 2026-06-14
 
 ### Changed – Administration UI/UX überarbeitet

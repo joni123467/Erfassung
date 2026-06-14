@@ -45,13 +45,20 @@
     <div class="table-scroll">
         <table class="striped-table">
             <tbody>
-                <tr><th>Typ</th><td>{{ status_data.database.type }}</td></tr>
-                <tr><th>Version</th><td>{{ status_data.database.server_version or '–' }}</td></tr>
-                <tr><th>Letzte Migration</th><td>{{ status_data.database.last_migration }}</td></tr>
+                <tr><th>Aktive Datenbank</th><td>{{ status_data.database.type }}</td></tr>
+                <tr><th>Datenbankversion</th><td>{{ status_data.database.server_version or '–' }}</td></tr>
+                <tr><th>Host</th><td>{{ status_data.database.host or '–' }}</td></tr>
+                <tr><th>Datenbankname</th><td>{{ status_data.database.name or '–' }}</td></tr>
+                <tr><th>Tabellenanzahl</th><td>{{ status_data.database.table_count }}</td></tr>
+                <tr><th>Letzte Migration (Schema)</th><td>{{ status_data.database.last_migration }}</td></tr>
+                <tr><th>Letzte Migration (Datenbankwechsel)</th><td>{{ status_data.database_log.last_migration or '–' }}</td></tr>
+                <tr><th>Letzte erfolgreiche Migration</th><td>{{ status_data.database_log.last_successful_migration or '–' }}</td></tr>
+                <tr><th>Letzter Fehler</th><td>{{ status_data.database_log.last_error or '–' }}</td></tr>
                 <tr><th>Ausstehende Migrationen</th><td>{% if status_data.database.pending_migrations %}{{ status_data.database.pending_migrations|join(', ') }}{% else %}keine{% endif %}</td></tr>
             </tbody>
         </table>
     </div>
+    <p class="card-header__hint">Verwaltung unter <a href="/admin/system/database">Datenbank</a>.</p>
 </section>
 
 <section class="card">

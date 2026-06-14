@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Datenbank – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_database' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Datenbank</h1>
+            <p class="card-header__hint">Aktives Datenbanksystem verwalten, Verbindung konfigurieren und ohne Datenverlust migrieren.</p>
+        </div>
+        <div class="card-header__actions">
+            <button type="button" class="button primary" id="db-configure">Datenbank konfigurieren</button>
+        </div>
+    </div>
+
+    {% if migration_active %}
+    <p class="alert alert--danger">Es läuft derzeit eine Datenbankmigration.
+        <a href="/admin/system/database/progress">Zum Fortschritt</a>.</p>
+    {% endif %}
+
+    <div class="metric-grid">
+        <article class="metric-tile">
+            <span class="metric-tile__label">Aktiv</span>
+            <strong class="metric-tile__value">{{ db_status.type }}</strong>
+            <span class="metric-tile__sub">{{ 'erreichbar' if db_status.reachable else 'nicht erreichbar' }}</span>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Version</span>
+            <strong class="metric-tile__value">{{ db_status.server_version or '–' }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Tabellen</span>
+            <strong class="metric-tile__value">{{ db_status.table_count }}</strong>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Größe</span>
+            <strong class="metric-tile__value">{{ db_status.size_human }}</strong>
+        </article>
+    </div>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Typ</th><td>{{ db_status.type }}</td></tr>
+                <tr><th>Host</th><td>{{ db_status.host or '–' }}</td></tr>
+                <tr><th>Datenbankname</th><td>{{ db_status.name or '–' }}</td></tr>
+                <tr><th>Version</th><td>{{ db_status.server_version or '–' }}</td></tr>
+                <tr><th>Letzte Migration (Schema)</th><td>{{ db_status.last_migration }}</td></tr>
+                <tr><th>Letzte Migration (Datenbankwechsel)</th><td>{{ db_log.last_migration or '–' }}</td></tr>
+                <tr><th>Letzte erfolgreiche Migration</th><td>{{ db_log.last_successful_migration or '–' }}</td></tr>
+                <tr><th>Letzter Fehler</th><td>{{ db_log.last_error or '–' }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="card-header__hint">Protokoll: <a href="/admin/system/logs?channel=database">database.log</a></p>
+</section>
+
+<section class="card">
+    <h2>Empfohlene Datenbanken</h2>
+    <p class="card-header__hint">Für Neuinstallationen empfohlen: PostgreSQL, MariaDB, MySQL, SQLite (in dieser Reihenfolge).</p>
+    <div class="db-reco-grid">
+        {% for opt in db_options %}
+        <article class="db-reco-card {% if opt.recommended %}db-reco-card--recommended{% endif %} {% if opt.value == db_status.logical_type %}is-active{% endif %}">
+            <header class="db-reco-card__head">
+                <h3>{{ opt.label }}</h3>
+                {% if opt.recommended %}<span class="db-badge">⭐ Empfohlen</span>{% endif %}
+                {% if opt.value == db_status.logical_type %}<span class="db-badge db-badge--active">Aktiv</span>{% endif %}
+            </header>
+            <p class="db-reco-card__summary">{{ opt.summary }}</p>
+            <ul class="db-reco-card__uses">
+                {% for use in opt.use_cases %}<li>{{ use }}</li>{% endfor %}
+            </ul>
+            {% if opt.note %}<p class="db-reco-card__note">{{ opt.note }}</p>{% endif %}
+            <p class="db-reco-card__versions">
+                <strong>Empfohlen:</strong> {{ opt.recommended_versions|join(', ') }}<br>
+                <span class="text-muted">Unterstützt: {{ opt.supported_versions|join(', ') }}</span>
+            </p>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- Konfigurations- / Migrations-Modal -->
+<div class="modal" id="db-modal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__dialog modal__dialog--scroll">
+        <header class="modal__head">
+            <h3 id="db-modal-title">Datenbank konfigurieren</h3>
+            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+        </header>
+        <form method="post" action="/admin/system/database/migrate" class="modal__scrollform" id="db-form">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+            <div class="modal__body form-grid">
+                <label class="full-width">Aktive Datenbank
+                    <select name="type" id="db-type">
+                        {% for opt in db_options %}
+                        <option value="{{ opt.value }}" {% if opt.value == db_config.type %}selected{% endif %}>
+                            {{ opt.label }}{% if opt.recommended %} ⭐ Empfohlen{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </label>
+
+                <div class="full-width db-compat" id="db-compat">
+                    <button type="button" class="db-compat__toggle" id="db-compat-toggle" aria-expanded="false"
+                            aria-label="Unterstützte Versionen anzeigen" title="Unterstützte Versionen">ⓘ</button>
+                    <div class="db-compat__panel" id="db-compat-panel" hidden>
+                        {% for opt in db_options %}
+                        <div class="db-compat__item" data-type="{{ opt.value }}" hidden>
+                            <strong>{{ opt.label }}</strong>
+                            <span class="db-compat__rec">Empfohlen: {{ opt.recommended_versions|join(', ') }}</span>
+                            <span class="db-compat__sup">Unterstützt: {{ opt.supported_versions|join(', ') }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="full-width db-group" data-group="sqlite">
+                    <label>Datenbankpfad<input type="text" name="sqlite_path" id="db-sqlite-path" value="{{ db_config.sqlite_path }}" placeholder="./data/erfassung.db"></label>
+                </div>
+
+                <div class="full-width db-group" data-group="server">
+                    <label>Host<input type="text" name="host" id="db-host" value="{{ db_config.host }}" placeholder="db.example.com"></label>
+                    <label>Port<input type="number" name="port" id="db-port" value="{{ db_config.port or '' }}"></label>
+                    <label>Datenbankname<input type="text" name="name" id="db-name" value="{{ db_config.name }}"></label>
+                    <label>Benutzer<input type="text" name="user" id="db-user" value="{{ db_config.user }}"></label>
+                    <label>Passwort<input type="password" name="password" id="db-password" autocomplete="new-password"
+                           placeholder="{% if db_config.has_password %}unverändert{% endif %}"></label>
+                    <label>Verbindungs-Timeout (s)<input type="number" name="timeout" id="db-timeout" min="1" value="{{ db_config.timeout }}"></label>
+                    <label class="checkbox-inline"><input type="checkbox" name="ssl" id="db-ssl" {% if db_config.ssl %}checked{% endif %}> SSL aktivieren</label>
+                </div>
+
+                <div class="full-width db-migrate-confirm" id="db-migrate-confirm" hidden>
+                    <p class="alert alert--danger">
+                        <strong>Datenbankwechsel:</strong> Es wird automatisch ein Sicherheitsbackup erstellt,
+                        anschließend werden alle Daten in das neue System übertragen und geprüft.
+                        Die bisherige Datenbank bleibt aktiv, falls etwas fehlschlägt.
+                        Zum Bestätigen <code>MIGRIEREN</code> eingeben.
+                    </p>
+                    <label>Bestätigung<input type="text" name="confirm" id="db-confirm" placeholder="MIGRIEREN" autocomplete="off"></label>
+                </div>
+
+                <p class="form-hint full-width" id="db-test-result" role="status"></p>
+            </div>
+            <div class="modal__foot">
+                <button type="button" class="button ghost" data-close>Abbrechen</button>
+                <button type="button" class="button ghost" id="db-test">Verbindung testen</button>
+                <button type="submit" class="button primary" id="db-submit" formaction="/admin/system/database/save">Speichern</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+(function () {
+    const ACTIVE_TYPE = {{ db_status.logical_type|tojson }};
+    const DEFAULT_PORTS = { postgresql: 5432, mariadb: 3306, mysql: 3306, sqlite: 0 };
+    const modal = document.getElementById('db-modal');
+    const form = document.getElementById('db-form');
+    const csrf = form.querySelector('input[name=csrf_token]').value;
+    const typeSelect = document.getElementById('db-type');
+    const groups = modal.querySelectorAll('.db-group');
+    const migrateConfirm = document.getElementById('db-migrate-confirm');
+    const submitBtn = document.getElementById('db-submit');
+    const portInput = document.getElementById('db-port');
+    const result = document.getElementById('db-test-result');
+
+    const show = (visible) => {
+        modal.classList.toggle('is-visible', visible);
+        modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        document.body.classList.toggle('modal-open', visible);
+    };
+
+    const updateForType = () => {
+        const type = typeSelect.value;
+        const isSqlite = type === 'sqlite';
+        groups.forEach((g) => {
+            const wantsServer = g.dataset.group === 'server';
+            g.hidden = isSqlite ? wantsServer : !wantsServer;
+        });
+        // Compatibility info follows the selected type.
+        document.querySelectorAll('#db-compat-panel .db-compat__item').forEach((el) => {
+            el.hidden = el.dataset.type !== type;
+        });
+        // Default port when empty.
+        if (!isSqlite && (!portInput.value || portInput.value === '0')) {
+            portInput.value = DEFAULT_PORTS[type] || '';
+        }
+        // Same type -> save config; different type -> migrate with confirmation.
+        const isMigration = type !== ACTIVE_TYPE;
+        migrateConfirm.hidden = !isMigration;
+        if (isMigration) {
+            form.setAttribute('action', '/admin/system/database/migrate');
+            submitBtn.removeAttribute('formaction');
+            submitBtn.textContent = 'Datenbank migrieren';
+            submitBtn.classList.add('danger');
+            submitBtn.classList.remove('primary');
+        } else {
+            form.setAttribute('action', '/admin/system/database/save');
+            submitBtn.setAttribute('formaction', '/admin/system/database/save');
+            submitBtn.textContent = 'Speichern';
+            submitBtn.classList.add('primary');
+            submitBtn.classList.remove('danger');
+        }
+    };
+
+    document.getElementById('db-configure').addEventListener('click', () => { show(true); updateForType(); });
+    modal.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', () => show(false)));
+    typeSelect.addEventListener('change', updateForType);
+
+    const compatToggle = document.getElementById('db-compat-toggle');
+    const compatPanel = document.getElementById('db-compat-panel');
+    compatToggle.addEventListener('click', () => {
+        const open = compatPanel.hidden;
+        compatPanel.hidden = !open;
+        compatToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+
+    document.getElementById('db-test').addEventListener('click', async () => {
+        result.textContent = 'Teste Verbindung …';
+        result.style.color = '';
+        try {
+            const response = await fetch('/admin/system/database/test', {
+                method: 'POST', headers: { 'x-csrf-token': csrf }, body: new FormData(form),
+            });
+            const data = await response.json();
+            result.textContent = (data.ok ? '✓ ' : '✗ ') + data.message;
+            result.style.color = data.ok ? 'var(--success, #16a34a)' : 'var(--danger, #dc2626)';
+        } catch (err) {
+            result.textContent = '✗ Test fehlgeschlagen: ' + err;
+            result.style.color = 'var(--danger, #dc2626)';
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('is-visible')) show(false);
+    });
+    updateForType();
+})();
+</script>
+{% endblock %}

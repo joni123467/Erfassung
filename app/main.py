@@ -35,6 +35,8 @@ from . import (
     backup_scheduler,
     crud,
     database,
+    db_migration_jobs,
+    db_migrator,
     holiday_calculator,
     log_tools,
     logging_setup,
@@ -4108,7 +4110,7 @@ def admin_system_settings(request: Request, db: Session = Depends(database.get_d
         logging_config=app_config.load_logging_config(),
         system_settings=app_config.load_system_settings(),
         level_choices=LOG_LEVEL_CHOICES,
-        db_backend="SQLite" if database.IS_SQLITE else "MySQL/MariaDB",
+        db_backend=system_info.database_status(db)["type"],
     )
 
 
@@ -4122,6 +4124,7 @@ def admin_system_settings_save(
     sync_logging: Optional[str] = Form(None),
     backup_logging: Optional[str] = Form(None),
     restore_logging: Optional[str] = Form(None),
+    database_logging: Optional[str] = Form(None),
     rotation_max_mb: str = Form("5"),
     rotation_backup_count: str = Form("5"),
     auto_cleanup_enabled: Optional[str] = Form(None),
@@ -4148,6 +4151,7 @@ def admin_system_settings_save(
             "sync_logging": _parse_checkbox(sync_logging),
             "backup_logging": _parse_checkbox(backup_logging),
             "restore_logging": _parse_checkbox(restore_logging),
+            "database_logging": _parse_checkbox(database_logging),
             "rotation_max_bytes": int(max_mb * 1024 * 1024),
             "rotation_backup_count": rotation_backup_count,
             "auto_cleanup_enabled": _parse_checkbox(auto_cleanup_enabled),
@@ -4652,6 +4656,231 @@ def admin_restore_delete(request: Request, file: str = Form(...), db: Session = 
         url=_build_redirect("/admin/system/restore", msg="Backup gelöscht"),
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+# ---------------------------------------------------------------------------
+# Administration → System → Datenbank (§0.9.7)
+# ---------------------------------------------------------------------------
+
+# UI metadata: recommendations + supported versions per database type.
+DATABASE_OPTIONS = [
+    {
+        "value": "postgresql",
+        "label": "PostgreSQL",
+        "recommended": True,
+        "summary": "Für größere Installationen, hohe Datenintegrität und komplexe Auswertungen.",
+        "use_cases": [
+            "größere Installationen",
+            "hohe Datenintegrität",
+            "komplexe Auswertungen",
+            "langfristige Skalierung",
+        ],
+        "recommended_versions": ["16", "17"],
+        "supported_versions": ["14+", "15+", "16+", "17+"],
+        "default_port": 5432,
+    },
+    {
+        "value": "mariadb",
+        "label": "MariaDB",
+        "recommended": True,
+        "summary": "Empfohlen für kleine bis große Produktivumgebungen und Docker/Linux-Server.",
+        "use_cases": [
+            "kleine bis große Produktivumgebungen",
+            "Docker Deployments",
+            "Linux Server",
+            "langfristigen Betrieb",
+        ],
+        "recommended_versions": ["10.11 LTS", "11.x"],
+        "supported_versions": ["10.6+", "10.11+", "11.x"],
+        "default_port": 3306,
+    },
+    {
+        "value": "mysql",
+        "label": "MySQL",
+        "recommended": False,
+        "summary": "Kompatible Alternative für bestehende MySQL-Infrastrukturen.",
+        "use_cases": [
+            "bestehende MySQL-Infrastrukturen",
+            "kleinere bis mittlere Installationen",
+        ],
+        "recommended_versions": ["8.0+"],
+        "supported_versions": ["8.x"],
+        "default_port": 3306,
+    },
+    {
+        "value": "sqlite",
+        "label": "SQLite",
+        "recommended": False,
+        "summary": "Für Einzelplatzbetrieb, kleine Installationen, Test- und Entwicklungsumgebungen.",
+        "use_cases": [
+            "Einzelplatzbetrieb",
+            "kleine Installationen",
+            "Testsysteme",
+            "Entwicklungsumgebungen",
+        ],
+        "note": "Nicht für größere Mehrbenutzerumgebungen empfohlen.",
+        "recommended_versions": ["3.x"],
+        "supported_versions": ["3.x"],
+        "default_port": 0,
+    },
+]
+
+
+def _database_config_from_form(form, *, keep_password_from=None) -> "app_config.DatabaseConfig":
+    config = app_config.DatabaseConfig.from_dict(
+        {
+            "type": form.get("type"),
+            "sqlite_path": form.get("sqlite_path"),
+            "host": form.get("host"),
+            "port": form.get("port"),
+            "name": form.get("name"),
+            "user": form.get("user"),
+            "password": form.get("password"),
+            "ssl": _parse_checkbox(form.get("ssl")),
+            "timeout": form.get("timeout"),
+        }
+    )
+    # Keep the stored password when the form leaves it blank (masked field).
+    if keep_password_from is not None and not config.password:
+        config.password = keep_password_from.password
+    return config
+
+
+@app.get("/admin/system/database", response_class=HTMLResponse)
+def admin_system_database(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_database.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        admin_active="system_database",
+        db_status=system_info.database_status(db),
+        db_log=system_info.database_log_overview(),
+        db_config=app_config.load_database_config().safe_dict(),
+        db_options=DATABASE_OPTIONS,
+        recommended_types=list(app_config.RECOMMENDED_DATABASE_TYPES),
+        migration_active=db_migration_jobs.is_active(),
+    )
+
+
+@app.post("/admin/system/database/test")
+async def admin_system_database_test(request: Request, db: Session = Depends(database.get_db)):
+    """Connection test for the values entered in the modal (JSON)."""
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
+    form = await request.form()
+    existing = app_config.load_database_config()
+    config = _database_config_from_form(form, keep_password_from=existing)
+    result = db_migrator.test_connection(config, user=user)
+    logging_setup.log_audit(
+        "Datenbank-Verbindungstest", user=user, detail=f"{config.type}: {'ok' if result['ok'] else 'fehlgeschlagen'}"
+    )
+    return JSONResponse(result)
+
+
+@app.post("/admin/system/database/save")
+async def admin_system_database_save(request: Request, db: Session = Depends(database.get_db)):
+    """Persist the connection configuration WITHOUT switching the backend.
+
+    Used to store/adjust credentials for the active backend. Switching backends
+    (and migrating data) happens via the dedicated migrate endpoint.
+    """
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    form = await request.form()
+    existing = app_config.load_database_config()
+    config = _database_config_from_form(form, keep_password_from=existing)
+    ok, reason = app_config.validate_database_config(config)
+    if not ok:
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/database", error=reason),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    # Only allow saving config for the currently active backend here; a different
+    # type must go through migration so the data is carried over.
+    if database.normalise_type(config.type) != database.DB_TYPE:
+        return RedirectResponse(
+            url=_build_redirect(
+                "/admin/system/database",
+                error="Für einen Wechsel des Datenbanktyps bitte „Datenbank migrieren“ verwenden.",
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    app_config.save_database_config(config)
+    logging_setup.log_audit("Datenbankkonfiguration gespeichert", user=user, detail=config.type)
+    db_migrator.log_db(f"Konfiguration gespeichert: {config.describe()}", user=user)
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/database", msg="Konfiguration gespeichert"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/database/migrate")
+async def admin_system_database_migrate(request: Request, db: Session = Depends(database.get_db)):
+    """Validate + queue a database migration. The copy runs asynchronously so the
+    engine swap never tears down this request (mirrors the restore worker)."""
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    form = await request.form()
+    if (form.get("confirm") or "").strip() != "MIGRIEREN":
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/database", error="Bestätigung fehlt oder falsch"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    existing = app_config.load_database_config()
+    config = _database_config_from_form(form, keep_password_from=existing)
+    ok, reason = app_config.validate_database_config(config)
+    if not ok:
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/database", error=reason),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if db_migration_jobs.is_active():
+        return RedirectResponse(
+            url=_build_redirect(
+                "/admin/system/database/progress", error="Es läuft bereits eine Migration"
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    token = db_migration_jobs.start_migration(config, username=user.username)
+    logging_setup.log_audit(
+        "Datenbankmigration gestartet",
+        user=user,
+        detail=f"{database.DB_TYPE} → {config.type} (Job {token})",
+    )
+    return RedirectResponse(
+        url="/admin/system/database/progress", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/admin/system/database/progress", response_class=HTMLResponse)
+def admin_system_database_progress(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_database_progress.html",
+        request,
+        user,
+        admin_active="system_database",
+        status=db_migration_jobs.read_status(),
+    )
+
+
+@app.get("/api/database/migration/status")
+def api_database_migration_status(request: Request):
+    """Lightweight status endpoint – reads only the JSON status file so it keeps
+    working while the engine is being swapped (session-only auth)."""
+    if not request.session.get("user_id"):
+        return JSONResponse({"state": "unauthorized"}, status_code=401)
+    return JSONResponse(db_migration_jobs.read_status())
 
 
 @app.get("/admin/holidays/export")

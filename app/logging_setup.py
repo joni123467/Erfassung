@@ -35,6 +35,7 @@ CHANNELS: dict[str, str] = {
     "error": "error.log",
     "audit": "audit.log",
     "backup": "backup.log",
+    "database": "database.log",
 }
 
 LOG_FILES = tuple(CHANNELS.values())
@@ -140,6 +141,7 @@ def configure_logging(config: LoggingConfig | None = None) -> LoggingConfig:
         "security": config.security_logging,
         "audit": config.audit_logging,
         "backup": getattr(config, "backup_logging", True) or getattr(config, "restore_logging", True),
+        "database": getattr(config, "database_logging", True),
     }
 
     for channel, enabled in channel_enabled.items():
@@ -213,6 +215,11 @@ def log_backup(message: str, *, level: int = logging.INFO, user: object = None) 
     _log("backup", level, message, user=user)
 
 
+def log_database(message: str, *, level: int = logging.INFO, user: object = None) -> None:
+    """Database management / migration audit trail (database.log, §0.9.7)."""
+    _log("database", level, message, user=user)
+
+
 __all__ = [
     "CHANNELS",
     "LOG_FILES",
@@ -226,4 +233,5 @@ __all__ = [
     "log_audit",
     "log_error",
     "log_backup",
+    "log_database",
 ]

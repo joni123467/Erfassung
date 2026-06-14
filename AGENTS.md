@@ -98,8 +98,9 @@ Benutzer aktualisieren von **beliebigen** älteren Versionen
 ## Logging prüfen (verpflichtend)
 
 Seit 0.9.0 existiert ein dateibasiertes Logging-System
-(`app/logging_setup.py`) mit sechs rotierenden Kanälen im `logs`-Volume:
-`application`, `api`, `sync`, `security`, `error`, `audit`.
+(`app/logging_setup.py`) mit rotierenden Kanälen im `logs`-Volume:
+`application`, `api`, `sync`, `security`, `error`, `audit`, `backup`
+(ab 0.9.4) und `database` (ab 0.9.7).
 
 - **Neue Logs registrieren**: zusätzliche Kanäle ausschließlich über
   `logging_setup.CHANNELS` einführen; keine eigenen Dateipfade hartkodieren.
@@ -187,6 +188,56 @@ Vor jedem Release zusätzlich prüfen:
   Tabellen) + `db_migrations.run()` ausführen, damit ältere Backups vollständig
   aufschließen. Uploads nur isoliert speichern, auf Dateityp/Integrität/Path-
   Traversal prüfen und erst danach übernehmen. Niemals Zugangsdaten loggen.
+
+## Datenbankverwaltung & -migration (ab 0.9.7, verpflichtend)
+
+Das aktive Datenbanksystem ist über die Oberfläche umstellbar
+(Administration → System → Datenbank). Unterstützt: SQLite, MySQL, MariaDB,
+PostgreSQL. **MariaDB und PostgreSQL** sind die empfohlenen Produktivdatenbanken
+(⭐ im UI), SQLite bleibt für Einzelplatz-/Test-/Entwicklungsumgebungen.
+
+- Die aktive Auswahl liegt persistent als `config/database.json` im
+  config-Volume und hat Vorrang vor `DATABASE_URL`. `app/database.py` baut die
+  URL über `build_url(...)` (einzige Quelle der Wahrheit), kann die Engine zur
+  Laufzeit über `reconfigure(...)` neu binden. Keine datenbankspezifische Logik
+  in Fachfunktionen – ausschließlich über die abstrahierte SQLAlchemy-Schicht.
+- Die Migration (`app/db_migrator.py`) ist ORM/metadaten-getrieben und damit
+  dialektunabhängig: Zielschema über `Base.metadata.create_all`, Datenkopie über
+  die typisierten `sorted_tables` (FK-Reihenfolge), `schema_migrations` wird
+  übernommen, PostgreSQL-Sequenzen werden nachgezogen.
+- Der Wechsel läuft **asynchron** (`app/db_migration_jobs.py`,
+  `GET /api/database/migration/status`), nie synchron im Request.
+- Neue Datenbanken müssen einfach ergänzbar bleiben: Treiber in `_DRIVERS`,
+  Optionen in `_engine_options`, UI-Eintrag in `DATABASE_OPTIONS`.
+
+### Datenbankwechsel – Pflichtprüfungen vor jedem Release
+
+Jede Richtung muss ohne Datenverlust funktionieren:
+
+- SQLite → MySQL / MariaDB / PostgreSQL
+- MySQL → SQLite / MariaDB / PostgreSQL
+- MariaDB → SQLite / MySQL / PostgreSQL
+- PostgreSQL → SQLite / MySQL / MariaDB
+
+### Integritätsprüfung nach jeder Migration
+
+Prüfen (in `db_migrator.integrity_check`): Datensätze vollständig, Tabellen-
+anzahl, Referenzen/Foreign Keys (über gleiche Zeilenzahlen je Tabelle),
+Benutzer, Rollen, Historien vollständig. Einstellungen liegen im config-Volume
+und bleiben unberührt.
+
+### Ablauf & Sicherheit
+
+1. Zielverbindung prüfen, 2. Sicherheitsbackup `pre_db_migration_*.zip` erstellen,
+3. Zielschema erzeugen (leere Zieldatenbank erzwingen), 4./5. Daten exportieren/
+importieren, 6. Integrität prüfen, 7. erst dann Engine umstellen + Auswahl
+persistieren, 8. `post_db_migration_*.zip` als Wiederherstellungspunkt erzeugen.
+Alles in `logs/database.log` (Kanal `database`) protokollieren, nie Zugangsdaten.
+
+### Release-Blocker
+
+Kein Release, wenn: ein Datenbankwechsel fehlschlägt, der Rollback fehlschlägt
+(bisherige Datenbank muss aktiv bleiben) oder Datenverlust möglich ist.
 
 ## Administration-Navigation
 
