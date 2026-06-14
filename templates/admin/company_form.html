@@ -2,6 +2,7 @@
 {% block title %}{% if company %}Firma bearbeiten{% else %}Firma anlegen{% endif %} – Erfassung{% endblock %}
 {% block content %}
 {% set admin_active = 'companies' %}
+{% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
 {% set is_edit = company is not none %}
 <section class="card">

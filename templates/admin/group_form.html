@@ -2,6 +2,7 @@
 {% block title %}{% if group %}Gruppe bearbeiten{% else %}Gruppe anlegen{% endif %} – Erfassung{% endblock %}
 {% block content %}
 {% set admin_active = 'groups' %}
+{% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
 {% set is_edit = group is not none %}
 <section class="card">

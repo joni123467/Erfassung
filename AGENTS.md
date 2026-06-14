@@ -190,11 +190,33 @@ Vor jedem Release zusätzlich prüfen:
 
 ## Administration-Navigation
 
-- Die Admin-Navigation (`templates/admin/_nav.html`) ist in einklappbare
-  Gruppen (`<details>`) organisiert. Neue Admin-Seiten in die passende Gruppe
-  einsortieren (Benutzer / Zeitverwaltung / Sicherung / System / Einstellungen)
-  und einen eindeutigen `admin_active`-Key setzen; die Gruppe der aktiven Seite
-  öffnet automatisch.
+- Die Admin-Navigation (`templates/admin/_nav.html`) ist im Reiter-Design
+  (wie „Buchungen“/„Urlaub“) gehalten: Hauptgruppen sind Reiter, die auf dem
+  Desktop beim Hover ein Dropdown öffnen und auf Mobil als Accordion klappen.
+  Es ist immer nur **eine** Hauptgruppe geöffnet. Neue Admin-Seiten in die
+  passende Gruppe einsortieren (Benutzer / Zeitverwaltung / Sicherung / System /
+  Einstellungen) und einen eindeutigen `admin_active`-Key setzen; die Gruppe der
+  aktiven Seite öffnet automatisch.
+- Auf Bearbeitungs-/Formularseiten `{% set admin_nav_collapse = true %}` vor dem
+  Include setzen, damit keine Navigationsgruppe dauerhaft geöffnet bleibt.
+  Beim Öffnen eines Modals wird die Navigation automatisch geschlossen
+  (Beobachtung der `body.modal-open`-Klasse bzw. Event `adminnav:close`).
+
+### Pflichtprüfung bei Änderungen an der Administration (ab 0.9.6)
+
+Bei jeder Änderung an der Administration (Navigation, Formulare, Tabellen,
+Modals, Karten) prüfen:
+
+1. **Navigation konsistent** – Reiter-Optik wie „Buchungen“/„Urlaub“; gleiche
+   Höhe, Schriftgröße, Hover-/Active-/Focus-States und Abstände.
+2. **Responsive Darstellung geprüft** – Desktop (Hover-Dropdown), Tablet und
+   Mobile (Accordion) durchgespielt; keine Überlappungen/Scrollprobleme.
+3. **Dropdowns schließen korrekt** – nur eine Gruppe offen; Navigation schließt
+   beim Öffnen von Dialogen/Modals und auf Formularseiten.
+4. **Formulare sauber ausgerichtet** – einheitliche Feldhöhen, gleich breite
+   Dropdowns/Eingaben, ausgerichtete Labels, konsistente Buttons.
+5. **Design konsistent** – keine Bootstrap-Standardoptik; Karten/Sektionen,
+   Tokens aus `static/styles.css`, Dark Mode ohne Sonderfälle.
 
 ## Weitere Konventionen
 

@@ -2,6 +2,7 @@
 {% block title %}{% if form_user %}Benutzer bearbeiten{% else %}Benutzer anlegen{% endif %} – Erfassung{% endblock %}
 {% block content %}
 {% set admin_active = 'users' %}
+{% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
 {% set is_edit = form_user is not none %}
 <section class="card">
@@ -10,6 +11,7 @@
         <a href="/admin/users" class="button ghost">Zur Übersicht</a>
     </div>
     <div class="card-body card-body--form card-body--wide">
+      <div class="user-form-layout{% if is_edit %} user-form-layout--with-qr{% endif %}">
         <form method="post" action="{% if is_edit %}/admin/users/{{ form_user.id }}/update{% else %}/admin/users/create{% endif %}" class="user-form">
             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <div class="user-form__columns">
@@ -117,6 +119,26 @@
                 <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Benutzer anlegen{% endif %}</button>
             </div>
         </form>
+        {% if is_edit %}
+            <aside class="user-qr" aria-label="Mobile Anmeldung">
+                <h2 class="user-qr__title">Mobile Anmeldung</h2>
+                <p class="user-qr__hint">QR-Code mit der Kamera oder der Erfassung-App scannen, um {{ form_user.full_name }} direkt auf dem Mobilgerät anzumelden.</p>
+                <div class="user-qr__code">
+                    <img id="user-qr-img"
+                         src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={{ mobile_quick_login_url | urlencode }}"
+                         alt="QR-Code für die mobile Anmeldung von {{ form_user.full_name }}"
+                         width="200" height="200" loading="lazy">
+                </div>
+                <div class="user-qr__actions">
+                    <a class="button ghost small"
+                       href="https://api.qrserver.com/v1/create-qr-code/?size=400x400&download=1&data={{ mobile_quick_login_url | urlencode }}"
+                       download="erfassung-login-{{ form_user.username }}.png">Download</a>
+                    <a class="button ghost small" href="/admin/users/{{ form_user.id }}">Neu generieren</a>
+                </div>
+                <p class="user-qr__note muted">Der Code ist 30 Tage gültig und wird beim Neu-Generieren erneuert.</p>
+            </aside>
+        {% endif %}
+      </div>
         {% if is_edit %}
             <form method="post" action="/admin/users/{{ form_user.id }}/delete" class="danger-zone" onsubmit="return confirm('Benutzer wirklich löschen?');">
                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">

@@ -1,8 +1,11 @@
 {#
-  Grouped, collapsible administration navigation (§0.9.2).
-  Uses native <details>/<summary> so it works as an accordion on desktop and
-  mobile without a framework; open/closed state is remembered in localStorage.
-  A group is forced open when it contains the currently active page.
+  Administration navigation (§0.9.6).
+  Reiter-Design wie unter „Buchungen“/„Urlaub“: jede Hauptgruppe ist ein Reiter,
+  der auf dem Desktop beim Hover ein Dropdown-Panel öffnet und auf Mobil als
+  Accordion klappt. Es ist immer nur eine Hauptgruppe geöffnet.
+  Native <details>/<summary> – funktioniert ohne Framework, mit Tastatur.
+  Auf Bearbeitungs-/Formularseiten (admin_nav_collapse=true) bleibt die
+  Navigation geschlossen, damit keine Gruppe dauerhaft offen steht.
 #}
 {% set nav_groups = [
     {
@@ -26,7 +29,7 @@
         'id': 'backup', 'label': 'Sicherung', 'show': admin_permissions.system,
         'items': [
             {'href': '/admin/system/backups', 'label': 'Backup-Jobs', 'key': 'system_backups', 'show': admin_permissions.system},
-            {'href': '/admin/system/backups#history', 'label': 'Backup-Historie', 'key': 'system_backups_history', 'show': admin_permissions.system},
+            {'href': '/admin/system/backups/history', 'label': 'Backup-Historie', 'key': 'system_backups_history', 'show': admin_permissions.system},
             {'href': '/admin/system/restore', 'label': 'Wiederherstellung', 'key': 'system_restore', 'show': admin_permissions.system},
             {'href': '/admin/system/restore/history', 'label': 'Restore-Historie', 'key': 'system_restore_history', 'show': admin_permissions.system},
         ],
@@ -52,7 +55,7 @@
     {% for group in nav_groups %}
         {% if group.show %}
             {% set group_active = group['items'] | selectattr('key', 'equalto', admin_active) | list | length > 0 %}
-            <details class="adminnav__group" data-group="{{ group.id }}" {% if group_active %}open{% endif %}>
+            <details class="adminnav__group {% if group_active %}is-active{% endif %}" data-group="{{ group.id }}" {% if group_active and not admin_nav_collapse %}open{% endif %}>
                 <summary class="adminnav__summary">{{ group.label }}</summary>
                 <div class="adminnav__links">
                     {% for item in group['items'] %}
@@ -77,6 +80,7 @@
     const closeOthers = (except) => {
         groups.forEach((g) => { if (g !== except) g.open = false; });
     };
+    const closeAll = () => closeOthers(null);
 
     // Single-open accordion: opening one group closes the rest. Covers click,
     // keyboard and touch (the native <details> "toggle" event).
@@ -96,11 +100,19 @@
     });
     nav.addEventListener('mouseleave', () => {
         if (!desktop.matches) return;
-        hoverTimer = setTimeout(() => closeOthers(null), 120);
+        hoverTimer = setTimeout(() => closeAll(), 120);
     });
     nav.addEventListener('mouseenter', () => clearTimeout(hoverTimer));
 
     // When switching to a non-hover layout, collapse everything for a clean start.
-    desktop.addEventListener('change', () => closeOthers(null));
+    desktop.addEventListener('change', () => closeAll());
+
+    // Close the navigation whenever a dialog/modal is opened so no menu group
+    // stays open behind it (Benutzer/Backup/… Dialoge, §0.9.6 #4).
+    window.addEventListener('adminnav:close', closeAll);
+    const observer = new MutationObserver(() => {
+        if (document.body.classList.contains('modal-open')) closeAll();
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 })();
 </script>
