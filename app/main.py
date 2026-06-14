@@ -2446,6 +2446,9 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
     groups = crud.get_groups(db)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
+    quick_login_url = (
+        f"{request.url_for('mobile_quick_login')}?token={_create_mobile_autologin_token(target.id)}"
+    )
     return _admin_template(
         "admin/users_form.html",
         request,
@@ -2454,6 +2457,7 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
         error=error,
         groups=groups,
         form_user=target,
+        mobile_quick_login_url=quick_login_url,
     )
 
 
@@ -4104,6 +4108,7 @@ def admin_system_settings(request: Request, db: Session = Depends(database.get_d
         logging_config=app_config.load_logging_config(),
         system_settings=app_config.load_system_settings(),
         level_choices=LOG_LEVEL_CHOICES,
+        db_backend="SQLite" if database.IS_SQLITE else "MySQL/MariaDB",
     )
 
 
@@ -4234,11 +4239,26 @@ def admin_system_backups(request: Request, db: Session = Depends(database.get_db
         error=request.query_params.get("error"),
         admin_active="system_backups",
         jobs=crud.get_backup_jobs(db),
-        runs=crud.get_backup_runs(db, limit=100),
         backup_targets=BACKUP_TARGETS,
         backup_schedules=BACKUP_SCHEDULES,
         backup_contents=BACKUP_CONTENTS,
         active_tab=request.query_params.get("tab", "jobs"),
+    )
+
+
+@app.get("/admin/system/backups/history", response_class=HTMLResponse)
+def admin_system_backups_history(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_backups_history.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        admin_active="system_backups_history",
+        runs=crud.get_backup_runs(db, limit=200),
     )
 
 

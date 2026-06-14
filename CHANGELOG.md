@@ -5,6 +5,50 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.6] – 2026-06-14
+
+### Changed – Administration UI/UX überarbeitet
+
+- **Navigation im Reiter-Design**: Die Administrationsnavigation
+  (`templates/admin/_nav.html`) entspricht jetzt optisch den Reitern unter
+  „Buchungen“/„Urlaub“ (`.timetac-subnav`): flache, kantige Reiter mit gemeinsamer
+  Unterkante, gleicher Höhe, Schriftgröße, Hover-/Active-/Focus-States und
+  Abständen – keine klassischen Dropdown-Menüs/Bootstrap-Optik mehr.
+  Verhalten unverändert: Desktop öffnet beim Hover ein Dropdown und schließt
+  beim Verlassen, Mobile klappt als Accordion, es ist immer nur **eine**
+  Hauptgruppe geöffnet.
+- **Systemeinstellungen aufgeräumt**: `admin/system_settings.html` ist in klare
+  Sektionen mit Kartenlayout gegliedert (Allgemein, Logging, Log-Rotation,
+  Synchronisation, Import) mit einheitlichen Feldbreiten, -höhen und Abständen.
+
+### Added – QR-Code im Benutzerdialog
+
+- „Benutzer bearbeiten“ zeigt den Anmelde-QR-Code jetzt direkt im Dialog
+  (rechte Seitenspalte auf dem Desktop, unterhalb der Benutzerdaten auf Mobil)
+  mit Kurzbeschreibung, Download und „Neu generieren“.
+
+### Fixed – Backup-Historie als eigene Ansicht
+
+- Die Backup-Historie hatte bisher dieselbe Seite wie die Backup-Jobs
+  (`/admin/system/backups#history`). Sie besitzt nun eine **eigene Route**
+  (`GET /admin/system/backups/history`), ein eigenes Template
+  (`admin/system_backups_history.html`) und eine eigene Datenabfrage. Spalten:
+  Backup, Start, Ende, Dauer, Größe, Ziel, Status sowie Aktionen (Download,
+  Details, Wiederherstellen). Die Backup-Jobs-Seite zeigt nur noch geplante Jobs.
+
+### Fixed – Navigation schließt bei Dialogen
+
+- Beim Öffnen eines Bearbeitungs-/Erstellungsdialogs (Benutzer, Rollen, Firmen,
+  Systemeinstellungen, Backup-/Restore-Dialoge u. a.) bleibt keine
+  Navigationsgruppe mehr dauerhaft geöffnet: Formularseiten setzen
+  `admin_nav_collapse`, Modals lösen ein automatisches Schließen aus
+  (Beobachtung der `body.modal-open`-Klasse).
+
+### Docs
+
+- `AGENTS.md`: neue Pflichtprüfung für Administrationsänderungen (Navigation,
+  Responsive, Dropdown-Verhalten, Formularausrichtung, Design-Konsistenz).
+
 ## [0.9.5] – 2026-06-14
 
 ### Fixed – „Internal Server Error" bei der Wiederherstellung

@@ -7,10 +7,11 @@
 <section class="card">
     <div class="card-header">
         <div>
-            <h1>Backups</h1>
-            <p class="card-header__hint">Job-basierte Sicherung von Datenbank, Konfiguration und Logs – lokal, per FTP oder SMB3.</p>
+            <h1>Backup-Jobs</h1>
+            <p class="card-header__hint">Geplante Sicherungen von Datenbank, Konfiguration und Logs – lokal, per FTP oder SMB3. Ausgeführte Backups stehen unter <a href="/admin/system/backups/history">Backup-Historie</a>.</p>
         </div>
         <div class="card-header__actions">
+            <a class="button ghost" href="/admin/system/backups/history">Backup-Historie</a>
             <button type="button" class="button primary" id="backup-job-new">Neuer Backup-Job</button>
         </div>
     </div>
@@ -77,37 +78,6 @@
                     </tr>
                 {% else %}
                     <tr><td colspan="8">Noch keine Backup-Jobs. Lege oben rechts einen neuen Job an.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</section>
-
-<section class="card">
-    <h2>Backup-Historie</h2>
-    <div class="table-scroll">
-        <table class="striped-table">
-            <thead>
-                <tr><th>Start</th><th>Ende</th><th>Dauer</th><th>Größe</th><th>Ziel</th><th>Status</th><th>Meldung</th><th></th></tr>
-            </thead>
-            <tbody>
-                {% for run in runs %}
-                    <tr>
-                        <td>{{ run.started_at.strftime('%d.%m.%Y %H:%M:%S') if run.started_at else '–' }}</td>
-                        <td>{{ run.finished_at.strftime('%H:%M:%S') if run.finished_at else '–' }}</td>
-                        <td>{{ '%.1f s'|format(run.duration_seconds or 0) }}</td>
-                        <td>{% if run.size_bytes %}{{ (run.size_bytes / 1024)|round(1) }} KB{% else %}–{% endif %}</td>
-                        <td>{{ run.target_type|upper }}</td>
-                        <td><span class="log-level log-level--{{ 'info' if run.status == 'success' else ('warning' if run.status == 'warning' else 'error') }}">{{ run.status }}</span></td>
-                        <td class="log-message">{{ run.message }}</td>
-                        <td>
-                            {% if run.filename %}
-                                <a class="button ghost small" href="/admin/system/backups/runs/{{ run.id }}/download">Download</a>
-                            {% endif %}
-                        </td>
-                    </tr>
-                {% else %}
-                    <tr><td colspan="8">Noch keine Backups durchgeführt.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
