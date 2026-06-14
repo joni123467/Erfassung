@@ -156,16 +156,21 @@ def _build_archive(job, staging: Path, *, backup_type: str = "job") -> tuple[Pat
     return archive_path, warnings
 
 
-def create_safety_backup() -> Path:
-    """Create a pre-restore safety backup of DB + config (§6)."""
+def create_safety_backup(*, prefix: str = "pre_restore", backup_type: str = "safety") -> Path:
+    """Create a safety backup of DB + config (§6).
+
+    ``prefix`` controls the file name so callers can distinguish pre-restore
+    safety backups (``pre_restore_*``) from pre/post database-migration
+    snapshots (``pre_db_migration_*`` / ``post_db_migration_*``, §0.9.7).
+    """
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archive_path = BACKUP_DIR / f"pre_restore_{timestamp}.zip"
+    archive_path = BACKUP_DIR / f"{prefix}_{timestamp}.zip"
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr(
-                META_NAME, json.dumps(_build_metadata(["database", "config"], "safety"), indent=2)
+                META_NAME, json.dumps(_build_metadata(["database", "config"], backup_type), indent=2)
             )
             snapshot, _warning = _dump_database(tmp_dir)
             if snapshot:
@@ -272,7 +277,7 @@ def backup_file_info(archive_path: Path) -> dict:
     stat = path.stat()
     meta = read_metadata(path) or {}
     name = path.name
-    if name.startswith("pre_restore_"):
+    if name.startswith(("pre_restore_", "pre_db_migration_", "post_db_migration_")):
         source = "safety"
     elif name.startswith("upload_"):
         source = "upload"

@@ -179,13 +179,26 @@ Anmeldung verlangt (`--no-force-change` deaktiviert das).
 - Alle Befehle geben bei Fehlern (unbekannter Benutzer, doppelter Benutzername/E-Mail,
   zu schwaches Passwort) eine verständliche Meldung und den Exit-Code `1` zurück.
 
-## Datenbank (SQLite oder MySQL)
+## Datenbank (SQLite, MySQL, MariaDB, PostgreSQL)
 
-Standard ist SQLite. Optional kann MySQL 8+/MariaDB über `DATABASE_URL`
-genutzt werden (Treiber `PyMySQL` ist enthalten):
+Standard ist SQLite. Unterstützt werden außerdem **MySQL 8+, MariaDB 10.6+ und
+PostgreSQL 14+** (Treiber `PyMySQL` und `psycopg2-binary` sind enthalten).
+MariaDB und PostgreSQL sind die empfohlenen Produktivdatenbanken, SQLite eignet
+sich für Einzelplatz-, Test- und Entwicklungsumgebungen.
+
+Das aktive Datenbanksystem kann seit 0.9.7 direkt über die Oberfläche unter
+**Administration → System → Datenbank** verwaltet und gewechselt werden. Vor
+jedem Wechsel wird automatisch ein Sicherheitsbackup erstellt, anschließend
+werden alle Daten verlustfrei übertragen und auf Integrität geprüft; schlägt
+etwas fehl, bleibt die bisherige Datenbank aktiv (kein Datenverlust, keine
+Downtime). Die Auswahl wird persistent in `config/database.json` gespeichert und
+hat Vorrang vor `DATABASE_URL`.
+
+Alternativ lässt sich das Backend weiterhin per Umgebungsvariable vorgeben:
 
 ```
 DATABASE_URL: mysql+pymysql://benutzer:passwort@db-host:3306/erfassung
+DATABASE_URL: postgresql+psycopg2://benutzer:passwort@db-host:5432/erfassung
 ```
 
 Schemaänderungen werden beim Start automatisch und dialektübergreifend

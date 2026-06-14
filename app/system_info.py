@@ -55,8 +55,27 @@ def database_status(db: Session) -> dict[str, object]:
         last_migration = None
         pending = []
 
+    table_count = 0
+    try:
+        from sqlalchemy import inspect as _inspect
+
+        table_count = len(_inspect(database.engine).get_table_names())
+    except Exception:  # pragma: no cover
+        table_count = 0
+
+    # Logical type chosen by the operator (sqlite/mysql/mariadb/postgresql).
+    logical = getattr(database, "DB_TYPE", backend)
+    type_labels = {
+        "sqlite": "SQLite",
+        "mysql": "MySQL",
+        "mariadb": "MariaDB",
+        "postgresql": "PostgreSQL",
+    }
+    config = getattr(database, "ACTIVE_CONFIG", {}) or {}
+
     return {
-        "type": db_type,
+        "type": type_labels.get(logical, db_type),
+        "logical_type": logical,
         "backend": backend,
         "server_version": server_version,
         "reachable": reachable,
@@ -65,7 +84,43 @@ def database_status(db: Session) -> dict[str, object]:
         "schema_version": last_migration,
         "last_migration": last_migration,
         "pending_migrations": pending,
+        "table_count": table_count,
+        "host": config.get("host") or ("–" if backend == "sqlite" else None),
+        "name": config.get("name")
+        or (Path(database.SQLALCHEMY_DATABASE_URL.replace("sqlite:///", "", 1)).name if backend == "sqlite" else None),
         "path": str(db_path) if db_path else database.SQLALCHEMY_DATABASE_URL,
+    }
+
+
+def database_log_overview() -> dict[str, object]:
+    """Parse ``database.log`` for the latest migration / error timestamps (§12)."""
+    last_migration = None
+    last_success = None
+    last_error = None
+    last_error_message = None
+    try:
+        for line in log_tools.read_log("database", limit=5000):
+            msg = (line.message or "")
+            if last_migration is None and "Migration" in msg:
+                last_migration = line.timestamp
+            if last_success is None and "Migration erfolgreich" in msg:
+                last_success = line.timestamp
+            if last_error is None and line.level in {"ERROR", "CRITICAL"}:
+                last_error = line.timestamp
+                last_error_message = msg
+            if last_migration and last_success and last_error:
+                break
+    except Exception:  # pragma: no cover
+        pass
+
+    def _fmt(value):
+        return value.strftime("%d.%m.%Y %H:%M:%S") if value else None
+
+    return {
+        "last_migration": _fmt(last_migration),
+        "last_successful_migration": _fmt(last_success),
+        "last_error": _fmt(last_error),
+        "last_error_message": last_error_message,
     }
 
 
@@ -221,6 +276,7 @@ def system_status(db: Session) -> dict[str, object]:
         "sync_diagnostics": sync_diagnostics(db),
         "pwa": pwa_status(),
         "volumes": volume_overview(),
+        "database_log": database_log_overview(),
     }
 
 

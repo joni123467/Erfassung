@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from . import paths
+from . import database, paths
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ VALID_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 _LOGGING_PATH = paths.CONFIG_DIR / "logging.json"
 _SYSTEM_PATH = paths.CONFIG_DIR / "system.json"
 _BACKUP_PATH = paths.CONFIG_DIR / "backup.json"
+_DATABASE_PATH = paths.CONFIG_DIR / "database.json"
 
 
 def _ensure_config_dir() -> None:
@@ -71,6 +72,7 @@ class LoggingConfig:
     sync_logging: bool = True
     backup_logging: bool = True
     restore_logging: bool = True
+    database_logging: bool = True
     rotation_max_bytes: int = 5 * 1024 * 1024
     rotation_backup_count: int = 5
     auto_cleanup_enabled: bool = False
@@ -93,6 +95,9 @@ class LoggingConfig:
         config.sync_logging = _coerce_bool(payload.get("sync_logging"), config.sync_logging)
         config.backup_logging = _coerce_bool(payload.get("backup_logging"), config.backup_logging)
         config.restore_logging = _coerce_bool(payload.get("restore_logging"), config.restore_logging)
+        config.database_logging = _coerce_bool(
+            payload.get("database_logging"), config.database_logging
+        )
         config.rotation_max_bytes = _coerce_int(
             payload.get("rotation_max_bytes"), config.rotation_max_bytes, minimum=1024
         )
@@ -216,6 +221,133 @@ class BackupConfig:
         return config
 
 
+DATABASE_TYPES = ("sqlite", "mysql", "mariadb", "postgresql")
+
+# Backends recommended for productive multi-user deployments (§0.9.7).
+RECOMMENDED_DATABASE_TYPES = ("mariadb", "postgresql")
+
+# Default port per logical database type.
+DATABASE_DEFAULT_PORTS = {"mysql": 3306, "mariadb": 3306, "postgresql": 5432}
+
+
+@dataclass
+class DatabaseConfig:
+    """Active database backend configuration (persisted in the config volume).
+
+    The same dataclass describes SQLite (only ``sqlite_path`` is relevant) and
+    the server backends MySQL/MariaDB/PostgreSQL (host/port/name/user/password
+    + optional SSL and connection timeout). The password is stored so the
+    connection can be re-established unattended, but is never written to a log.
+    """
+
+    type: str = "sqlite"
+    sqlite_path: str = "./erfassung.db"
+    host: str = ""
+    port: int = 0
+    name: str = ""
+    user: str = ""
+    password: str = ""
+    ssl: bool = False
+    timeout: int = 30
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def safe_dict(self) -> dict[str, Any]:
+        """Like :meth:`to_dict` but with the password masked (UI/logging)."""
+        data = self.to_dict()
+        if data.get("password"):
+            data["password"] = "***"
+        data["has_password"] = bool(self.password)
+        return data
+
+    def connection_config(self) -> dict[str, Any]:
+        """Mapping consumed by :func:`app.database.build_url` / ``reconfigure``."""
+        return {
+            "type": self.type,
+            "sqlite_path": self.sqlite_path,
+            "host": self.host,
+            "port": self.port,
+            "name": self.name,
+            "user": self.user,
+            "password": self.password,
+            "ssl": self.ssl,
+            "timeout": self.timeout,
+        }
+
+    def to_url(self) -> str:
+        return database.build_url(self.connection_config())
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "DatabaseConfig":
+        config = cls()
+        if not isinstance(payload, dict):
+            return config
+        db_type = str(payload.get("type") or "").strip().lower()
+        if db_type in DATABASE_TYPES:
+            config.type = db_type
+        config.sqlite_path = str(payload.get("sqlite_path") or config.sqlite_path).strip() or config.sqlite_path
+        config.host = str(payload.get("host") or "").strip()
+        default_port = DATABASE_DEFAULT_PORTS.get(config.type, 0)
+        config.port = _coerce_int(payload.get("port"), default_port, minimum=0)
+        config.name = str(payload.get("name") or "").strip()
+        config.user = str(payload.get("user") or "").strip()
+        pw = payload.get("password")
+        # Keep the stored password when the form submits an empty/masked value.
+        if pw not in (None, "", "***"):
+            config.password = str(pw)
+        config.ssl = _coerce_bool(payload.get("ssl"), config.ssl)
+        config.timeout = _coerce_int(payload.get("timeout"), config.timeout, minimum=1)
+        return config
+
+    def describe(self) -> str:
+        """Short human-readable description (no credentials)."""
+        if self.type == "sqlite":
+            return f"SQLite ({self.sqlite_path})"
+        label = {"mysql": "MySQL", "mariadb": "MariaDB", "postgresql": "PostgreSQL"}.get(
+            self.type, self.type
+        )
+        return f"{label} {self.host}:{self.port or DATABASE_DEFAULT_PORTS.get(self.type, '')}/{self.name}"
+
+
+def load_database_config() -> "DatabaseConfig":
+    stored = _read_json(_DATABASE_PATH)
+    config = DatabaseConfig.from_dict(stored)
+    if isinstance(stored, dict) and stored.get("password"):
+        config.password = str(stored["password"])
+    if not stored:
+        # No persisted selection yet: mirror the live backend so the UI shows
+        # the database the process actually started with (env/SQLite default).
+        backend = database.DB_TYPE
+        config.type = backend if backend in DATABASE_TYPES else "sqlite"
+        if config.type == "sqlite":
+            raw = database.SQLALCHEMY_DATABASE_URL
+            if raw.startswith("sqlite:///"):
+                config.sqlite_path = raw.replace("sqlite:///", "", 1)
+    return config
+
+
+def save_database_config(config: "DatabaseConfig") -> None:
+    _write_json(_DATABASE_PATH, config.to_dict())
+
+
+def validate_database_config(config: "DatabaseConfig") -> tuple[bool, str]:
+    """Validate a database configuration before testing/migrating."""
+    if config.type not in DATABASE_TYPES:
+        return False, f"Unbekannter Datenbanktyp: {config.type!r}."
+    if config.type == "sqlite":
+        if not config.sqlite_path.strip():
+            return False, "Datenbankpfad darf nicht leer sein."
+        return True, "Konfiguration gültig."
+    if not config.host:
+        return False, "Host darf nicht leer sein."
+    if not config.name:
+        return False, "Datenbankname darf nicht leer sein."
+    if not config.user:
+        return False, "Benutzer darf nicht leer sein."
+    return True, "Konfiguration gültig."
+
+
 def load_backup_config() -> "BackupConfig":
     stored = _read_json(_BACKUP_PATH)
     config = BackupConfig.from_dict(stored)
@@ -307,7 +439,11 @@ __all__ = [
     "LoggingConfig",
     "SystemSettings",
     "BackupConfig",
+    "DatabaseConfig",
     "BACKUP_TARGETS",
+    "DATABASE_TYPES",
+    "RECOMMENDED_DATABASE_TYPES",
+    "DATABASE_DEFAULT_PORTS",
     "VALID_LEVELS",
     "load_logging_config",
     "save_logging_config",
@@ -315,6 +451,9 @@ __all__ = [
     "save_system_settings",
     "load_backup_config",
     "save_backup_config",
+    "load_database_config",
+    "save_database_config",
+    "validate_database_config",
     "export_all",
     "import_all",
     "validate_import",

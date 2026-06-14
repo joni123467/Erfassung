@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Datenbankmigration läuft – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_database' %}
+{% include "admin/_nav.html" %}
+<section class="card restore-progress" id="db-progress"
+         data-initial-state="{{ status.state }}"
+         data-token="{{ status.token or '' }}">
+    <h1>Datenbankmigration</h1>
+    <p class="card-header__hint" id="dp-headline">Migration wird durchgeführt …</p>
+
+    <div class="restore-progress__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ status.percent or 0 }}">
+        <div class="restore-progress__fill" id="dp-fill" style="width: {{ status.percent or 0 }}%;"></div>
+    </div>
+
+    <ol class="restore-steps" id="dp-steps">
+        <li data-step="testing">Zielverbindung wird geprüft</li>
+        <li data-step="creating_backup">Sicherheitsbackup wird erstellt</li>
+        <li data-step="creating_schema">Zielschema wird erzeugt</li>
+        <li data-step="copying">Daten werden übertragen</li>
+        <li data-step="verifying">Integrität wird geprüft</li>
+        <li data-step="switching">Anwendung wird umgestellt</li>
+        <li data-step="completed">Migration abgeschlossen</li>
+    </ol>
+
+    <p class="restore-progress__message" id="dp-message">{{ status.message or '' }}</p>
+
+    <div class="restore-progress__result" id="dp-success" hidden>
+        <p class="alert alert--success" id="dp-success-text">Migration erfolgreich abgeschlossen.</p>
+        <p>Weiterleitung in <strong id="dp-countdown">5</strong> Sekunden …</p>
+    </div>
+
+    <div class="restore-progress__result" id="dp-error" hidden>
+        <p class="alert alert--danger">
+            <strong>Migration fehlgeschlagen – die bisherige Datenbank bleibt aktiv.</strong><br>
+            <span id="dp-error-cause"></span><br>
+            <small>Zeitpunkt: <span id="dp-error-time"></span> · Log-ID: <span id="dp-error-token"></span></small>
+        </p>
+        <p><a class="button ghost" href="/admin/system/logs?channel=database">Datenbank-Log öffnen</a>
+           <a class="button" href="/admin/system/database">Zurück zur Datenbankverwaltung</a></p>
+    </div>
+</section>
+
+<script>
+(function () {
+    const STATE_LABELS = {
+        queued: 'Migration wurde gestartet',
+        testing: 'Zielverbindung wird geprüft',
+        creating_backup: 'Sicherheitsbackup wird erstellt',
+        creating_schema: 'Zielschema wird erzeugt',
+        copying: 'Daten werden übertragen',
+        verifying: 'Integrität wird geprüft',
+        switching: 'Anwendung wird umgestellt',
+        completed: 'Migration erfolgreich abgeschlossen',
+        failed: 'Migration fehlgeschlagen',
+    };
+    const STEP_ORDER = ['testing', 'creating_backup', 'creating_schema', 'copying', 'verifying', 'switching', 'completed'];
+
+    const headline = document.getElementById('dp-headline');
+    const fill = document.getElementById('dp-fill');
+    const message = document.getElementById('dp-message');
+    const successBox = document.getElementById('dp-success');
+    const errorBox = document.getElementById('dp-error');
+    let finished = false;
+
+    const markSteps = (state) => {
+        const idx = STEP_ORDER.indexOf(state);
+        document.querySelectorAll('#dp-steps li').forEach((li) => {
+            const pos = STEP_ORDER.indexOf(li.dataset.step);
+            li.classList.toggle('is-done', idx > -1 && pos < idx);
+            li.classList.toggle('is-active', pos === idx);
+        });
+    };
+
+    const redirectWithCountdown = (target) => {
+        let n = 5;
+        const el = document.getElementById('dp-countdown');
+        el.textContent = n;
+        const timer = setInterval(() => {
+            n -= 1; el.textContent = n;
+            if (n <= 0) { clearInterval(timer); window.location.href = target || '/admin/system/database'; }
+        }, 1000);
+    };
+
+    const onCompleted = (data) => {
+        finished = true;
+        headline.textContent = STATE_LABELS.completed;
+        fill.style.width = '100%';
+        document.getElementById('dp-success-text').textContent =
+            data.message || 'Migration erfolgreich abgeschlossen.';
+        successBox.hidden = false;
+        markSteps('completed');
+        redirectWithCountdown(data.redirect || '/admin/system/database');
+    };
+
+    const onFailed = (data) => {
+        finished = true;
+        headline.textContent = STATE_LABELS.failed;
+        document.getElementById('dp-error-cause').textContent = data.message || 'Unbekannter Fehler';
+        document.getElementById('dp-error-time').textContent = data.finished_at || data.updated_at || '';
+        document.getElementById('dp-error-token').textContent = data.log_token || data.token || '–';
+        errorBox.hidden = false;
+    };
+
+    const render = (data) => {
+        const state = data.state || 'queued';
+        if (state === 'completed') return onCompleted(data);
+        if (state === 'failed') return onFailed(data);
+        if (state === 'idle') { headline.textContent = 'Keine aktive Migration.'; return; }
+        headline.textContent = STATE_LABELS[state] || 'Migration läuft';
+        if (typeof data.percent === 'number') fill.style.width = data.percent + '%';
+        message.textContent = data.message || '';
+        markSteps(state);
+    };
+
+    const poll = async () => {
+        if (finished) return;
+        try {
+            const r = await fetch('/api/database/migration/status', { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+            if (r.status === 401) { finished = true; window.location.href = '/login'; return; }
+            if (!r.ok) { return setTimeout(poll, 3000); }
+            const data = await r.json();
+            render(data);
+            if (!finished) setTimeout(poll, 2000);
+        } catch (e) {
+            setTimeout(poll, 3000);
+        }
+    };
+    poll();
+})();
+</script>
+{% endblock %}

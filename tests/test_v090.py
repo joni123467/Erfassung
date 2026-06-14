@@ -71,7 +71,7 @@ def login(client, username="admin", password="Admin!0000"):
 # --- Version ---------------------------------------------------------------
 
 def test_version_is_090(client):
-    assert client.main.APP_VERSION == "0.9.6"
+    assert client.main.APP_VERSION == "0.9.7"
 
 
 def test_health_check(client):
@@ -79,7 +79,7 @@ def test_health_check(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["version"] == "0.9.6"
+    assert body["version"] == "0.9.7"
     assert body["checks"]["database"] is True
     assert body["checks"]["volumes"] is True
 
