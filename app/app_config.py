@@ -253,6 +253,9 @@ class DatabaseConfig:
     password: str = ""
     ssl: bool = False
     timeout: int = 30
+    # How the configuration was created: "env" (Docker first-init) or
+    # "webinterface". Informational only (§4) – never drives a DB switch.
+    created_by: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -302,6 +305,9 @@ class DatabaseConfig:
             config.password = str(pw)
         config.ssl = _coerce_bool(payload.get("ssl"), config.ssl)
         config.timeout = _coerce_int(payload.get("timeout"), config.timeout, minimum=1)
+        created_by = payload.get("created_by")
+        if isinstance(created_by, str) and created_by:
+            config.created_by = created_by
         return config
 
     def describe(self) -> str:
@@ -332,6 +338,11 @@ def load_database_config() -> "DatabaseConfig":
 
 
 def save_database_config(config: "DatabaseConfig") -> None:
+    # Preserve how the configuration was originally created: a later edit through
+    # the web UI keeps an "env" origin, a brand-new config is "webinterface".
+    if not config.created_by:
+        stored = _read_json(_DATABASE_PATH)
+        config.created_by = (stored.get("created_by") if isinstance(stored, dict) else "") or "webinterface"
     _write_json(_DATABASE_PATH, config.to_dict())
 
 

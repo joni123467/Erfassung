@@ -24,8 +24,16 @@ from typing import Optional
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from . import backup_manager, crud, database, db_schema, paths
+from . import backup_manager, crud, data_transfer, database, db_schema, logging_setup, paths
 from .backup_manager import log_backup
+
+
+def log_db(message: str, *, level: int = logging.INFO, user=None) -> None:
+    """Cross-database / migration restore events also go to database.log (§17)."""
+    try:
+        logging_setup.log_database(message, level=level, user=user)
+    except Exception:  # pragma: no cover - logging must never break a restore
+        pass
 
 
 def _safe_extract_member(archive: zipfile.ZipFile, member: str, dest_root: Path) -> Optional[Path]:
@@ -114,14 +122,110 @@ def validate_restore(archive_path: Path) -> tuple[bool, str, dict]:
         return False, "Backup-Archiv ist beschädigt oder unlesbar.", meta
     if analysis["level"] == "red" or not analysis["has_database"]:
         return False, "Backup enthält keine wiederherstellbare Datenbank.", meta
+    # Logical backups (§0.9.9) are database independent and can be restored into
+    # ANY active backend (cross-database restore). Only legacy, raw-snapshot
+    # backups require a matching database type.
+    if backup_manager.has_logical_data(archive_path):
+        return True, "Backup ist wiederherstellbar (datenbankunabhängig).", meta
     backup_db_type = meta.get("database_type") or "unbekannt"
     if backup_db_type not in ("unbekannt", database.DB_BACKEND):
         return (
             False,
-            f"Datenbanktyp {backup_db_type} passt nicht zum System ({database.DB_BACKEND}).",
+            f"Älteres Datei-Backup vom Typ {backup_db_type} kann nicht in "
+            f"{database.DB_BACKEND} wiederhergestellt werden (kein logisches Backup).",
             meta,
         )
     return True, "Backup ist wiederherstellbar.", meta
+
+
+def restore_preview(archive_path: Path) -> dict:
+    """Backup + current-system summary shown before a restore (§11)."""
+    archive_path = Path(archive_path)
+    meta = backup_manager.read_metadata(archive_path) or {}
+    counts = meta.get("counts") or {}
+    # Fall back to counting the logical export when metadata predates §9.
+    if not counts:
+        logical = backup_manager.read_logical_data(archive_path)
+        if logical:
+            all_counts = data_transfer.table_counts_from_export(logical)
+            counts = {
+                name: all_counts.get(name, 0)
+                for name in ("users", "time_entries", "vacation_requests", "holidays", "terminals")
+            }
+    from . import db_migrator
+
+    return {
+        "backup": {
+            "file": archive_path.name,
+            "app_version": meta.get("app_version") or "unbekannt",
+            "created_at": meta.get("created_at"),
+            "backup_format_version": meta.get("backup_format_version"),
+            "database_type": meta.get("database_type") or "unbekannt",
+            "schema_version": meta.get("schema_version"),
+            "logical": backup_manager.has_logical_data(archive_path),
+            "counts": counts,
+        },
+        "current": {
+            "app_version": backup_manager.APP_VERSION,
+            "database_type": database.DB_BACKEND,
+            "database_version": db_migrator._server_version(database.engine),
+        },
+        "note": (
+            "Die Daten werden in die aktuell konfigurierte Datenbank importiert. "
+            "Die Datenbankkonfiguration bleibt unverändert."
+        ),
+    }
+
+
+def _restore_logical(
+    archive_path: Path, payload: dict, *, username: str, token: str
+) -> tuple[dict, list[int]]:
+    """Database-independent restore: import logical data into the ACTIVE backend.
+
+    Never changes the active database, its configuration or the engine type
+    (§10/§13). Runs inside :func:`data_transfer.import_database` (one transaction)
+    so a failure leaves no partial import behind.
+    """
+    from . import db_migrations, models
+
+    source_type = (backup_manager.read_metadata(archive_path) or {}).get("database_type") or "unbekannt"
+    log_db(f"Quell-Datenbank erkannt: {source_type} (Job {token})", user=username)
+    log_db(f"Ziel-Datenbank erkannt: {database.DB_BACKEND} (Job {token})", user=username)
+    log_db(f"Cross-Database Restore gestartet: {source_type} → {database.DB_BACKEND} (Job {token})",
+           user=username)
+
+    # Ensure the live schema is current *before* importing, so every column the
+    # backup rows expect exists (older backups simply omit newer columns).
+    models.Base.metadata.create_all(bind=database.engine)
+    db_migrations.run()
+
+    imported = data_transfer.import_database(database.engine, payload)
+    total = sum(imported.values())
+    log_db(
+        f"Cross-Database Restore erfolgreich: {total} Datensätze importiert (Job {token})",
+        user=username,
+    )
+
+    # Migration nach Restore (idempotent – die Live-DB ist bereits aktuell).
+    before = db_schema.applied_versions(database.engine)
+    db_migrations.run()
+    after = db_schema.applied_versions(database.engine)
+    migrations_applied = sorted(after - before)
+    log_db(f"Migration nach Restore erfolgreich (Job {token})", user=username)
+    return imported, migrations_applied
+
+
+def _verify_logical_restore(imported: dict) -> tuple[bool, str]:
+    """Integrity check: live row counts must match the imported counts (§15)."""
+    current = data_transfer.current_row_counts(database.engine)
+    mismatches = [
+        f"{table} (importiert {count} / aktiv {current.get(table, 0)})"
+        for table, count in imported.items()
+        if current.get(table, -1) != count
+    ]
+    if mismatches:
+        return False, "Integritätsprüfung fehlgeschlagen: " + ", ".join(mismatches)
+    return True, "Integritätsprüfung erfolgreich"
 
 
 def perform_restore(
@@ -153,6 +257,8 @@ def perform_restore(
         f"DB {backup_db_type} (Job {token})",
         user=username,
     )
+    log_backup(f"Backup analysiert: {archive_path.name}", user=username)
+    log_backup(f"Backup-Metadaten gelesen (Format {meta.get('backup_format_version', '-')})", user=username)
 
     status = "error"
     message = ""
@@ -164,44 +270,77 @@ def perform_restore(
         if not ok:
             raise RuntimeError(reason)
         analysis = backup_manager.verify(archive_path)
+        logical = backup_manager.read_logical_data(archive_path)
 
-        # §6: mandatory pre-restore safety backup for rollback.
+        # §6/§12: mandatory pre-restore safety backup for rollback.
         emit("creating_backup", 15, "Sicherheitsbackup wird erstellt")
         safety_path = backup_manager.create_safety_backup()
         log_backup(f"Sicherheitsbackup erstellt: {safety_path.name} (Job {token})", user=username)
 
-        emit("restoring", 45, "Backup wird wiederhergestellt")
-        if database.IS_SQLITE:
-            _restore_sqlite(archive_path)
+        if logical is not None:
+            # §8/§10/§13: database-independent (cross-database) restore. The
+            # active database, its configuration and the engine type are never
+            # changed – only data is imported.
+            emit("restoring", 45, "Daten werden importiert (datenbankunabhängig)")
+            imported, migrations_applied = _restore_logical(
+                archive_path, logical, username=username, token=token
+            )
+            config_files = _restore_config(archive_path)
+            log_backup(
+                f"Daten importiert: {sum(imported.values())} Datensätze, "
+                f"{config_files} Konfig-Dateien (Job {token})",
+                user=username,
+            )
+            log_backup("Migration gestartet", user=username)
+            log_backup(
+                f"Migration erfolgreich: {migrations_applied or 'keine ausstehend'}", user=username
+            )
+
+            emit("running_migrations", 80, "Integrität wird geprüft")
+            integrity_ok, integrity_msg = _verify_logical_restore(imported)
+            if not integrity_ok:
+                raise RuntimeError(integrity_msg)
+            log_backup(integrity_msg, user=username)
+            log_backup("Anwendung wieder verfügbar", user=username)
+            status = "success"
+            message = (
+                f"Cross-Database Restore erfolgreich (Version {backup_version} "
+                f"[{backup_db_type}] → {database.DB_BACKEND}, {sum(imported.values())} Datensätze, "
+                f"Migrationen {migrations_applied or 'keine'})"
+            )
         else:
-            _restore_mysql(archive_path)
-        config_files = _restore_config(archive_path)
-        log_backup(f"Datenbank und Konfiguration wiederhergestellt (Job {token})", user=username)
+            # Legacy raw-snapshot backup (pre-0.9.9): same-type file restore.
+            emit("restoring", 45, "Backup wird wiederhergestellt")
+            if database.IS_SQLITE:
+                _restore_sqlite(archive_path)
+            else:
+                _restore_mysql(archive_path)
+            config_files = _restore_config(archive_path)
+            log_backup(f"Datenbank und Konfiguration wiederhergestellt (Job {token})", user=username)
 
-        # Reinitialise database connections cleanly after the swap.
-        emit("restarting", 60, "Datenbankverbindung wird neu initialisiert")
-        log_backup("Anwendung wird neu gestartet (Datenbankverbindung)", user=username)
-        database.engine.dispose()
+            emit("restarting", 60, "Datenbankverbindung wird neu initialisiert")
+            log_backup("Anwendung wird neu gestartet (Datenbankverbindung)", user=username)
+            database.engine.dispose()
 
-        emit("running_migrations", 75, "Migrationen werden ausgeführt")
-        before = db_schema.applied_versions(database.engine)
-        from . import db_migrations, models
+            emit("running_migrations", 75, "Migrationen werden ausgeführt")
+            before = db_schema.applied_versions(database.engine)
+            from . import db_migrations, models
 
-        models.Base.metadata.create_all(bind=database.engine)
-        log_backup("Migration gestartet", user=username)
-        db_migrations.run()
-        after = db_schema.applied_versions(database.engine)
-        migrations_applied = sorted(after - before)
-        log_backup(
-            f"Migration erfolgreich: {migrations_applied or 'keine ausstehend'}", user=username
-        )
-        log_backup("Anwendung wieder verfügbar", user=username)
+            models.Base.metadata.create_all(bind=database.engine)
+            log_backup("Migration gestartet", user=username)
+            db_migrations.run()
+            after = db_schema.applied_versions(database.engine)
+            migrations_applied = sorted(after - before)
+            log_backup(
+                f"Migration erfolgreich: {migrations_applied or 'keine ausstehend'}", user=username
+            )
+            log_backup("Anwendung wieder verfügbar", user=username)
+            status = "warning" if analysis["level"] == "yellow" else "success"
+            message = (
+                f"Restore erfolgreich (Version {backup_version}, {config_files} Konfig-Dateien, "
+                f"Migrationen {migrations_applied or 'keine'})"
+            )
 
-        status = "warning" if analysis["level"] == "yellow" else "success"
-        message = (
-            f"Restore erfolgreich (Version {backup_version}, {config_files} Konfig-Dateien, "
-            f"Migrationen {migrations_applied or 'keine'})"
-        )
         log_backup(f"Restore erfolgreich: {archive_path.name} – {message} (Job {token})", user=username)
         emit("completed", 100, "Wiederherstellung erfolgreich abgeschlossen")
     except Exception as exc:
@@ -211,6 +350,10 @@ def perform_restore(
             level=logging.ERROR, user=username,
         )
         log_backup("Migration fehlgeschlagen oder übersprungen", level=logging.WARNING, user=username)
+        log_db(
+            f"Cross-Database Restore fehlgeschlagen: {message} (Job {token})",
+            level=logging.ERROR, user=username,
+        )
         emit("failed", 100, message)
 
     finished = datetime.now()

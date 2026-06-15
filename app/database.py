@@ -132,14 +132,83 @@ def _read_config_file() -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _env_bool(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _config_from_env() -> dict[str, Any] | None:
+    """Build a database config from ``DB_*`` ENV variables (first-init only).
+
+    Recognises ``DB_TYPE`` (sqlite/mysql/mariadb/postgresql) plus ``DB_HOST``,
+    ``DB_PORT``, ``DB_NAME``, ``DB_USER``, ``DB_PASSWORD``, ``DB_SSL`` and
+    ``DB_PATH`` (SQLite). Returns ``None`` when ``DB_TYPE`` is not set, so the
+    feature is fully opt-in and never interferes with ``DATABASE_URL`` setups.
+    """
+    raw_type = os.environ.get("DB_TYPE")
+    if not raw_type:
+        return None
+    db_type = normalise_type(raw_type)
+    config: dict[str, Any] = {"type": db_type, "created_by": "env"}
+    if db_type == "sqlite":
+        path = os.environ.get("DB_PATH") or DEFAULT_SQLITE_PATH
+        config["sqlite_path"] = path
+        return config
+    config["host"] = os.environ.get("DB_HOST", "")
+    port = os.environ.get("DB_PORT")
+    if port:
+        try:
+            config["port"] = int(port)
+        except (TypeError, ValueError):
+            pass
+    config["name"] = os.environ.get("DB_NAME", "")
+    config["user"] = os.environ.get("DB_USER", "")
+    config["password"] = os.environ.get("DB_PASSWORD", "")
+    config["ssl"] = _env_bool(os.environ.get("DB_SSL"))
+    return config
+
+
+def _persist_config_file(config: dict[str, Any]) -> bool:
+    """Write the database config to the config volume. Never overwrites (§2)."""
+    if DATABASE_CONFIG_FILE.exists():
+        return False
+    try:
+        DATABASE_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        DATABASE_CONFIG_FILE.write_text(
+            json.dumps(config, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        return True
+    except OSError:  # pragma: no cover - depends on environment
+        return False
+
+
 def _resolve_initial() -> tuple[str, str, dict[str, Any]]:
-    """Return (url, logical_type, config) honouring the persisted selection."""
+    """Return (url, logical_type, config) honouring the persisted selection.
+
+    Order of precedence:
+    1. an existing ``config/database.json`` (web UI / earlier ENV first-init),
+    2. ``DB_*`` ENV variables on first install (persisted so they win only once),
+    3. the legacy ``DATABASE_URL`` environment variable,
+    4. the bundled SQLite default.
+    """
+    global INIT_SOURCE
     config = _read_config_file()
     if config:
+        # Fall 2: an existing configuration is always kept; ENV is ignored (§2).
+        INIT_SOURCE = "file"
         db_type = normalise_type(config.get("type"))
         return build_url(config), db_type, config
+
+    # Fall 1: no configuration yet -> ENV first-initialisation (if provided).
+    env_config = _config_from_env()
+    if env_config:
+        _persist_config_file(env_config)
+        INIT_SOURCE = "env"
+        db_type = normalise_type(env_config.get("type"))
+        return build_url(env_config), db_type, env_config
+
     env_url = os.environ.get("DATABASE_URL")
     if env_url:
+        INIT_SOURCE = "url"
         backend = make_url(env_url).get_backend_name()
         if backend.startswith("postgresql"):
             db_type = "postgresql"
@@ -148,6 +217,7 @@ def _resolve_initial() -> tuple[str, str, dict[str, Any]]:
         else:
             db_type = "sqlite"
         return env_url, db_type, {"type": db_type}
+    INIT_SOURCE = "default"
     return f"sqlite:///{DEFAULT_SQLITE_PATH}", "sqlite", {"type": "sqlite"}
 
 
@@ -167,6 +237,10 @@ def _build_engine(url: str, db_type: str, config: dict[str, Any]):
 
 
 # -- module-level state (rebindable at runtime) ----------------------------
+
+# How the active configuration was resolved at startup: "file" (persisted),
+# "env" (Docker ENV first-init, §1/§4), "url" (DATABASE_URL) or "default".
+INIT_SOURCE = "default"
 
 SQLALCHEMY_DATABASE_URL, DB_TYPE, ACTIVE_CONFIG = _resolve_initial()
 DB_BACKEND = make_url(SQLALCHEMY_DATABASE_URL).get_backend_name()  # sqlite/mysql/postgresql

@@ -2,7 +2,12 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.8`
+**Version:** `0.9.9`
+
+> Seit 0.9.9: **Docker-Erstinitialisierung** der Datenbank über `DB_*`-ENV-
+> Variablen, **datenbankunabhängige (logische) Backups** und **Cross-Database
+> Restore** (z. B. SQLite-Backup → PostgreSQL). Details unter
+> [„Docker Deployment"](#docker-deployment).
 
 > Die mobile Oberfläche (`/mobile`) ist eine installierbare, offline-fähige PWA.
 > Details siehe Abschnitt [„Mobile Offline-Funktion"](#mobile-offline-funktion-mobile) und [`CHANGELOG.md`](CHANGELOG.md).
@@ -37,13 +42,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.1.7 .
+docker build -t erfassung:0.9.9 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.1.7
+  erfassung:0.9.9
 ```
 
 ## GHCR & GitHub Actions
@@ -53,20 +58,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.1.7`)
+- Push von Tags `v*` (z. B. `v0.9.9`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.1.7`)
+- Versions-Tag aus `VERSION` (hier `0.9.9`)
 - `latest` auf `main`
-- Git-Tag (`v0.1.7`)
+- Git-Tag (`v0.9.9`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.1.7`
+`ghcr.io/OWNER/erfassung:0.9.9`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -79,7 +84,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.1.7
+    image: ghcr.io/OWNER/erfassung:0.9.9
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -205,13 +210,199 @@ Schemaänderungen werden beim Start automatisch und dialektübergreifend
 angewandt (Versionsstand in der Tabelle `schema_migrations`). Upgrades von
 älteren Versionen (0.6.x/0.7.x/0.8.x) sind ohne Datenverlust möglich.
 
-## Backups
+## Docker Deployment
+
+### Unterstützte Datenbanken
+
+| Datenbank | Eignung |
+|-----------|---------|
+| ⭐ **PostgreSQL** | Empfohlene Referenzinstallation für den Produktivbetrieb |
+| ⭐ **MariaDB** | Empfohlen für den Produktivbetrieb |
+| MySQL | Produktiv geeignet |
+| SQLite | Entwicklung, Tests, kleine Installationen |
+
+### Erstinitialisierung über Docker ENV (seit 0.9.9)
+
+Bei einer **Neuinstallation** (noch keine `config/database.json` vorhanden) kann
+die Datenbank vollständig über ENV-Variablen vorkonfiguriert werden. Beim ersten
+Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
+
+| Variable | Beschreibung | Beispiel |
+|----------|--------------|----------|
+| `DB_TYPE` | `sqlite` / `mysql` / `mariadb` / `postgresql` | `postgresql` |
+| `DB_HOST` | Host (Servertypen) | `postgres` |
+| `DB_PORT` | Port (Servertypen) | `5432` |
+| `DB_NAME` | Datenbankname | `timetracking` |
+| `DB_USER` | Benutzer | `timetracking` |
+| `DB_PASSWORD` | Passwort | `secret` |
+| `DB_SSL` | TLS aktivieren | `false` |
+| `DB_PATH` | Pfad der SQLite-Datei (nur SQLite) | `/data/app.db` |
+
+> **Wichtig:** ENV-Variablen dienen **ausschließlich der Erstinitialisierung**.
+> Existiert bereits eine `config/database.json`, werden die ENV-Variablen
+> ignoriert und niemals überschrieben. Die Datenbank bleibt danach vollständig
+> über **Administration → System → Datenbank** verwaltbar; dort wird auch
+> angezeigt, ob die Konfiguration aus Docker ENV oder über das Webinterface
+> erstellt wurde.
+
+### PostgreSQL (empfohlene Referenzinstallation) ⭐
+
+```yaml
+services:
+  erfassung:
+    image: ghcr.io/OWNER/erfassung:0.9.9
+    container_name: erfassung
+    restart: unless-stopped
+    depends_on: [postgres]
+    ports:
+      - "8000:8000"
+    environment:
+      DB_TYPE: postgresql
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: timetracking
+      DB_USER: timetracking
+      DB_PASSWORD: changeme
+      DB_SSL: "false"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+  postgres:
+    image: postgres:16
+    container_name: erfassung-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: timetracking
+      POSTGRES_USER: timetracking
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+```
+
+### MariaDB ⭐
+
+```yaml
+services:
+  erfassung:
+    image: ghcr.io/OWNER/erfassung:0.9.9
+    container_name: erfassung
+    restart: unless-stopped
+    depends_on: [mariadb]
+    ports:
+      - "8000:8000"
+    environment:
+      DB_TYPE: mariadb
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+      DB_NAME: timetracking
+      DB_USER: timetracking
+      DB_PASSWORD: changeme
+      DB_SSL: "false"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+  mariadb:
+    image: mariadb:11
+    container_name: erfassung-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: timetracking
+      MARIADB_USER: timetracking
+      MARIADB_PASSWORD: changeme
+      MARIADB_ROOT_PASSWORD: changeme-root
+    volumes:
+      - ./mariadb:/var/lib/mysql
+```
+
+### MySQL
+
+```yaml
+services:
+  erfassung:
+    image: ghcr.io/OWNER/erfassung:0.9.9
+    container_name: erfassung
+    restart: unless-stopped
+    depends_on: [mysql]
+    ports:
+      - "8000:8000"
+    environment:
+      DB_TYPE: mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: timetracking
+      DB_USER: timetracking
+      DB_PASSWORD: changeme
+      DB_SSL: "false"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+  mysql:
+    image: mysql:8
+    container_name: erfassung-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: timetracking
+      MYSQL_USER: timetracking
+      MYSQL_PASSWORD: changeme
+      MYSQL_ROOT_PASSWORD: changeme-root
+    volumes:
+      - ./mysql:/var/lib/mysql
+```
+
+### SQLite (Entwicklung / Tests / kleine Installationen)
+
+```yaml
+services:
+  erfassung:
+    image: ghcr.io/OWNER/erfassung:0.9.9
+    container_name: erfassung
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DB_TYPE: sqlite
+      DB_PATH: /app/data/erfassung.db
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+```
+
+> In **allen** Beispielen sind die drei persistenten Volumes `config`, `data`
+> und `logs` eingebunden – diese müssen erhalten bleiben, damit Konfiguration,
+> Geschäftsdaten und Protokolle Neustarts überleben.
+
+## Backups (datenbankunabhängig, seit 0.9.9)
 
 Unter **Administration → Backups** lassen sich Sicherungen (Datenbank +
 Konfiguration, optional Logs) lokal sowie auf **FTP/FTPS** oder **SMB3**
 ablegen. Zugangsdaten werden persistent im `config`-Volume gespeichert und nie
 im Klartext protokolliert. Es gibt einen Verbindungstest, konfigurierbare
 Aufbewahrung, eine Integritätsprüfung nach jeder Sicherung und eine Historie.
+
+Backups sind seit 0.9.9 **datenbankunabhängig (logisch)**: Die Daten werden als
+JSON je Tabelle exportiert (`data/database.json`) statt als rohe Datenbankdatei.
+Jedes Archiv enthält Metadaten (`app_version`, `backup_format_version`,
+`database_type`, `schema_version`, `created_at`, Datensatzanzahlen) – diese
+dienen ausschließlich der Analyse/Information und lösen niemals einen
+automatischen Datenbankwechsel aus.
+
+### Cross-Database Restore (seit 0.9.9)
+
+Ein logisches Backup kann **unabhängig vom ursprünglichen Datenbanktyp** in die
+aktuell konfigurierte Datenbank wiederhergestellt werden (z. B. SQLite-Backup →
+PostgreSQL, MariaDB-Backup → PostgreSQL, PostgreSQL-Backup → SQLite). Ablauf:
+Backup analysieren → Daten extrahieren → in die **aktive** Datenbank importieren
+(ORM, eine Transaktion) → Migrationen ausführen → Integritätsprüfung. Vor jeder
+Wiederherstellung wird automatisch ein Sicherheitsbackup (`pre_restore_*.zip`)
+erstellt. Eine Vorschau zeigt vorab Backup- und Systeminformationen.
+
+> **Restore importiert ausschließlich Daten.** Der aktive Datenbanktyp, die
+> Datenbankkonfiguration sowie die ENV-/Docker-Einstellungen werden dabei
+> niemals verändert.
 
 ## Terminalverwaltung (Zeiterfassungsterminals)
 
@@ -250,8 +441,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.1.7`)
-- optional Image-Name/Tag (`erfassung`, `0.1.7`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.9`)
+- optional Image-Name/Tag (`erfassung`, `0.9.9`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 
