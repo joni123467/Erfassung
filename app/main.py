@@ -1035,6 +1035,7 @@ def initialize_runtime():
 
 @app.on_event("startup")
 def ensure_seed_data():
+    _log_env_initialization()
     ensure_schema()
     try:
         _seed_default_records()
@@ -1121,6 +1122,32 @@ def _migrate_legacy_backup_config() -> None:
         db.close()
 
 
+def _log_env_initialization() -> None:
+    """Log the Docker ENV first-initialisation to database.log (§1/§7).
+
+    Only fires when the active configuration was created from ``DB_*`` ENV
+    variables on this (first) start. Credentials are never logged (§5).
+    """
+    if database.INIT_SOURCE != "env":
+        return
+    try:
+        config = app_config.load_database_config()
+        logging_setup.log_database(
+            "ENV Initialisierung erkannt: Datenbankkonfiguration aus Docker ENV übernommen"
+        )
+        logging_setup.log_database(f"Konfiguration erstellt: {config.describe()}")
+        result = db_migrator.test_connection(config)
+        if result["ok"]:
+            logging_setup.log_database("Verbindung erfolgreich (ENV-Erstinitialisierung)")
+        else:
+            logging_setup.log_database(
+                f"Verbindung fehlgeschlagen (ENV-Erstinitialisierung): {result['message']}",
+                level=logging.ERROR,
+            )
+    except Exception:  # pragma: no cover - never block startup on logging
+        logging_setup.log_error("ENV-Erstinitialisierung konnte nicht protokolliert werden")
+
+
 def _apply_versioned_migrations() -> None:
     """Apply all versioned, dialect-aware migrations automatically at start-up.
 
@@ -1128,11 +1155,20 @@ def _apply_versioned_migrations() -> None:
     portable ``schema_migrations`` table, so every schema change is applied
     exactly once and existing data is preserved (§23).
     """
+    env_init = database.INIT_SOURCE == "env"
+    if env_init:
+        logging_setup.log_database("Migration gestartet (ENV-Erstinitialisierung)")
     try:
         from . import db_migrations
 
         db_migrations._apply_migrations(database.engine, db_migrations.MIGRATIONS)
+        if env_init:
+            logging_setup.log_database("Migration erfolgreich (ENV-Erstinitialisierung)")
     except Exception:  # pragma: no cover - never block startup on migrations
+        if env_init:
+            logging_setup.log_database(
+                "Migration fehlgeschlagen (ENV-Erstinitialisierung)", level=logging.ERROR
+            )
         logging_setup.log_error("Automatische Migrationen fehlgeschlagen")
 
 
@@ -4547,6 +4583,20 @@ def admin_restore_verify(request: Request, file: str = Form(...), db: Session = 
         return JSONResponse({"ok": False, "message": "Datei nicht gefunden"}, status_code=404)
     result = backup_manager.verify(path, user=user)
     return JSONResponse(result)
+
+
+@app.post("/admin/system/restore/preview")
+def admin_restore_preview(request: Request, file: str = Form(...), db: Session = Depends(database.get_db)):
+    """Restore preview (§11): backup info + current system + the import notice."""
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
+    path = backup_manager.resolve_backup_path(file)
+    if not path:
+        return JSONResponse({"ok": False, "message": "Datei nicht gefunden"}, status_code=404)
+    preview = restore_manager.restore_preview(path)
+    preview["ok"] = True
+    return JSONResponse(preview)
 
 
 @app.post("/admin/system/restore/upload")

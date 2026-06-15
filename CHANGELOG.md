@@ -5,6 +5,81 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.9] – 2026-06-15
+
+### Added – Docker-Erstinitialisierung der Datenbank (ENV)
+
+- **`DB_*`-ENV-Variablen für Neuinstallationen**: Ist beim Start noch keine
+  `config/database.json` vorhanden, wird die Datenbankkonfiguration aus
+  `DB_TYPE`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL`
+  (und `DB_PATH` für SQLite) erzeugt, **persistiert**, getestet und migriert.
+  Unterstützt: SQLite, MySQL, MariaDB, PostgreSQL.
+- **ENV nur zur Erstinitialisierung**: Existiert bereits eine Konfiguration, wird
+  sie verwendet und die ENV-Variablen werden ignoriert – vorhandene
+  Konfigurationen werden **niemals** überschrieben.
+- **Herkunft sichtbar**: Administration → System → Datenbank zeigt an, ob die
+  Konfiguration über *Docker ENV Erstinitialisierung* oder das *Webinterface*
+  erstellt wurde (`created_by`).
+
+### Added – Datenbankunabhängige (logische) Backups & Cross-Database Restore
+
+- **Logische Backups** (`app/data_transfer.py`): Backups enthalten die Daten als
+  JSON je Tabelle (`data/database.json`) statt einer rohen Datenbankdatei oder
+  eines vendor-spezifischen Dumps. Backups sind damit vollständig
+  datenbankunabhängig.
+- **Erweiterte Metadaten** in jedem Archiv: `app_version`,
+  `backup_format_version`, `database_type`, `schema_version`, `created_at` sowie
+  Datensatzanzahlen. Diese sind ausschließlich informativ (Analyse,
+  Kompatibilität, Vorschau) und lösen niemals einen automatischen
+  Datenbankwechsel aus.
+- **Cross-Database Restore**: Ein Backup kann unabhängig vom ursprünglichen
+  Datenbanktyp in die **aktuell konfigurierte** Datenbank wiederhergestellt
+  werden (z. B. SQLite → PostgreSQL, MariaDB → PostgreSQL, PostgreSQL → SQLite).
+  Ablauf: Backup analysieren → Daten extrahieren → ORM-Import in einer
+  Transaktion → Migrationen → Integritätsprüfung.
+- **Restore-Vorschau** (`/admin/system/restore/preview`): zeigt vor der
+  Wiederherstellung Backup-Informationen (Version, Datum, Format, ursprünglicher
+  Datenbanktyp, Datensatzanzahlen) und das aktuelle System samt Hinweis, dass die
+  Datenbankkonfiguration unverändert bleibt.
+- **Sicherheitsbackup vor jedem Restore** (`pre_restore_*.zip`) für Rollback.
+
+### Changed
+
+- **Restore-Engine logisch** überarbeitet (`app/restore_manager.py`): Restore
+  importiert ausschließlich Daten über den ORM-/Repository-Layer und verändert
+  **niemals** den aktiven Datenbanktyp, die Datenbankkonfiguration oder die
+  ENV-/Docker-Einstellungen. Ältere Datei-Backups (vor 0.9.9) werden weiterhin
+  typgleich wiederhergestellt (Abwärtskompatibilität).
+- **Migration nach Restore**: Nach dem Import wird das Schema geprüft und auf den
+  aktuellen Stand gebracht (Restore eines 0.8.x-Backups auf 0.9.9 inklusive).
+- **README** um einen ausführlichen Abschnitt *Docker Deployment* mit
+  Stack-Vorlagen für PostgreSQL (Referenz), MariaDB, MySQL und SQLite erweitert.
+- Version auf **0.9.9** angehoben (Frontend, Backend, Footer, Loginseite,
+  Systemstatus, API-Version, Release- und Buildinformationen).
+
+### Database
+
+- Keine Schemaänderung. Backups/Restore sind logisch und damit dialektunabhängig;
+  beim Cross-Database Restore werden PostgreSQL-Sequenzen nach dem Import
+  nachgezogen.
+
+### Logging
+
+- `database.log` um ENV-Initialisierung erweitert (erkannt, Konfiguration
+  erstellt, Verbindung erfolgreich/fehlgeschlagen, Migration gestartet/
+  erfolgreich/fehlgeschlagen).
+- Restore-Protokoll um Cross-Database-Ereignisse erweitert (Backup analysiert/
+  Metadaten gelesen, Quell-/Ziel-Datenbank erkannt, Cross-Database Restore
+  gestartet/erfolgreich/fehlgeschlagen, Migration nach Restore). Passwörter,
+  Tokens, API-Keys und Secrets werden niemals protokolliert.
+
+### Migrationshinweise
+
+- Upgradepfade `0.8.x → 0.9.9`, `0.9.0 → 0.9.9`, `0.9.5 → 0.9.9` und
+  `0.9.8 → 0.9.9` werden unterstützt. Bestehende Installationen behalten ihre
+  Datenbankkonfiguration; ENV-Variablen greifen ausschließlich bei
+  Neuinstallationen ohne vorhandene `config/database.json`.
+
 ## [0.9.8] – 2026-06-14
 
 ### Added – Generische Terminalverwaltung (ersetzt TimeMoto)

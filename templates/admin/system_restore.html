@@ -75,13 +75,28 @@
             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
             <input type="hidden" name="file" id="restore-file">
             <div class="modal__body">
+                <h4>Backup</h4>
                 <dl class="restore-details">
                     <div><dt>Dateiname</dt><dd id="restore-d-name"></dd></div>
-                    <div><dt>Größe</dt><dd id="restore-d-size"></dd></div>
-                    <div><dt>Erstellt</dt><dd id="restore-d-created"></dd></div>
-                    <div><dt>Anwendungsversion</dt><dd id="restore-d-version"></dd></div>
-                    <div><dt>Datenbanktyp</dt><dd id="restore-d-dbtype"></dd></div>
+                    <div><dt>Backup-Version</dt><dd id="restore-d-version"></dd></div>
+                    <div><dt>Backup-Datum</dt><dd id="restore-d-created"></dd></div>
+                    <div><dt>Backup-Format</dt><dd id="restore-d-format"></dd></div>
+                    <div><dt>Ursprünglicher Datenbanktyp</dt><dd id="restore-d-dbtype"></dd></div>
+                    <div><dt>Benutzer</dt><dd id="restore-d-users"></dd></div>
+                    <div><dt>Buchungen</dt><dd id="restore-d-bookings"></dd></div>
+                    <div><dt>Urlaubseinträge</dt><dd id="restore-d-vacations"></dd></div>
+                    <div><dt>Feiertage</dt><dd id="restore-d-holidays"></dd></div>
                 </dl>
+                <h4>Aktuelles System</h4>
+                <dl class="restore-details">
+                    <div><dt>Aktuelle Version</dt><dd id="restore-c-version"></dd></div>
+                    <div><dt>Aktive Datenbank</dt><dd id="restore-c-dbtype"></dd></div>
+                    <div><dt>Datenbankversion</dt><dd id="restore-c-dbversion"></dd></div>
+                </dl>
+                <p class="alert alert--info" id="restore-note">
+                    Die Daten werden in die aktuell konfigurierte Datenbank importiert.
+                    Die Datenbankkonfiguration bleibt unverändert.
+                </p>
                 <p class="alert alert--danger">
                     <strong>Achtung:</strong> Die Wiederherstellung ersetzt den aktuellen Datenbestand.
                     Vor der Wiederherstellung wird automatisch ein Sicherheitsbackup erzeugt.
@@ -109,18 +124,43 @@
         modal.setAttribute('aria-hidden', v ? 'false' : 'true');
         document.body.classList.toggle('modal-open', v);
     };
+    const setText = (id, value) => { document.getElementById(id).textContent = (value === undefined || value === null || value === '') ? '–' : value; };
+
     document.querySelectorAll('.restore-open').forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
             const d = btn.dataset;
             document.getElementById('restore-file').value = d.file;
-            document.getElementById('restore-d-name').textContent = d.file;
-            document.getElementById('restore-d-size').textContent = d.size;
-            document.getElementById('restore-d-created').textContent = d.created;
-            document.getElementById('restore-d-version').textContent = d.version;
-            document.getElementById('restore-d-dbtype').textContent = d.dbtype;
+            setText('restore-d-name', d.file);
+            setText('restore-d-created', d.created);
+            setText('restore-d-version', d.version);
+            setText('restore-d-dbtype', d.dbtype);
+            ['restore-d-format', 'restore-d-users', 'restore-d-bookings', 'restore-d-vacations',
+             'restore-d-holidays', 'restore-c-version', 'restore-c-dbtype', 'restore-c-dbversion']
+                .forEach((id) => setText(id, '…'));
             confirmInput.value = '';
             submitBtn.disabled = true;
             show(true);
+            try {
+                const body = new FormData();
+                body.append('file', d.file);
+                const r = await fetch('/admin/system/restore/preview', { method: 'POST', headers: { 'x-csrf-token': csrf }, body });
+                const data = await r.json();
+                if (data.ok) {
+                    const b = data.backup, c = data.current, n = b.counts || {};
+                    setText('restore-d-version', b.app_version);
+                    setText('restore-d-created', b.created_at);
+                    setText('restore-d-format', b.backup_format_version);
+                    setText('restore-d-dbtype', b.database_type);
+                    setText('restore-d-users', n.users);
+                    setText('restore-d-bookings', n.time_entries);
+                    setText('restore-d-vacations', n.vacation_requests);
+                    setText('restore-d-holidays', n.holidays);
+                    setText('restore-c-version', c.app_version);
+                    setText('restore-c-dbtype', c.database_type);
+                    setText('restore-c-dbversion', c.database_version);
+                    if (data.note) document.getElementById('restore-note').textContent = data.note;
+                }
+            } catch (err) { /* preview is best-effort */ }
         });
     });
     confirmInput.addEventListener('input', () => {

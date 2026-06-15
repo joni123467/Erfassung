@@ -1,11 +1,14 @@
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.7
+    image: ghcr.io/OWNER/erfassung:0.9.9
     container_name: erfassung
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: sqlite:////app/data/erfassung.db
+      # SQLite-Standard. Für Produktiv siehe README → Docker Deployment
+      # (PostgreSQL/MariaDB) und die DB_*-Erstinitialisierung (seit 0.9.9).
+      DB_TYPE: sqlite
+      DB_PATH: /app/data/erfassung.db
       # SESSION_SECRET_KEY: change-me-in-production
       # HTTPS_ONLY_SESSION: "true"   # Setze auf true wenn hinter HTTPS-Proxy (z.B. Traefik)
     volumes:

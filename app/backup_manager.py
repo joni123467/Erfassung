@@ -29,13 +29,24 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from . import __version__ as APP_VERSION
-from . import crud, database, db_schema, logging_setup, paths
+from . import crud, data_transfer, database, db_schema, logging_setup, paths
 
 LOGGER = logging.getLogger("erfassung.application")
 
 BACKUP_DIR = paths.DATA_DIR / "backups"
 UPLOAD_DIR = paths.DATA_DIR / "uploads"
 META_NAME = "backup_meta.json"
+# Logical, database-independent data dump inside every archive (§0.9.9).
+LOGICAL_DATA_NAME = "data/database.json"
+
+# Key entities surfaced in metadata + the restore preview (§9/§11).
+_COUNT_ENTITIES = {
+    "users": "Benutzer",
+    "time_entries": "Buchungen",
+    "vacation_requests": "Urlaub",
+    "holidays": "Feiertage",
+    "terminals": "Terminals",
+}
 
 
 def log_backup(message, *, level=logging.INFO, user=None):
@@ -97,8 +108,13 @@ def _dump_database(staging: Path) -> tuple[Optional[Path], Optional[str]]:
 
 # -- metadata --------------------------------------------------------------
 
-def _build_metadata(contents: list[str], backup_type: str) -> dict:
-    """Metadata embedded in every archive for compatibility checks (§10)."""
+def _build_metadata(contents: list[str], backup_type: str, counts: Optional[dict] = None) -> dict:
+    """Metadata embedded in every archive for compatibility checks (§9/§10).
+
+    Metadata is informational only: it is used for analysis, compatibility hints
+    and the restore preview – never to automatically switch the active database
+    or overwrite the database configuration (§9).
+    """
     schema_version = None
     try:
         schema_version = db_schema.latest_applied_version(database.engine)
@@ -106,12 +122,22 @@ def _build_metadata(contents: list[str], backup_type: str) -> dict:
         schema_version = None
     return {
         "app_version": APP_VERSION,
+        "backup_format_version": data_transfer.BACKUP_FORMAT_VERSION,
         "database_type": database.DB_BACKEND,
         "schema_version": schema_version,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "backup_type": backup_type,
         "contents": contents,
+        "counts": counts or {},
     }
+
+
+def _logical_payload() -> tuple[dict, dict]:
+    """Return (logical_export, key_entity_counts) for the active database."""
+    payload = data_transfer.export_database(database.engine)
+    all_counts = data_transfer.table_counts_from_export(payload)
+    counts = {name: all_counts.get(name, 0) for name in _COUNT_ENTITIES}
+    return payload, counts
 
 
 def read_metadata(archive_path: Path) -> Optional[dict]:
@@ -121,6 +147,26 @@ def read_metadata(archive_path: Path) -> Optional[dict]:
             if META_NAME not in archive.namelist():
                 return None
             return json.loads(archive.read(META_NAME).decode("utf-8"))
+    except (zipfile.BadZipFile, OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def has_logical_data(archive_path: Path) -> bool:
+    """True if the archive contains a logical, database-independent export."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            return LOGICAL_DATA_NAME in archive.namelist()
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
+def read_logical_data(archive_path: Path) -> Optional[dict]:
+    """Read the logical data export (``data/database.json``), or None."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            if LOGICAL_DATA_NAME not in archive.namelist():
+                return None
+            return json.loads(archive.read(LOGICAL_DATA_NAME).decode("utf-8"))
     except (zipfile.BadZipFile, OSError, json.JSONDecodeError, ValueError):
         return None
 
@@ -135,16 +181,21 @@ def _build_archive(job, staging: Path, *, backup_type: str = "job") -> tuple[Pat
     contents = job.content_list
     warnings: list[str] = []
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
+    with tempfile.TemporaryDirectory():
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(META_NAME, json.dumps(_build_metadata(contents, backup_type), indent=2))
+            logical = None
+            counts: dict = {}
             if "database" in contents:
-                snapshot, warning = _dump_database(tmp_dir)
-                if snapshot:
-                    archive.write(snapshot, arcname=f"data/{snapshot.name}")
-                if warning:
-                    warnings.append(warning)
+                # §8: logical, database-independent export (never a raw DB file).
+                try:
+                    logical, counts = _logical_payload()
+                except Exception as exc:  # pragma: no cover - defensive
+                    warnings.append(f"Logischer Datenexport fehlgeschlagen: {type(exc).__name__}")
+            archive.writestr(
+                META_NAME, json.dumps(_build_metadata(contents, backup_type, counts), indent=2)
+            )
+            if logical is not None:
+                archive.writestr(LOGICAL_DATA_NAME, json.dumps(logical, indent=2, default=str))
             if "config" in contents and paths.CONFIG_DIR.exists():
                 for entry in paths.CONFIG_DIR.rglob("*"):
                     if entry.is_file():
@@ -166,15 +217,14 @@ def create_safety_backup(*, prefix: str = "pre_restore", backup_type: str = "saf
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     archive_path = BACKUP_DIR / f"{prefix}_{timestamp}.zip"
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
+    with tempfile.TemporaryDirectory():
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            logical, counts = _logical_payload()
             archive.writestr(
-                META_NAME, json.dumps(_build_metadata(["database", "config"], backup_type), indent=2)
+                META_NAME,
+                json.dumps(_build_metadata(["database", "config"], backup_type, counts), indent=2),
             )
-            snapshot, _warning = _dump_database(tmp_dir)
-            if snapshot:
-                archive.write(snapshot, arcname=f"data/{snapshot.name}")
+            archive.writestr(LOGICAL_DATA_NAME, json.dumps(logical, indent=2, default=str))
             if paths.CONFIG_DIR.exists():
                 for entry in paths.CONFIG_DIR.rglob("*"):
                     if entry.is_file():

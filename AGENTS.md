@@ -244,6 +244,64 @@ Alles in `logs/database.log` (Kanal `database`) protokollieren, nie Zugangsdaten
 Kein Release, wenn: ein Datenbankwechsel fehlschlägt, der Rollback fehlschlägt
 (bisherige Datenbank muss aktiv bleiben) oder Datenverlust möglich ist.
 
+## Docker-Erstinitialisierung & datenbankunabhängige Backups (ab 0.9.9, verpflichtend)
+
+### Docker-Erstinitialisierung über ENV
+
+`app/database.py` löst die aktive Datenbank in dieser Reihenfolge auf:
+vorhandene `config/database.json` → `DB_*`-ENV (Erstinstallation) → `DATABASE_URL`
+→ SQLite-Default. Die ENV-Erstinitialisierung **persistiert** die Konfiguration
+(`created_by="env"`), die Herkunft ist in der UI sichtbar.
+
+Bei jeder Änderung an Initialisierung/Datenbank prüfen:
+- **ENV wird erkannt** und erzeugt bei Neuinstallation eine Konfiguration,
+- **Konfiguration wird persistiert** (`config/database.json`),
+- **Migrationen laufen** automatisch, die **Anwendung startet**,
+- **Vorhandene Konfiguration bleibt erhalten** – ENV überschreibt **niemals**
+  eine bestehende `config/database.json` (Fall 2),
+- **Secrets niemals loggen** (Passwörter/Tokens/API-Keys): die einzige geloggte
+  Konfigurationsdarstellung ist `DatabaseConfig.describe()` (ohne Passwort).
+
+### Datenbankunabhängige Backups & Cross-Database Restore
+
+Backups sind **logisch** (`app/data_transfer.py`, JSON je Tabelle in
+`data/database.json`) – niemals rohe DB-Dateien/Datenverzeichnisse als primäre
+Methode. Restore importiert ausschließlich Daten über den ORM-Layer in die
+**aktuell konfigurierte** Datenbank, in einer Transaktion (keine Teilimporte),
+gefolgt von Migrationen und Integritätsprüfung.
+
+**Cross-Database Restore** muss in allen Richtungen funktionieren:
+- SQLite → PostgreSQL / MariaDB / MySQL
+- MariaDB → PostgreSQL / SQLite / MySQL
+- PostgreSQL → MariaDB / SQLite / MySQL
+- MySQL → PostgreSQL / MariaDB / SQLite
+
+**Restore-Altversionen** prüfen: 0.8.x → 0.9.9, 0.9.0 → 0.9.9, 0.9.5 → 0.9.9,
+0.9.8 → 0.9.9 (Migration nach Restore).
+
+**Restore-Regeln (Release-Blocker bei Verstoß):** Restore darf **niemals**
+- den Datenbanktyp ändern,
+- die Datenbankkonfiguration überschreiben,
+- die ENV-Konfiguration verändern,
+- die Docker-Konfiguration verändern.
+
+Vor jedem Restore wird automatisch ein Sicherheitsbackup (`pre_restore_*.zip`)
+erstellt. Cross-Database-/Migrations-Ereignisse werden in `database.log`
+protokolliert, der Restore-Verlauf in `backup.log` – nie mit Zugangsdaten.
+
+### Dokumentation
+
+- README aktualisiert (inkl. Docker-Beispiele für PostgreSQL/MariaDB/MySQL/SQLite
+  mit den Volumes config/data/logs),
+- Changelog aktualisiert, Docker-Beispiele aktuell, Versionsnummern konsistent.
+
+### Release-Blocker
+
+Kein Release, wenn: die ENV-Initialisierung fehlschlägt, eine vorhandene
+Konfiguration überschrieben wird, ein Cross-Database Restore fehlschlägt, die
+Migration nach Restore fehlschlägt, die Integritätsprüfung fehlschlägt, die
+README nicht aktualisiert wurde oder Docker-Beispiele fehlen.
+
 ## Administration-Navigation
 
 - Die Admin-Navigation (`templates/admin/_nav.html`) ist im Reiter-Design

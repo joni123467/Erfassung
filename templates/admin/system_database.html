@@ -20,6 +20,17 @@
         <a href="/admin/system/database/progress">Zum Fortschritt</a>.</p>
     {% endif %}
 
+    <p class="alert alert--info">
+        <strong>Konfiguration erstellt durch:</strong>
+        {% if db_config.created_by == 'env' %}
+            Docker ENV Erstinitialisierung – Die Datenbankkonfiguration wurde bei der
+            Erstinstallation aus Docker ENV Variablen übernommen. ENV Variablen werden ab
+            sofort ignoriert; Änderungen erfolgen ausschließlich über das Webinterface.
+        {% else %}
+            Webinterface
+        {% endif %}
+    </p>
+
     <div class="metric-grid">
         <article class="metric-tile">
             <span class="metric-tile__label">Aktiv</span>
