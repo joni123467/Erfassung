@@ -5,6 +5,48 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.10] – 2026-07-07
+
+### Fixed – Mobiles Stempeln nach Firmensuche
+
+- **Suchvorschlag startet den Auftrag zuverlässig**: Wurde in der mobilen App
+  eine Firma über das Suchfeld gefunden und der Vorschlag (Datalist)
+  übernommen, blieb das Dropdown „Firma auswählen" leer und der Server lehnte
+  die Buchung mit „Bitte eine Firma auswählen oder neu anlegen." ab. Die
+  Firmensuche wählt jetzt – wie auf dem Desktop – bei exakter Übereinstimmung
+  die Firma automatisch im Dropdown aus (zusätzlich auf das `change`-Ereignis
+  der Vorschlagsübernahme reagierend).
+- **Client-seitige Namensauflösung**: Vor dem Einreihen einer
+  `start_company`-Aktion wird eine fehlende `company_id` aus dem Suchtext gegen
+  die Firmenliste aufgelöst.
+- **Server-Fallback über den Firmennamen**: `/punch` akzeptiert bei
+  `start_company` jetzt zusätzlich `company_name` und löst die Firma über den
+  Namen auf (exakt, dann ohne Beachtung der Groß-/Kleinschreibung), wenn keine
+  `company_id` übermittelt wurde – das repariert auch bereits offline
+  eingereihte Aktionen älterer Clients.
+- **Offline-Vorschlagsliste**: Die Firmen-Datalist wird nun ebenfalls aus dem
+  lokalen Cache befüllt (die Offline-Shell startete bisher mit leerer
+  Vorschlagsliste).
+
+### Added – Kommentar nach dem Beenden bearbeiten
+
+- **Optionaler Kommentar-Dialog**: Nach „Auftrag beenden" bzw. „Arbeitszeit
+  beenden" öffnet die mobile App einen optionalen Dialog, um den Kommentar der
+  soeben beendeten Buchung anzupassen („Überspringen" möglich). Funktioniert
+  offline über die bestehende Queue (`update_notes` wird in Reihenfolge nach
+  der Beenden-Aktion synchronisiert).
+- **„Kommentar der letzten Buchung bearbeiten"**: Neuer Button unter den
+  Stempel-Aktionen (sichtbar, wenn am aktuellen Tag bereits eine Buchung
+  beendet wurde), der denselben Dialog öffnet.
+- **Neue `/punch`-Aktion `update_notes`**: Aktualisiert den Kommentar einer
+  eigenen Buchung – bevorzugt über `entry_id`, sonst die zuletzt beendete
+  Buchung des Benutzers. Idempotent über `client_action_id` wie alle
+  Stempelaktionen.
+
+### Datenbank
+
+- Keine Schemaänderungen; keine Migration erforderlich.
+
 ## [0.9.9] – 2026-06-15
 
 ### Added – Docker-Erstinitialisierung der Datenbank (ENV)

@@ -211,6 +211,8 @@ function buildStateFromEntry(entry) {
       companyName: '',
       workedLabel: '0:00',
       pendingPunchSync: false,
+      entryId: null,
+      notes: '',
     };
   }
   const startIso = `${entry.work_date}T${entry.start_time}`;
@@ -232,6 +234,8 @@ function buildStateFromEntry(entry) {
     companyName: entry.company_name || '',
     workedLabel: normalizeBreakLabel(entry.worked_minutes || 0),
     pendingPunchSync: false,
+    entryId: entry.id || null,
+    notes: entry.notes || '',
   };
 }
 
@@ -249,6 +253,8 @@ function cloneState(state) {
     companyName: state.companyName || '',
     workedLabel: state.workedLabel || '0:00',
     pendingPunchSync: !!state.pendingPunchSync,
+    entryId: state.entryId || null,
+    notes: state.notes || '',
   };
 }
 
@@ -313,6 +319,8 @@ function applyPunchActionToState(state, action, payload = {}) {
     next.breakLabel = '';
     next.breakTotalLabel = '0:00';
     next.companyName = '';
+    next.entryId = null;
+    next.notes = (payload.notes || '').trim();
   } else if (action === 'end_work') {
     return buildStateFromEntry(null);
   } else if (action === 'start_break' && next.isWorking && !next.onBreak) {
@@ -338,6 +346,8 @@ function applyPunchActionToState(state, action, payload = {}) {
     next.breakLabel = '';
     next.breakTotalLabel = '0:00';
     next.companyName = (payload.new_company_name || '').trim() || payload.company_name || '';
+    next.entryId = null;
+    next.notes = (payload.notes || '').trim();
   } else if (action === 'end_company') {
     next.isWorking = true;
     next.onBreak = false;
@@ -349,6 +359,8 @@ function applyPunchActionToState(state, action, payload = {}) {
     next.breakLabel = '';
     next.breakTotalLabel = '0:00';
     next.companyName = '';
+    next.entryId = null;
+    next.notes = '';
   }
   return next;
 }
@@ -536,8 +548,32 @@ function determineCompanyName(form, payload) {
   const typed = (payload.new_company_name || '').trim();
   if (typed) return typed;
   const select = form.querySelector('select[name="company_id"]');
+  if (select instanceof HTMLSelectElement && select.value) {
+    return select.options[select.selectedIndex]?.textContent?.trim() || '';
+  }
+  // Kein Dropdown-Wert (Platzhalter): Suchtext verwenden, damit der Server die
+  // Firma über den Namen auflösen kann.
+  const search = form.querySelector('[data-company-search-target]');
+  if (search instanceof HTMLInputElement) {
+    return (search.value || '').trim();
+  }
+  return '';
+}
+
+// Löst den Firmennamen aus der Suche client-seitig gegen die Dropdown-Optionen
+// auf (exakte Übereinstimmung, Groß-/Kleinschreibung egal) und liefert die id.
+function resolveCompanyIdByName(form, name) {
+  const cleaned = (name || '').trim().toLocaleLowerCase('de-DE');
+  if (!cleaned) return '';
+  const select = form.querySelector('select[name="company_id"]');
   if (!(select instanceof HTMLSelectElement)) return '';
-  return select.options[select.selectedIndex]?.textContent?.trim() || '';
+  for (const option of Array.from(select.options)) {
+    if (!option.value) continue;
+    if ((option.textContent || '').trim().toLocaleLowerCase('de-DE') === cleaned) {
+      return option.value;
+    }
+  }
+  return '';
 }
 
 async function recomputeEffectiveState() {
@@ -649,6 +685,21 @@ async function hydrateCompaniesFromCache() {
       option.textContent = company.name;
       if (String(company.id) === String(selected)) option.selected = true;
       select.appendChild(option);
+    });
+  });
+
+  // Suchvorschläge (datalist) ebenfalls befüllen – die Offline-Shell startet
+  // mit einer leeren Liste.
+  document.querySelectorAll('[data-company-search-target]').forEach((input) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    const listId = input.getAttribute('list');
+    const datalist = listId ? document.getElementById(listId) : null;
+    if (!(datalist instanceof HTMLDataListElement)) return;
+    datalist.innerHTML = '';
+    companies.forEach((company) => {
+      const option = document.createElement('option');
+      option.value = company.name;
+      datalist.appendChild(option);
     });
   });
 }
@@ -794,8 +845,16 @@ async function flushOfflineQueue() {
   return { processed: 0, failed: remaining.total, skipped };
 }
 
+let syncRequestedWhileInFlight = false;
+
 async function performReconnectSync(trigger = 'auto') {
-  if (syncInFlight) return;
+  if (syncInFlight) {
+    // Aktion wurde eingereiht, während ein Sync bereits lief (z. B. Kommentar
+    // direkt nach dem Beenden gespeichert): Folgesync vormerken, sonst bleibt
+    // die Aktion bis zum nächsten externen Trigger in der Queue liegen.
+    syncRequestedWhileInFlight = true;
+    return;
+  }
   syncInFlight = true;
   await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: true, updatedAt: Date.now() });
   try {
@@ -841,6 +900,10 @@ async function performReconnectSync(trigger = 'auto') {
     await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: false, updatedAt: Date.now() });
     syncInFlight = false;
     await checkServerReachability();
+    if (syncRequestedWhileInFlight) {
+      syncRequestedWhileInFlight = false;
+      window.setTimeout(() => { performReconnectSync('follow-up').catch(() => {}); }, 0);
+    }
   }
 }
 
@@ -851,6 +914,19 @@ async function processPunchSubmission(form, payload) {
   if (!payload.event_time) payload.event_time = localIsoTimestamp();
   if (payload.action === 'start_company') {
     payload.company_name = determineCompanyName(form, payload);
+    // Suchvorschlag gewählt, aber Dropdown unberührt: company_id client-seitig
+    // aus dem Namen auflösen, damit die Buchung nicht am leeren Dropdown scheitert.
+    if (!payload.company_id && !(payload.new_company_name || '').trim()) {
+      const resolved = resolveCompanyIdByName(form, payload.company_name);
+      if (resolved) payload.company_id = resolved;
+    }
+  }
+
+  // Nach dem Beenden optional den Kommentar der beendeten Buchung anbieten –
+  // Zustand VOR dem Anwenden der Aktion festhalten.
+  let notesFollowUp = null;
+  if ((payload.action === 'end_work' || payload.action === 'end_company') && mobileState?.isWorking) {
+    notesFollowUp = { entryId: mobileState.entryId || '', notes: mobileState.notes || '' };
   }
 
   // ── Queue-first, ALWAYS: every punch is persisted to IndexedDB before any
@@ -861,6 +937,13 @@ async function processPunchSubmission(form, payload) {
   await recomputeEffectiveState();
   await refreshQueueIndicator();
   showFeedback('Buchung lokal erfasst. Synchronisiere …', 'info');
+
+  if (notesFollowUp) {
+    updateNotesLaunchButton(notesFollowUp.entryId, notesFollowUp.notes);
+    openNotesModal(notesFollowUp.entryId, notesFollowUp.notes);
+  } else if (payload.action === 'update_notes') {
+    updateNotesLaunchButton(payload.entry_id || '', (payload.notes || '').trim());
+  }
 
   // Attempt immediate sync in background (non-blocking for UI)
   try {
@@ -983,6 +1066,61 @@ function registerModalHandling() {
   });
 }
 
+const NOTES_MODAL_ID = 'mobile-notes-modal';
+
+function setNotesModalVisible(visible) {
+  const modal = document.getElementById(NOTES_MODAL_ID);
+  if (!modal) return;
+  modal.classList.toggle('is-visible', visible);
+  modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  document.body.classList.toggle('modal-open', visible);
+}
+
+function openNotesModal(entryId, notes) {
+  const modal = document.getElementById(NOTES_MODAL_ID);
+  if (!modal) return;
+  const idInput = modal.querySelector('input[name="entry_id"]');
+  const textarea = modal.querySelector('textarea[name="notes"]');
+  if (idInput instanceof HTMLInputElement) idInput.value = entryId ? String(entryId) : '';
+  if (textarea instanceof HTMLTextAreaElement) textarea.value = notes || '';
+  setNotesModalVisible(true);
+  if (textarea instanceof HTMLTextAreaElement) textarea.focus();
+}
+
+// Hält den "Kommentar bearbeiten"-Button unter den Stempel-Aktionen aktuell,
+// damit der Kommentar auch nach dem Schließen des Dialogs erreichbar bleibt.
+function updateNotesLaunchButton(entryId, notes) {
+  const button = document.getElementById('mobile-notes-launch');
+  if (!button) return;
+  button.dataset.entryId = entryId ? String(entryId) : '';
+  button.dataset.entryNotes = notes || '';
+  setElementHidden(button, false);
+}
+
+function registerNotesModal() {
+  const modal = document.getElementById(NOTES_MODAL_ID);
+  if (!modal) return;
+
+  modal.querySelectorAll('[data-close]').forEach((closer) => {
+    closer.addEventListener('click', (event) => {
+      event.preventDefault();
+      setNotesModalVisible(false);
+    });
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal.classList.contains('is-visible')) setNotesModalVisible(false);
+  });
+
+  const launch = document.getElementById('mobile-notes-launch');
+  if (launch) {
+    launch.addEventListener('click', (event) => {
+      event.preventDefault();
+      openNotesModal(launch.dataset.entryId || '', launch.dataset.entryNotes || '');
+    });
+  }
+}
+
 function registerCompanySearch() {
   const searchInputs = document.querySelectorAll('[data-company-search-target]');
   searchInputs.forEach((input) => {
@@ -995,6 +1133,7 @@ function registerCompanySearch() {
     const update = () => {
       const query = (input.value || '').trim().toLocaleLowerCase('de-DE');
       let visibleCount = 0;
+      let exactMatchValue = '';
       Array.from(select.options).forEach((option, index) => {
         if (index === 0) {
           option.hidden = false;
@@ -1004,7 +1143,17 @@ function registerCompanySearch() {
         const visible = !query || label.includes(query);
         option.hidden = !visible;
         if (visible) visibleCount += 1;
+        if (query && label === query) {
+          exactMatchValue = option.value;
+        }
       });
+
+      // Ein gewählter Suchvorschlag (datalist) erreicht das Dropdown sonst nie:
+      // bei exakter Übereinstimmung die Firma direkt auswählen, damit das
+      // Stempeln ohne zusätzlichen Dropdown-Tipp funktioniert.
+      if (exactMatchValue) {
+        select.value = exactMatchValue;
+      }
 
       let hint = input.parentElement?.querySelector('.company-search-empty');
       if (!hint) {
@@ -1022,6 +1171,9 @@ function registerCompanySearch() {
     };
 
     input.addEventListener('input', update);
+    // Manche Browser feuern bei der Übernahme eines datalist-Vorschlags nur
+    // 'change' statt 'input'.
+    input.addEventListener('change', update);
     update();
   });
 }
@@ -1040,6 +1192,7 @@ function initializeServerStateFromDataset() {
 
   const data = root.dataset;
   const entry = data.stateRunning === 'true' ? {
+    id: data.entryId ? Number(data.entryId) : null,
     work_date: data.startTimestamp ? data.startTimestamp.slice(0, 10) : new Date().toISOString().slice(0, 10),
     start_time: data.startLabel ? `${data.startLabel}:00` : '00:00:00',
     break_started_at: data.stateBreak === 'true' && data.breakLabel ? `${data.breakLabel}:00` : null,
@@ -1049,6 +1202,7 @@ function initializeServerStateFromDataset() {
     total_break_minutes: Number(data.totalBreakMinutes || 0),
     worked_minutes: 0,
     break_minutes: Number(data.totalBreakMinutes || 0),
+    notes: data.entryNotes || '',
   } : null;
 
   initialServerState = buildStateFromEntry(entry);
@@ -1515,6 +1669,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // ── Phase 1: Immediate local rendering (works offline) ─────────────────────
   registerTabHandling();
   registerModalHandling();
+  registerNotesModal();
   registerOfflineForms();
   registerCompanySearch();
   setupConnectionHandlers();

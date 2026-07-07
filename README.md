@@ -2,7 +2,12 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.9`
+**Version:** `0.9.10`
+
+> Seit 0.9.10: **Mobile Stempel-Fixes & Kommentar-Nachbearbeitung** – die
+> Firmensuche der mobilen App übernimmt gewählte Vorschläge zuverlässig in die
+> Buchung, und nach dem Beenden eines Auftrags bzw. der Arbeitszeit kann der
+> Kommentar der Buchung optional nachbearbeitet werden.
 
 > Seit 0.9.9: **Docker-Erstinitialisierung** der Datenbank über `DB_*`-ENV-
 > Variablen, **datenbankunabhängige (logische) Backups** und **Cross-Database
@@ -42,13 +47,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.9 .
+docker build -t erfassung:0.9.10 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.9
+  erfassung:0.9.10
 ```
 
 ## GHCR & GitHub Actions
@@ -58,20 +63,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.9`)
+- Push von Tags `v*` (z. B. `v0.9.10`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.9`)
+- Versions-Tag aus `VERSION` (hier `0.9.10`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.9`)
+- Git-Tag (`v0.9.10`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.9`
+`ghcr.io/OWNER/erfassung:0.9.10`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -84,7 +89,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.9
+    image: ghcr.io/OWNER/erfassung:0.9.10
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -250,7 +255,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.9
+    image: ghcr.io/OWNER/erfassung:0.9.10
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -285,7 +290,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.9
+    image: ghcr.io/OWNER/erfassung:0.9.10
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -321,7 +326,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.9
+    image: ghcr.io/OWNER/erfassung:0.9.10
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -357,7 +362,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.9
+    image: ghcr.io/OWNER/erfassung:0.9.10
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -441,8 +446,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.9`)
-- optional Image-Name/Tag (`erfassung`, `0.9.9`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.10`)
+- optional Image-Name/Tag (`erfassung`, `0.9.10`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 
@@ -460,7 +465,15 @@ Die mobile Oberfläche ist als pragmatische **Offline-first-PWA** umgesetzt.
 - Start/Stop von Arbeitszeitbuchungen.
 - Pausenstart/Pausenende.
 - Firmen-/Auftragsstart und -ende.
+- Firmensuche mit Vorschlagsliste: ein gewählter Vorschlag wird automatisch in
+  die Firmenauswahl übernommen (ab 0.9.10); zusätzlich löst der Server den
+  Suchtext als Fallback über den Firmennamen auf.
 - Kommentar-/Notizfelder in mobilen Aktionen.
+- Kommentar nachbearbeiten (ab 0.9.10): Nach „Auftrag beenden" bzw.
+  „Arbeitszeit beenden" öffnet sich optional ein Dialog, um den Kommentar der
+  beendeten Buchung anzupassen; zusätzlich gibt es unter den Stempel-Aktionen
+  den Button „Kommentar der letzten Buchung bearbeiten" (Buchungen des
+  aktuellen Tages).
 - Offline erstellte Urlaubsanträge.
 
 ### Lokale Datenhaltung (letzte 6 Monate)

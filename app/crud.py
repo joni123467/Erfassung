@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from typing import Iterable, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import models, schemas
@@ -248,6 +249,29 @@ def get_open_time_entry(db: Session, user_id: int) -> Optional[models.TimeEntry]
         .order_by(models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc())
         .first()
     )
+
+
+def get_last_finished_time_entry(db: Session, user_id: int) -> Optional[models.TimeEntry]:
+    """Most recently finished (closed) booking of the user – the entry a
+    'Kommentar nachträglich bearbeiten' action refers to right after clock-out."""
+    return (
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.user_id == user_id)
+        .filter(models.TimeEntry.is_open.is_(False))
+        .order_by(
+            models.TimeEntry.work_date.desc(),
+            models.TimeEntry.end_time.desc(),
+            models.TimeEntry.id.desc(),
+        )
+        .first()
+    )
+
+
+def update_time_entry_notes(db: Session, entry: models.TimeEntry, notes: str) -> models.TimeEntry:
+    entry.notes = (notes or "")[:255]
+    db.commit()
+    db.refresh(entry)
+    return entry
 
 
 def _normalize_time(moment: datetime) -> datetime:
@@ -669,6 +693,22 @@ def get_companies(db: Session) -> List[models.Company]:
 
 def get_company_by_name(db: Session, name: str) -> Optional[models.Company]:
     return db.query(models.Company).filter(models.Company.name == name).first()
+
+
+def find_company_by_name(db: Session, name: str) -> Optional[models.Company]:
+    """Exact match first, then case-insensitive – used to resolve the free-text
+    company search of the mobile clock-in when no dropdown value was submitted."""
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return None
+    company = get_company_by_name(db, cleaned)
+    if company:
+        return company
+    return (
+        db.query(models.Company)
+        .filter(func.lower(models.Company.name) == cleaned.lower())
+        .first()
+    )
 
 
 def create_company(db: Session, company: schemas.CompanyCreate) -> models.Company:
