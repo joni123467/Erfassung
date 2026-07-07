@@ -1493,6 +1493,12 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     context = _build_dashboard_context(db, user)
+    # Kommentar der zuletzt beendeten Buchung optional nachbearbeiten – nur
+    # anbieten, wenn die Buchung vom heutigen Tag stammt.
+    last_finished_entry = crud.get_last_finished_time_entry(db, user.id)
+    if last_finished_entry and last_finished_entry.work_date != context["today"]:
+        last_finished_entry = None
+    context["last_finished_entry"] = last_finished_entry
     tab_param = request.query_params.get("tab", "buchung").lower()
     if tab_param not in {"buchung", "uebersicht", "salden", "urlaub"}:
         tab_param = "buchung"
@@ -1843,6 +1849,8 @@ def punch_action(
     action: str = Form(...),
     company_id: Optional[str] = Form(None),
     new_company_name: Optional[str] = Form(None),
+    company_name: Optional[str] = Form(None),
+    entry_id: Optional[str] = Form(None),
     notes: str = Form(""),
     next_url: str = Form("/dashboard"),
     client_action_id: Optional[str] = Form(None),
@@ -1926,9 +1934,8 @@ def punch_action(
                         db.rollback()
                         error = "Firma existiert bereits."
         else:
-            if not company_id:
-                error = "Bitte eine Firma auswählen oder neu anlegen."
-            else:
+            company_name_value = (company_name or "").strip()
+            if company_id:
                 try:
                     company_value = int(company_id)
                 except ValueError:
@@ -1937,6 +1944,15 @@ def punch_action(
                     target_company = crud.get_company(db, company_value)
                     if not target_company:
                         error = "Firma wurde nicht gefunden."
+            elif company_name_value:
+                # Fallback: der Client hat nur den Suchtext übermittelt (z. B.
+                # Vorschlag aus der Firmensuche gewählt, ohne das Dropdown zu
+                # berühren). Firma über den Namen auflösen statt abzulehnen.
+                target_company = crud.find_company_by_name(db, company_name_value)
+                if not target_company:
+                    error = "Firma wurde nicht gefunden. Bitte auswählen oder neu anlegen."
+            else:
+                error = "Bitte eine Firma auswählen oder neu anlegen."
         if not error and target_company:
             if active_entry and active_entry.company_id == target_company.id:
                 if client_action_id:
@@ -1991,6 +2007,30 @@ def punch_action(
         else:
             crud.end_break(db, active_entry, now)
             message = "Pause beendet."
+    elif action == "update_notes":
+        # Optionaler Nachbearbeitungsschritt: Kommentar der gerade beendeten
+        # Buchung ändern. Bevorzugt über die explizite entry_id, sonst die
+        # zuletzt beendete Buchung des Benutzers (Offline-Queue wird in
+        # Reihenfolge synchronisiert, daher zeigt "zuletzt beendet" auf die
+        # unmittelbar zuvor abgeschlossene Buchung).
+        target_entry: Optional[models.TimeEntry] = None
+        entry_id_value = (entry_id or "").strip()
+        if entry_id_value:
+            try:
+                parsed_entry_id = int(entry_id_value)
+            except ValueError:
+                parsed_entry_id = None
+            if parsed_entry_id is not None:
+                candidate = crud.get_time_entry(db, parsed_entry_id)
+                if candidate and candidate.user_id == user.id:
+                    target_entry = candidate
+        if target_entry is None:
+            target_entry = crud.get_last_finished_time_entry(db, user.id)
+        if target_entry is None:
+            error = "Keine beendete Buchung zum Bearbeiten gefunden."
+        else:
+            crud.update_time_entry_notes(db, target_entry, notes.strip())
+            message = "Kommentar gespeichert."
     else:
         error = "Unbekannte Aktion."
 

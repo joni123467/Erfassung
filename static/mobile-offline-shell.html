@@ -43,6 +43,8 @@
     data-break-label=""
     data-break-total-label="0:00"
     data-company-name=""
+    data-entry-id=""
+    data-entry-notes=""
   >
     <header class="mobile-dashboard__header">
       <div>
@@ -147,6 +149,17 @@
               <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
             </form>
           </div>
+          <p class="mobile-card__text">
+            <button
+              type="button"
+              class="mobile-link-button"
+              id="mobile-notes-launch"
+              data-open="mobile-notes-modal"
+              data-entry-id=""
+              data-entry-notes=""
+              hidden
+            >Kommentar der letzten Buchung bearbeiten</button>
+          </p>
         </div>
 
         <!-- Company / order modal -->
@@ -189,6 +202,36 @@
                 <button type="submit" class="button modal-action">
                   <span class="modal-action__icon" aria-hidden="true">▶</span>
                   <span>Auftrag starten</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Notes / comment edit modal -->
+        <div class="modal" id="mobile-notes-modal" aria-hidden="true" role="dialog" aria-modal="true">
+          <div class="modal__backdrop" data-close></div>
+          <div class="modal__dialog">
+            <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+            <h3>Kommentar bearbeiten</h3>
+            <p class="modal__hint">Du kannst den Kommentar der beendeten Buchung optional anpassen.</p>
+            <form method="post" action="/punch" class="modal__form" data-offline="punch">
+              <input type="hidden" name="csrf_token" value="">
+              <input type="hidden" name="next_url" value="/mobile">
+              <input type="hidden" name="action" value="update_notes">
+              <input type="hidden" name="entry_id" value="">
+              <label>
+                Kommentar
+                <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
+              </label>
+              <div class="modal__actions modal-action-bar">
+                <button type="button" class="button ghost modal-action" data-close>
+                  <span class="modal-action__icon" aria-hidden="true">✕</span>
+                  <span>Überspringen</span>
+                </button>
+                <button type="submit" class="button modal-action">
+                  <span class="modal-action__icon" aria-hidden="true">✔</span>
+                  <span>Kommentar speichern</span>
                 </button>
               </div>
             </form>

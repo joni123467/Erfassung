@@ -16,6 +16,8 @@
     data-break-label="{{ active_entry.break_started_at.strftime('%H:%M') if active_entry and active_entry.break_started_at else '' }}"
     data-break-total-label="{{ active_entry.total_break_minutes|format_minutes if active_entry else '0:00' }}"
     data-company-name="{{ active_entry.company.name if active_entry and active_entry.company else '' }}"
+    data-entry-id="{{ active_entry.id if active_entry else '' }}"
+    data-entry-notes="{{ active_entry.notes if active_entry and active_entry.notes else '' }}"
 >
     <header class="mobile-dashboard__header">
         <div>
@@ -151,6 +153,17 @@
                         <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
                     </form>
                 </div>
+                <p class="mobile-card__text">
+                    <button
+                        type="button"
+                        class="mobile-link-button"
+                        id="mobile-notes-launch"
+                        data-open="mobile-notes-modal"
+                        data-entry-id="{{ last_finished_entry.id if last_finished_entry else '' }}"
+                        data-entry-notes="{{ last_finished_entry.notes if last_finished_entry and last_finished_entry.notes else '' }}"
+                        {% if not last_finished_entry %}hidden{% endif %}
+                    >Kommentar der letzten Buchung bearbeiten</button>
+                </p>
             </div>
 
             {% if companies or can_create_companies %}
@@ -208,6 +221,35 @@
                     </div>
                 </div>
             {% endif %}
+
+            <div class="modal" id="mobile-notes-modal" aria-hidden="true" role="dialog" aria-modal="true">
+                <div class="modal__backdrop" data-close></div>
+                <div class="modal__dialog">
+                    <button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button>
+                    <h3>Kommentar bearbeiten</h3>
+                    <p class="modal__hint">Du kannst den Kommentar der beendeten Buchung optional anpassen.</p>
+                    <form method="post" action="/punch" class="modal__form" data-offline="punch">
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                        <input type="hidden" name="next_url" value="/mobile">
+                        <input type="hidden" name="action" value="update_notes">
+                        <input type="hidden" name="entry_id" value="">
+                        <label>
+                            Kommentar
+                            <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
+                        </label>
+                        <div class="modal__actions modal-action-bar">
+                            <button type="button" class="button ghost modal-action" data-close>
+                                <span class="modal-action__icon" aria-hidden="true">✕</span>
+                                <span>Überspringen</span>
+                            </button>
+                            <button type="submit" class="button modal-action">
+                                <span class="modal-action__icon" aria-hidden="true">✔</span>
+                                <span>Kommentar speichern</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
 
         </section>
 
@@ -411,6 +453,43 @@
 
         for (var j = 0; j < closers.length; j += 1) {
             closers[j].addEventListener('click', function (event) {
+                event.preventDefault();
+                setVisible(false);
+            });
+        }
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && modal.classList.contains('is-visible')) {
+                setVisible(false);
+            }
+        });
+    }());
+    (function () {
+        var modal = document.getElementById('mobile-notes-modal');
+        var launch = document.getElementById('mobile-notes-launch');
+        if (!modal || !launch) {
+            return;
+        }
+
+        function setVisible(visible) {
+            modal.classList.toggle('is-visible', visible);
+            modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
+            document.body.classList.toggle('modal-open', visible);
+        }
+
+        launch.addEventListener('click', function (event) {
+            event.preventDefault();
+            var idInput = modal.querySelector('input[name="entry_id"]');
+            var textarea = modal.querySelector('textarea[name="notes"]');
+            if (idInput) idInput.value = launch.dataset.entryId || '';
+            if (textarea) textarea.value = launch.dataset.entryNotes || '';
+            setVisible(true);
+            if (textarea && textarea.focus) textarea.focus();
+        });
+
+        var closers = modal.querySelectorAll('[data-close]');
+        for (var k = 0; k < closers.length; k += 1) {
+            closers[k].addEventListener('click', function (event) {
                 event.preventDefault();
                 setVisible(false);
             });
