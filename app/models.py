@@ -45,6 +45,11 @@ class Group(Base):
     can_create_companies = Column(Boolean, default=False)
     can_view_time_reports = Column(Boolean, default=False)
     can_edit_time_entries = Column(Boolean, default=False)
+    can_manage_companies = Column(Boolean, default=False)
+    # Selbstbedienungsrechte: Standard erlaubt (Bestandsverhalten bleibt erhalten)
+    can_manual_time_entries = Column(Boolean, default=True)
+    can_edit_own_notes = Column(Boolean, default=True)
+    can_request_vacations = Column(Boolean, default=True)
 
     users = relationship("User", back_populates="group")
 

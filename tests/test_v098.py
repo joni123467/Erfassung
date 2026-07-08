@@ -70,8 +70,8 @@ def login(client):
 # --- version ---------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.10"
-    assert client.get("/health").json()["version"] == "0.9.10"
+    assert client.main.APP_VERSION == "0.9.11"
+    assert client.get("/health").json()["version"] == "0.9.11"
 
 
 # --- navigation: TimeMoto removed, Terminals added -------------------------

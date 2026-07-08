@@ -9,7 +9,7 @@
         <a href="/admin/groups/new" class="button">Neue Gruppe anlegen</a>
     </div>
     <div class="table-scroll">
-        <table class="striped-table">
+        <table class="striped-table permission-overview">
             <thead>
             <tr>
                 <th>Name</th>
@@ -24,16 +24,28 @@
                     <td>{{ group.name }}</td>
                     <td>
                         {% if group.is_admin %}
-                            Administrator (alle Rechte)
+                            <span class="permission-badge permission-badge--admin">Administrator – alle Rechte</span>
                         {% else %}
-                            {% set perms = namespace(items=[]) %}
-                            {% if group.can_manage_users %}{% set _ = perms.items.append('Benutzerverwaltung') %}{% endif %}
-                            {% if group.can_manage_vacations %}{% set _ = perms.items.append('Urlaubsverwaltung') %}{% endif %}
-                            {% if group.can_approve_manual_entries %}{% set _ = perms.items.append('Manuelle Buchungen') %}{% endif %}
-                            {% if group.can_create_companies %}{% set _ = perms.items.append('Firmen anlegen') %}{% endif %}
-                            {% if group.can_view_time_reports %}{% set _ = perms.items.append('Zeitübersichten einsehen') %}{% endif %}
-                            {% if group.can_edit_time_entries %}{% set _ = perms.items.append('Zeitbuchungen bearbeiten') %}{% endif %}
-                            {{ perms.items|join(', ') if perms.items else 'Keine zusätzlichen Rechte' }}
+                            {% set found = namespace(any=false) %}
+                            <div class="permission-badges">
+                                {% for category in permission_categories %}
+                                    {% set granted = [] %}
+                                    {% for permission in category.permissions %}
+                                        {% if group|attr(permission.key) %}
+                                            {% set _ = granted.append(permission.label) %}
+                                        {% endif %}
+                                    {% endfor %}
+                                    {% if granted %}
+                                        {% set found.any = true %}
+                                        <span class="permission-badge" title="{{ granted|join(', ') }}">
+                                            {{ category.label }}: {{ granted|length }}/{{ category.permissions|length }}
+                                        </span>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                            {% if not found.any %}
+                                <span class="permission-badge permission-badge--none">Keine Berechtigungen</span>
+                            {% endif %}
                         {% endif %}
                     </td>
                     <td>{{ group.users|length }}</td>
@@ -47,5 +59,6 @@
             </tbody>
         </table>
     </div>
+    <p class="form-hint">Die Zahl je Kategorie zeigt vergebene/verfügbare Rechte; Details per Mouseover oder über „Bearbeiten".</p>
 </section>
 {% endblock %}

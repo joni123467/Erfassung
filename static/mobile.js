@@ -24,6 +24,8 @@ let workDurationTimerId = null;
 let modalController = null;
 let syncInFlight = false;
 let initialServerState = null;
+// Gruppenberechtigungen aus dem Server-Snapshot (null = unbekannt → erlauben).
+let mobilePermissions = null;
 
 function setElementHidden(element, hidden) {
   if (!element) return;
@@ -665,6 +667,38 @@ async function checkServerReachability(force = false) {
   }
 }
 
+// Blendet Aktionen aus, die die Gruppe des Benutzers nicht erlaubt. Wird aus
+// dem Sync-Snapshot gespeist, damit auch die statische Offline-Shell die
+// Rechte kennt. Ohne Snapshot (perms = null) bleibt alles sichtbar; der Server
+// lehnt nicht erlaubte Aktionen ohnehin ab.
+function applyMobilePermissions(perms) {
+  if (!perms || typeof perms !== 'object') return;
+  mobilePermissions = perms;
+
+  if (perms.edit_own_notes === false) {
+    const launch = document.getElementById('mobile-notes-launch');
+    if (launch) setElementHidden(launch, true);
+  }
+
+  if (perms.create_companies === false) {
+    document.querySelectorAll('input[name="new_company_name"]').forEach((input) => {
+      const label = input.closest('label');
+      setElementHidden(label || input, true);
+    });
+  }
+
+  if (perms.request_vacations === false) {
+    document.querySelectorAll('form[data-offline="vacation"]').forEach((form) => setElementHidden(form, true));
+    const denied = document.querySelector('[data-permission="request-vacations-denied"]');
+    if (denied) setElementHidden(denied, false);
+  }
+}
+
+async function hydratePermissionsFromCache() {
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  applyMobilePermissions(snapshot?.data?.permissions || null);
+}
+
 async function hydrateCompaniesFromCache() {
   const snapshot = await getRecord(DATA_STORE, 'snapshot');
   const companies = snapshot?.data?.companies;
@@ -732,6 +766,7 @@ async function syncServerData() {
     updateLocalDataBadge(true);
     updateLastSyncLabel(nowIso);
     await hydrateCompaniesFromCache();
+    applyMobilePermissions(payload.permissions || null);
     return true;
   } catch (error) {
     const msg = `Sync fehlgeschlagen: ${error?.message || 'Netzwerkfehler'}. Bitte erneut versuchen.`;
@@ -925,7 +960,11 @@ async function processPunchSubmission(form, payload) {
   // Nach dem Beenden optional den Kommentar der beendeten Buchung anbieten –
   // Zustand VOR dem Anwenden der Aktion festhalten.
   let notesFollowUp = null;
-  if ((payload.action === 'end_work' || payload.action === 'end_company') && mobileState?.isWorking) {
+  if (
+    (payload.action === 'end_work' || payload.action === 'end_company')
+    && mobileState?.isWorking
+    && mobilePermissions?.edit_own_notes !== false
+  ) {
     notesFollowUp = { entryId: mobileState.entryId || '', notes: mobileState.notes || '' };
   }
 
@@ -1090,6 +1129,7 @@ function openNotesModal(entryId, notes) {
 // Hält den "Kommentar bearbeiten"-Button unter den Stempel-Aktionen aktuell,
 // damit der Kommentar auch nach dem Schließen des Dialogs erreichbar bleibt.
 function updateNotesLaunchButton(entryId, notes) {
+  if (mobilePermissions?.edit_own_notes === false) return;
   const button = document.getElementById('mobile-notes-launch');
   if (!button) return;
   button.dataset.entryId = entryId ? String(entryId) : '';
@@ -1677,6 +1717,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   await initializeSyncMeta();
   await initSettingsTab();
   await hydrateCompaniesFromCache();
+  await hydratePermissionsFromCache();
   await recomputeEffectiveState();
   // Render from whatever data is already in IndexedDB (possibly from a previous session)
   renderOverview().catch(() => {});

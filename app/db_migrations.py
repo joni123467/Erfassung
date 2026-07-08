@@ -202,6 +202,31 @@ def _migrate_legacy_timemoto_config(engine: Engine) -> None:
         LOGGER.info("Legacy-TimeMoto-Konfiguration in Terminalverwaltung übernommen")
 
 
+def _add_group_permission_overhaul(engine: Engine) -> None:
+    """Neue Gruppenberechtigungen (§0.9.11).
+
+    Selbstbedienungsrechte (manuelle Buchungen, eigene Kommentare bearbeiten,
+    Urlaubsanträge stellen) erhalten Default 1, damit sich das Verhalten für
+    Bestandsgruppen nicht ändert. ``can_manage_companies`` startet mit 0 und
+    wird für Administratorgruppen auf 1 gesetzt (Bestandsverhalten: Firmen-
+    verwaltung war Admin-only).
+    """
+
+    if db_schema.add_column(
+        engine, "groups", "can_manage_companies", "BOOLEAN", default="0", backfill_null_to="0"
+    ):
+        with engine.begin() as connection:
+            from sqlalchemy import text
+
+            connection.execute(
+                text("UPDATE groups SET can_manage_companies = 1 WHERE is_admin = 1")
+            )
+    for column_name in ("can_manual_time_entries", "can_edit_own_notes", "can_request_vacations"):
+        db_schema.add_column(
+            engine, "groups", column_name, "BOOLEAN", default="1", backfill_null_to="1"
+        )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -212,6 +237,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (7, _add_restore_history_table),
     (8, _add_restore_run_details),
     (9, _add_terminal_tables),
+    (10, _add_group_permission_overhaul),
 ]
 
 
