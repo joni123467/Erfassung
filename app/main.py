@@ -42,6 +42,7 @@ from . import (
     logging_setup,
     models,
     paths,
+    permissions as group_permissions,
     restore_jobs,
     restore_manager,
     schemas,
@@ -447,6 +448,23 @@ def ensure_schema() -> None:
                 connection.execute(
                     text("UPDATE groups SET can_edit_time_entries = 1 WHERE is_admin = 1")
                 )
+            if "can_manage_companies" not in columns:
+                connection.execute(
+                    text("ALTER TABLE groups ADD COLUMN can_manage_companies BOOLEAN DEFAULT 0")
+                )
+                connection.execute(
+                    text("UPDATE groups SET can_manage_companies = 1 WHERE is_admin = 1")
+                )
+            # Selbstbedienungsrechte: Standard 1, damit sich das Verhalten für
+            # Bestandsgruppen nicht ändert.
+            for column_name in ("can_manual_time_entries", "can_edit_own_notes", "can_request_vacations"):
+                if column_name not in columns:
+                    connection.execute(
+                        text(f"ALTER TABLE groups ADD COLUMN {column_name} BOOLEAN DEFAULT 1")
+                    )
+                    connection.execute(
+                        text(f"UPDATE groups SET {column_name} = 1 WHERE {column_name} IS NULL")
+                    )
         if "holidays" in table_names:
             index_rows = connection.execute(text("PRAGMA index_list('holidays')")).fetchall()
             legacy_unique_index = None
@@ -917,12 +935,7 @@ def _seed_default_records() -> None:
                 schemas.GroupCreate(
                     name="Administration",
                     is_admin=True,
-                    can_manage_users=True,
-                    can_manage_vacations=True,
-                    can_approve_manual_entries=True,
-                    can_create_companies=True,
-                    can_view_time_reports=True,
-                    can_edit_time_entries=True,
+                    **group_permissions.grant_all(),
                 ),
             )
         else:
@@ -932,12 +945,8 @@ def _seed_default_records() -> None:
                 .first()
             )
             if admin_group:
-                admin_group.can_manage_users = True
-                admin_group.can_manage_vacations = True
-                admin_group.can_approve_manual_entries = True
-                admin_group.can_create_companies = True
-                admin_group.can_view_time_reports = True
-                admin_group.can_edit_time_entries = True
+                for permission_key in group_permissions.PERMISSION_KEYS:
+                    setattr(admin_group, permission_key, True)
                 db.commit()
         companies = crud.get_companies(db)
         if not companies:
@@ -1433,6 +1442,9 @@ def _build_dashboard_context(db: Session, user: models.User):
         "active_entry": active_entry,
         "metrics_month": reference_month.replace(day=1),
         "can_create_companies": _can_create_companies(user),
+        "can_submit_manual_entries": _can_submit_manual_entries(user),
+        "can_edit_own_notes": _can_edit_own_notes(user),
+        "can_request_vacations": _can_request_vacations(user),
         "vacations": vacations,
         "pending_vacations": sum(
             1
@@ -1494,10 +1506,13 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     context = _build_dashboard_context(db, user)
     # Kommentar der zuletzt beendeten Buchung optional nachbearbeiten – nur
-    # anbieten, wenn die Buchung vom heutigen Tag stammt.
-    last_finished_entry = crud.get_last_finished_time_entry(db, user.id)
-    if last_finished_entry and last_finished_entry.work_date != context["today"]:
-        last_finished_entry = None
+    # anbieten, wenn die Buchung vom heutigen Tag stammt und die Gruppe das
+    # nachträgliche Bearbeiten erlaubt.
+    last_finished_entry = None
+    if _can_edit_own_notes(user):
+        last_finished_entry = crud.get_last_finished_time_entry(db, user.id)
+        if last_finished_entry and last_finished_entry.work_date != context["today"]:
+            last_finished_entry = None
     context["last_finished_entry"] = last_finished_entry
     tab_param = request.query_params.get("tab", "buchung").lower()
     if tab_param not in {"buchung", "uebersicht", "salden", "urlaub"}:
@@ -1593,6 +1608,11 @@ def submit_time_entry(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_submit_manual_entries(user):
+        redirect = _build_redirect(
+            _sanitize_next(next_url), error="Du darfst keine manuellen Zeitbuchungen nachtragen."
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if break_minutes < 0:
         break_minutes = 0
     if end_time <= start_time:
@@ -1741,6 +1761,14 @@ def mobile_sync_data(
         "entries": [_serialize_mobile_entry(entry) for entry in entries],
         "vacations": [_serialize_mobile_vacation(vacation) for vacation in vacations],
         "active_entry": _serialize_mobile_entry(active_entry) if active_entry else None,
+        # Berechtigungen für die mobile App / Offline-Shell, damit die UI
+        # nicht erlaubte Aktionen gar nicht erst anbietet.
+        "permissions": {
+            "create_companies": _can_create_companies(user),
+            "manual_time_entries": _can_submit_manual_entries(user),
+            "edit_own_notes": _can_edit_own_notes(user),
+            "request_vacations": _can_request_vacations(user),
+        },
         "metrics": {
             "worked_minutes": metrics.total_work_minutes + metrics.vacation_minutes,
             "target_minutes": metrics.target_minutes,
@@ -2014,6 +2042,9 @@ def punch_action(
         # Reihenfolge synchronisiert, daher zeigt "zuletzt beendet" auf die
         # unmittelbar zuvor abgeschlossene Buchung).
         target_entry: Optional[models.TimeEntry] = None
+        if not _can_edit_own_notes(user):
+            error = "Du darfst Kommentare nicht nachträglich bearbeiten."
+            return _sync_result(request, target=target, error=error)
         entry_id_value = (entry_id or "").strip()
         if entry_id_value:
             try:
@@ -2096,6 +2127,12 @@ def submit_vacation(
                 message="Aktion bereits synchronisiert",
                 duplicate=True,
             )
+    if not _can_request_vacations(user):
+        return _sync_result(
+            request,
+            target=vac_target,
+            error="Du darfst keine Urlaubsanträge stellen.",
+        )
     if end_date < start_date:
         return _sync_result(
             request,
@@ -2280,6 +2317,7 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
             "vacations": vacations,
             "vacation_summary": vacation_summary,
             "pending_vacations": pending_vacations,
+            "can_request_vacations": _can_request_vacations(user),
         },
     )
 
@@ -2412,11 +2450,41 @@ def _can_edit_time_entries(user: models.User) -> bool:
     return _has_group_permission(user, "can_edit_time_entries")
 
 
+def _can_manage_companies(user: models.User) -> bool:
+    return _has_group_permission(user, "can_manage_companies")
+
+
+def _has_self_service_permission(user: models.User, attribute: str) -> bool:
+    """Selbstbedienungsrechte (eigene Buchungen/Anträge): Standard erlaubt.
+
+    Benutzer ohne Gruppe behalten diese Rechte – so bleibt das Verhalten
+    bestehender Installationen erhalten; entzogen wird ein Recht nur explizit
+    über die Gruppe.
+    """
+    if _ensure_admin(user):
+        return True
+    if not user.group:
+        return True
+    return bool(getattr(user.group, attribute, True))
+
+
+def _can_submit_manual_entries(user: models.User) -> bool:
+    return _has_self_service_permission(user, "can_manual_time_entries")
+
+
+def _can_edit_own_notes(user: models.User) -> bool:
+    return _has_self_service_permission(user, "can_edit_own_notes")
+
+
+def _can_request_vacations(user: models.User) -> bool:
+    return _has_self_service_permission(user, "can_request_vacations")
+
+
 def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
     permissions = {
         "users": _can_manage_users(user),
         "groups": _ensure_admin(user),
-        "companies": _ensure_admin(user),
+        "companies": _can_manage_companies(user),
         "holidays": _ensure_admin(user),
         "approvals_manual": _can_approve_manual_entries(user),
         "approvals_vacations": _can_manage_vacations(user),
@@ -2556,6 +2624,7 @@ def admin_groups_list(request: Request, db: Session = Depends(database.get_db)):
         message=message,
         error=error,
         groups=groups,
+        permission_categories=group_permissions.CATEGORIES,
     )
 
 
@@ -2575,6 +2644,7 @@ def admin_groups_new(request: Request, db: Session = Depends(database.get_db)):
         message=message,
         error=error,
         group=None,
+        permission_categories=group_permissions.CATEGORIES,
     )
 
 
@@ -2600,6 +2670,7 @@ def admin_groups_edit(request: Request, group_id: int, db: Session = Depends(dat
         message=message,
         error=error,
         group=group,
+        permission_categories=group_permissions.CATEGORIES,
     )
 
 
@@ -2608,7 +2679,7 @@ def admin_companies_page(request: Request, db: Session = Depends(database.get_db
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_companies(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
@@ -2628,7 +2699,7 @@ def admin_companies_new(request: Request, db: Session = Depends(database.get_db)
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_companies(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
@@ -2647,7 +2718,7 @@ def admin_companies_edit(request: Request, company_id: int, db: Session = Depend
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_companies(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     company = crud.get_company(db, company_id)
     if not company:
@@ -3029,50 +3100,38 @@ def admin_time_reports_excel(request: Request, db: Session = Depends(database.ge
     )
 
 
+async def _read_group_form(request: Request) -> tuple[str, schemas.GroupCreate]:
+    """Liest Gruppenname + alle Berechtigungen aus dem Formular.
+
+    Die Berechtigungen kommen zentral aus ``permissions.CATEGORIES`` – neue
+    Rechte brauchen hier keine Code-Änderung. Administratorgruppen erhalten
+    automatisch alle Rechte.
+    """
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    is_admin_value = form.get("is_admin") == "on"
+    values = group_permissions.parse_form_values(form)
+    if is_admin_value:
+        values = group_permissions.grant_all()
+    return name, schemas.GroupCreate(name=name, is_admin=is_admin_value, **values)
+
+
 @app.post("/admin/groups/create")
-def create_group_html(
+async def create_group_html(
     request: Request,
-    name: str = Form(...),
-    is_admin: Optional[str] = Form(None),
-    can_manage_users: Optional[str] = Form(None),
-    can_manage_vacations: Optional[str] = Form(None),
-    can_approve_manual_entries: Optional[str] = Form(None),
-    can_create_companies: Optional[str] = Form(None),
-    can_view_time_reports: Optional[str] = Form(None),
-    can_edit_time_entries: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    is_admin_value = is_admin == "on"
-    manage_users_value = can_manage_users == "on"
-    manage_vacations_value = can_manage_vacations == "on"
-    approve_manual_value = can_approve_manual_entries == "on"
-    create_companies_value = can_create_companies == "on"
-    view_time_reports_value = can_view_time_reports == "on"
-    edit_time_entries_value = can_edit_time_entries == "on"
-    if is_admin_value:
-        manage_users_value = True
-        manage_vacations_value = True
-        approve_manual_value = True
-        create_companies_value = True
-        view_time_reports_value = True
-        edit_time_entries_value = True
-    try:
-        crud.create_group(
-            db,
-            schemas.GroupCreate(
-                name=name,
-                is_admin=is_admin_value,
-                can_manage_users=manage_users_value,
-                can_manage_vacations=manage_vacations_value,
-                can_approve_manual_entries=approve_manual_value,
-                can_create_companies=create_companies_value,
-                can_view_time_reports=view_time_reports_value,
-                can_edit_time_entries=edit_time_entries_value,
-            ),
+    name, payload = await _read_group_form(request)
+    if not name:
+        return RedirectResponse(
+            url="/admin/groups/new?error=Bitte+einen+Gruppennamen+angeben",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
+    try:
+        crud.create_group(db, payload)
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
@@ -3084,51 +3143,22 @@ def create_group_html(
 
 
 @app.post("/admin/groups/{group_id}/update")
-def update_group_html(
+async def update_group_html(
     request: Request,
     group_id: int,
-    name: str = Form(...),
-    is_admin: Optional[str] = Form(None),
-    can_manage_users: Optional[str] = Form(None),
-    can_manage_vacations: Optional[str] = Form(None),
-    can_approve_manual_entries: Optional[str] = Form(None),
-    can_create_companies: Optional[str] = Form(None),
-    can_view_time_reports: Optional[str] = Form(None),
-    can_edit_time_entries: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
     if not user or not _ensure_admin(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    is_admin_value = is_admin == "on"
-    manage_users_value = can_manage_users == "on"
-    manage_vacations_value = can_manage_vacations == "on"
-    approve_manual_value = can_approve_manual_entries == "on"
-    create_companies_value = can_create_companies == "on"
-    view_time_reports_value = can_view_time_reports == "on"
-    edit_time_entries_value = can_edit_time_entries == "on"
-    if is_admin_value:
-        manage_users_value = True
-        manage_vacations_value = True
-        approve_manual_value = True
-        create_companies_value = True
-        view_time_reports_value = True
-        edit_time_entries_value = True
-    try:
-        updated = crud.update_group(
-            db,
-            group_id,
-            schemas.GroupCreate(
-                name=name,
-                is_admin=is_admin_value,
-                can_manage_users=manage_users_value,
-                can_manage_vacations=manage_vacations_value,
-                can_approve_manual_entries=approve_manual_value,
-                can_create_companies=create_companies_value,
-                can_view_time_reports=view_time_reports_value,
-                can_edit_time_entries=edit_time_entries_value,
-            ),
+    name, payload = await _read_group_form(request)
+    if not name:
+        return RedirectResponse(
+            url=f"/admin/groups/{group_id}?error=Bitte+einen+Gruppennamen+angeben",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
+    try:
+        updated = crud.update_group(db, group_id, payload)
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
@@ -3350,7 +3380,7 @@ def create_company_html(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_companies(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     try:
         crud.create_company(
@@ -3377,7 +3407,7 @@ def update_company_html(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_companies(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     try:
         updated = crud.update_company(
@@ -3404,7 +3434,7 @@ def delete_company_html(request: Request, company_id: int, db: Session = Depends
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_companies(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_company(db, company_id):
         return RedirectResponse(

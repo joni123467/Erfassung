@@ -3683,3 +3683,109 @@ tr.company-deleted td {
     font-weight: 600;
     margin-top: 0.5rem;
 }
+
+/* ── Gruppenberechtigungen (Matrix-Ansicht) ─────────────────────────── */
+
+.permission-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.permission-form__name {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-weight: 600;
+    max-width: 28rem;
+}
+
+.permission-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    padding: 0.9rem 1rem 0.6rem;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.permission-section legend {
+    font-weight: 700;
+    padding: 0 0.35rem;
+}
+
+.permission-section--admin {
+    border-color: var(--brand);
+    background: var(--accent-soft);
+}
+
+.permission-section__hint {
+    margin: 0 0 0.35rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.permission-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.55rem 0.25rem;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+}
+
+.permission-row:first-of-type {
+    border-top: none;
+}
+
+.permission-row input[type="checkbox"] {
+    margin-top: 0.2rem;
+    width: 1.05rem;
+    height: 1.05rem;
+    flex-shrink: 0;
+    accent-color: var(--brand);
+}
+
+.permission-row input[type="checkbox"]:disabled + .permission-row__text {
+    opacity: 0.65;
+}
+
+.permission-row__text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+
+.permission-row__text small {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.35;
+}
+
+.permission-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+
+.permission-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: var(--radius-xs);
+    background: var(--info-soft);
+    color: var(--info);
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.permission-badge--admin {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.permission-badge--none {
+    background: var(--neutral-soft);
+    color: var(--text-muted);
+}

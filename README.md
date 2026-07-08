@@ -2,7 +2,13 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.10`
+**Version:** `0.9.11`
+
+> Seit 0.9.11: **Überarbeitete Gruppenberechtigungen** – kategorisierte
+> Berechtigungsmatrix in der Gruppenverwaltung mit neuen Rechten für
+> Selbstbedienung (manuelle Buchungen, Kommentare nachträglich bearbeiten,
+> Urlaubsanträge stellen) und Firmenverwaltung. Details unter
+> [„Gruppen & Berechtigungen"](#gruppen--berechtigungen).
 
 > Seit 0.9.10: **Mobile Stempel-Fixes & Kommentar-Nachbearbeitung** – die
 > Firmensuche der mobilen App übernimmt gewählte Vorschläge zuverlässig in die
@@ -47,13 +53,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.10 .
+docker build -t erfassung:0.9.11 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.10
+  erfassung:0.9.11
 ```
 
 ## GHCR & GitHub Actions
@@ -63,20 +69,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.10`)
+- Push von Tags `v*` (z. B. `v0.9.11`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.10`)
+- Versions-Tag aus `VERSION` (hier `0.9.11`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.10`)
+- Git-Tag (`v0.9.11`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.10`
+`ghcr.io/OWNER/erfassung:0.9.11`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -89,7 +95,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.10
+    image: ghcr.io/OWNER/erfassung:0.9.11
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -189,6 +195,36 @@ Anmeldung verlangt (`--no-force-change` deaktiviert das).
 - Alle Befehle geben bei Fehlern (unbekannter Benutzer, doppelter Benutzername/E-Mail,
   zu schwaches Passwort) eine verständliche Meldung und den Exit-Code `1` zurück.
 
+## Gruppen & Berechtigungen
+
+Berechtigungen werden über Gruppen vergeben (**Administration → Benutzer →
+Gruppen**). Seit 0.9.11 sind sie – wie in bekannten Rollen-/Rechteverwaltungen –
+in Kategorien gegliedert und im Gruppenformular als Berechtigungsmatrix mit
+Beschreibung je Recht dargestellt:
+
+| Kategorie | Berechtigung | Standard |
+|-----------|--------------|----------|
+| Eigene Zeiterfassung | Manuelle Zeitbuchungen nachtragen | ✅ erlaubt |
+| Eigene Zeiterfassung | Eigene Kommentare nachträglich bearbeiten | ✅ erlaubt |
+| Eigene Zeiterfassung | Urlaubsanträge stellen | ✅ erlaubt |
+| Aufträge & Firmen | Firmen beim Stempeln anlegen | ❌ |
+| Aufträge & Firmen | Firmen verwalten (Administration) | ❌ |
+| Team & Freigaben | Manuelle Buchungen freigeben | ❌ |
+| Team & Freigaben | Urlaubsanträge verwalten | ❌ |
+| Team & Freigaben | Team-Zeitübersichten einsehen | ❌ |
+| Team & Freigaben | Zeitbuchungen aller Benutzer bearbeiten | ❌ |
+| Verwaltung | Benutzer verwalten | ❌ |
+
+- **Administratorrechte** umfassen automatisch alle Berechtigungen (inklusive
+  System, Backups, Terminals und Gruppenverwaltung); die Einzelrechte sind im
+  Formular dann gesperrt sichtbar.
+- **Selbstbedienungsrechte** (Kategorie „Eigene Zeiterfassung") sind
+  standardmäßig aktiv; Benutzer ohne Gruppe behalten sie. Entzogene Rechte
+  blenden die zugehörigen Funktionen in Web und mobiler App aus und werden
+  serverseitig durchgesetzt (auch für Offline-Aktionen).
+- Die Gruppenübersicht zeigt vergebene Rechte kompakt je Kategorie
+  (z. B. „Team & Freigaben: 2/4").
+
 ## Datenbank (SQLite, MySQL, MariaDB, PostgreSQL)
 
 Standard ist SQLite. Unterstützt werden außerdem **MySQL 8+, MariaDB 10.6+ und
@@ -255,7 +291,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.10
+    image: ghcr.io/OWNER/erfassung:0.9.11
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -290,7 +326,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.10
+    image: ghcr.io/OWNER/erfassung:0.9.11
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -326,7 +362,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.10
+    image: ghcr.io/OWNER/erfassung:0.9.11
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -362,7 +398,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.10
+    image: ghcr.io/OWNER/erfassung:0.9.11
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -446,8 +482,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.10`)
-- optional Image-Name/Tag (`erfassung`, `0.9.10`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.11`)
+- optional Image-Name/Tag (`erfassung`, `0.9.11`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

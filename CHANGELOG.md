@@ -5,6 +5,48 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.11] – 2026-07-08
+
+### Changed – Gruppenberechtigungen überarbeitet
+
+- **Kategorisierte Berechtigungsmatrix**: Das Gruppenformular zeigt alle
+  Berechtigungen – angelehnt an bekannte Rollen-/Rechteverwaltungen – nach
+  Kategorien gegliedert (Eigene Zeiterfassung, Aufträge & Firmen, Team &
+  Freigaben, Verwaltung) mit Titel und Beschreibung je Recht.
+  Administratorrechte umfassen automatisch alle Rechte; die Einzelrechte
+  werden dann gesperrt (aber sichtbar) dargestellt.
+- **Zentrales Berechtigungs-Register** (`app/permissions.py`): Formular,
+  Formular-Parsing und Gruppenübersicht speisen sich aus einer Quelle –
+  neue Rechte erfordern keine UI-Änderung mehr.
+- **Gruppenübersicht**: zeigt vergebene Rechte kompakt als Badges je
+  Kategorie (z. B. „Team & Freigaben: 2/4", Details per Tooltip).
+
+### Added – Neue Berechtigungen
+
+- **Eigene Kommentare nachträglich bearbeiten** (`can_edit_own_notes`,
+  Standard: erlaubt): steuert die Kommentar-Nachbearbeitung nach dem
+  Beenden (mobil und Web). Ohne das Recht verschwinden Dialog und Button,
+  und `/punch update_notes` wird serverseitig abgelehnt (auch für
+  Offline-Aktionen).
+- **Manuelle Zeitbuchungen nachtragen** (`can_manual_time_entries`,
+  Standard: erlaubt): steuert das Formular „Manuelle Buchung" und
+  `POST /time`.
+- **Urlaubsanträge stellen** (`can_request_vacations`, Standard: erlaubt):
+  steuert die Antragsformulare (Web und mobil) und `POST /vacations`.
+- **Firmen verwalten** (`can_manage_companies`, Standard: nur Admin):
+  Zugriff auf Administration → Firmen ist jetzt delegierbar und nicht mehr
+  ausschließlich Administratoren vorbehalten.
+- Die mobile App/Offline-Shell erhält die Rechte über `/mobile/sync-data`
+  (`permissions`) und blendet nicht erlaubte Aktionen aus.
+
+### Datenbank
+
+- Neue Spalten in `groups`: `can_manage_companies` (Default 0, für
+  Admin-Gruppen 1), `can_manual_time_entries`, `can_edit_own_notes`,
+  `can_request_vacations` (jeweils Default 1 – Bestandsverhalten bleibt
+  erhalten). Migration 10 (`schema_migrations`) bzw. `ensure_schema()`
+  ergänzen die Spalten idempotent und datenerhaltend.
+
 ## [0.9.10] – 2026-07-07
 
 ### Fixed – Mobiles Stempeln nach Firmensuche

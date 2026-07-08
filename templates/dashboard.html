@@ -380,6 +380,7 @@
     </aside>
 </section>
 
+{% if can_submit_manual_entries %}
 <section class="card">
     <h2>Manuelle Buchung</h2>
     <form method="post" action="/time" class="form-grid">
@@ -437,6 +438,13 @@
     {% endif %}
     <p><a class="button" href="/records">Zu meinen Buchungen wechseln</a></p>
 </section>
+{% else %}
+<section class="card">
+    <h2>Manuelle Buchung</h2>
+    <p class="form-hint">Deine Gruppe darf keine manuellen Zeitbuchungen nachtragen.</p>
+    <p><a class="button" href="/records">Zu meinen Buchungen wechseln</a></p>
+</section>
+{% endif %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const modal = document.getElementById('order-modal');

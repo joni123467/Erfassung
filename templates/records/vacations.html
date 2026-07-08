@@ -40,6 +40,7 @@
     </p>
 </section>
 
+{% if can_request_vacations %}
 <section class="card records-table">
     <div class="card-header">
         <h2>Urlaubsantrag stellen</h2>
@@ -69,6 +70,14 @@
         </div>
     </form>
 </section>
+{% else %}
+<section class="card records-table">
+    <div class="card-header">
+        <h2>Urlaubsantrag stellen</h2>
+    </div>
+    <p class="form-hint">Deine Gruppe darf keine Urlaubsanträge stellen. Wende dich an die Verwaltung.</p>
+</section>
+{% endif %}
 
 <section class="card records-table">
     <div class="card-header">

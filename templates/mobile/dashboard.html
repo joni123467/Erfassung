@@ -153,17 +153,19 @@
                         <button type="submit" class="mobile-button danger" data-toggle-disabled="true">Arbeitszeit beenden</button>
                     </form>
                 </div>
-                <p class="mobile-card__text">
-                    <button
-                        type="button"
-                        class="mobile-link-button"
-                        id="mobile-notes-launch"
-                        data-open="mobile-notes-modal"
-                        data-entry-id="{{ last_finished_entry.id if last_finished_entry else '' }}"
-                        data-entry-notes="{{ last_finished_entry.notes if last_finished_entry and last_finished_entry.notes else '' }}"
-                        {% if not last_finished_entry %}hidden{% endif %}
-                    >Kommentar der letzten Buchung bearbeiten</button>
-                </p>
+                {% if can_edit_own_notes %}
+                    <p class="mobile-card__text">
+                        <button
+                            type="button"
+                            class="mobile-link-button"
+                            id="mobile-notes-launch"
+                            data-open="mobile-notes-modal"
+                            data-entry-id="{{ last_finished_entry.id if last_finished_entry else '' }}"
+                            data-entry-notes="{{ last_finished_entry.notes if last_finished_entry and last_finished_entry.notes else '' }}"
+                            {% if not last_finished_entry %}hidden{% endif %}
+                        >Kommentar der letzten Buchung bearbeiten</button>
+                    </p>
+                {% endif %}
             </div>
 
             {% if companies or can_create_companies %}
@@ -222,6 +224,7 @@
                 </div>
             {% endif %}
 
+            {% if can_edit_own_notes %}
             <div class="modal" id="mobile-notes-modal" aria-hidden="true" role="dialog" aria-modal="true">
                 <div class="modal__backdrop" data-close></div>
                 <div class="modal__dialog">
@@ -250,6 +253,7 @@
                     </form>
                 </div>
             </div>
+            {% endif %}
 
         </section>
 
@@ -311,7 +315,10 @@
         <section class="mobile-panel {% if tab == 'urlaub' %}is-active{% endif %}" id="mobile-panel-urlaub" data-tab-panel="urlaub" role="tabpanel" aria-labelledby="mobile-tab-urlaub" {% if tab != 'urlaub' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Urlaub beantragen</h2>
-                <form method="post" action="/vacations" class="mobile-form" data-offline="vacation">
+                {% if not can_request_vacations %}
+                    <p class="mobile-card__text" data-permission="request-vacations-denied">Deine Gruppe darf keine Urlaubsanträge stellen. Wende dich an die Verwaltung.</p>
+                {% else %}
+                <form method="post" action="/vacations" class="mobile-form" data-offline="vacation" data-permission="request-vacations">
                     <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                     <label>
                         Startdatum
@@ -335,6 +342,7 @@
                         <button type="submit" class="mobile-button primary">Urlaubsantrag senden</button>
                     </div>
                 </form>
+                {% endif %}
                 {% if pending_vacations %}
                     <p class="mobile-card__hint">{{ pending_vacations }} offene Urlaubsanträge warten auf Freigabe.</p>
                 {% endif %}
