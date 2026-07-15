@@ -227,6 +227,25 @@ def _add_group_permission_overhaul(engine: Engine) -> None:
         )
 
 
+def _add_group_permission_scopes(engine: Engine) -> None:
+    """Geltungsbereich der Team-Rechte (§0.9.12).
+
+    ``'group'`` beschränkt ein Recht auf Benutzer der eigenen Gruppe (Team),
+    ``'all'`` gilt für alle Benutzer. Default 'all' erhält das
+    Bestandsverhalten (Rechte galten bisher immer für alle Benutzer).
+    """
+
+    for column_name in (
+        "can_manage_vacations_scope",
+        "can_approve_manual_entries_scope",
+        "can_view_time_reports_scope",
+        "can_edit_time_entries_scope",
+    ):
+        db_schema.add_column(
+            engine, "groups", column_name, "VARCHAR(10)", default="'all'", backfill_null_to="'all'"
+        )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -238,6 +257,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (8, _add_restore_run_details),
     (9, _add_terminal_tables),
     (10, _add_group_permission_overhaul),
+    (11, _add_group_permission_scopes),
 ]
 
 

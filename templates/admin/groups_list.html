@@ -32,7 +32,11 @@
                                     {% set granted = [] %}
                                     {% for permission in category.permissions %}
                                         {% if group|attr(permission.key) %}
-                                            {% set _ = granted.append(permission.label) %}
+                                            {% if permission.scoped and (group|attr(permission.scope_key)) == 'group' %}
+                                                {% set _ = granted.append(permission.label ~ ' (eigenes Team)') %}
+                                            {% else %}
+                                                {% set _ = granted.append(permission.label) %}
+                                            {% endif %}
                                         {% endif %}
                                     {% endfor %}
                                     {% if granted %}

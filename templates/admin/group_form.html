@@ -33,22 +33,41 @@
                 <legend>{{ category.label }}</legend>
                 <p class="permission-section__hint">{{ category.description }}</p>
                 {% for permission in category.permissions %}
-                    <label class="permission-row">
-                        <input
-                            type="checkbox"
-                            name="{{ permission.key }}"
-                            data-permission-toggle
-                            {% if is_edit %}
-                                {% if group|attr(permission.key) %}checked{% endif %}
-                            {% elif permission.default %}
-                                checked
-                            {% endif %}
-                        >
-                        <span class="permission-row__text">
-                            <strong>{{ permission.label }}</strong>
-                            <small>{{ permission.description }}</small>
-                        </span>
-                    </label>
+                    {% if permission.scoped %}
+                        {% if is_edit and group|attr(permission.key) %}
+                            {% set current_scope = group|attr(permission.scope_key) or 'all' %}
+                        {% else %}
+                            {% set current_scope = 'none' %}
+                        {% endif %}
+                        <label class="permission-row permission-row--scoped">
+                            <span class="permission-row__text">
+                                <strong>{{ permission.label }}</strong>
+                                <small>{{ permission.description }}</small>
+                            </span>
+                            <select name="{{ permission.scope_key }}" data-permission-toggle data-permission-select>
+                                {% for scope_value, scope_label in scope_choices %}
+                                    <option value="{{ scope_value }}" {% if current_scope == scope_value %}selected{% endif %}>{{ scope_label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                    {% else %}
+                        <label class="permission-row">
+                            <input
+                                type="checkbox"
+                                name="{{ permission.key }}"
+                                data-permission-toggle
+                                {% if is_edit %}
+                                    {% if group|attr(permission.key) %}checked{% endif %}
+                                {% elif permission.default %}
+                                    checked
+                                {% endif %}
+                            >
+                            <span class="permission-row__text">
+                                <strong>{{ permission.label }}</strong>
+                                <small>{{ permission.description }}</small>
+                            </span>
+                        </label>
+                    {% endif %}
                 {% endfor %}
             </fieldset>
         {% endfor %}
@@ -71,33 +90,48 @@
 {{ super() }}
 <script>
     // Administratorrechte implizieren alle Einzelrechte: beim Aktivieren werden
-    // alle Berechtigungen angehakt und gesperrt (Anzeige des effektiven Stands).
+    // alle Berechtigungen auf "voll" gesetzt und gesperrt (Anzeige des
+    // effektiven Stands). Checkboxen → angehakt, Bereichsauswahlen → "Alle Benutzer".
     (function () {
         var adminToggle = document.querySelector('[data-permission-admin]');
         if (!adminToggle) return;
         var toggles = document.querySelectorAll('[data-permission-toggle]');
 
+        function grantFull(toggle) {
+            if (toggle instanceof HTMLSelectElement) {
+                toggle.dataset.previousValue = toggle.value;
+                toggle.value = 'all';
+            } else {
+                toggle.dataset.previousValue = toggle.checked ? 'true' : 'false';
+                toggle.checked = true;
+            }
+            toggle.disabled = true;
+        }
+
+        function restore(toggle) {
+            toggle.disabled = false;
+            if (toggle.dataset.previousValue === undefined) return;
+            if (toggle instanceof HTMLSelectElement) {
+                toggle.value = toggle.dataset.previousValue;
+            } else {
+                toggle.checked = toggle.dataset.previousValue === 'true';
+            }
+            delete toggle.dataset.previousValue;
+        }
+
         function apply() {
             var isAdmin = adminToggle.checked;
             toggles.forEach(function (toggle) {
-                if (isAdmin) {
-                    toggle.dataset.previousChecked = toggle.checked ? 'true' : 'false';
-                    toggle.checked = true;
-                    toggle.disabled = true;
-                } else {
-                    toggle.disabled = false;
-                    if (toggle.dataset.previousChecked) {
-                        toggle.checked = toggle.dataset.previousChecked === 'true';
-                        delete toggle.dataset.previousChecked;
-                    }
-                }
+                if (isAdmin) grantFull(toggle);
+                else restore(toggle);
             });
         }
 
         adminToggle.addEventListener('change', apply);
         if (adminToggle.checked) {
             toggles.forEach(function (toggle) {
-                toggle.checked = true;
+                if (toggle instanceof HTMLSelectElement) toggle.value = 'all';
+                else toggle.checked = true;
                 toggle.disabled = true;
             });
         }

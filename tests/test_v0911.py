@@ -122,8 +122,8 @@ def _get_group(group_id):
 # --- version -----------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.11"
-    assert client.get("/health").json()["version"] == "0.9.11"
+    assert client.main.APP_VERSION == "0.9.12"
+    assert client.get("/health").json()["version"] == "0.9.12"
 
 
 # --- permission registry ------------------------------------------------------
@@ -151,7 +151,11 @@ def test_group_form_shows_categorized_matrix(client):
     for category in permissions.CATEGORIES:
         assert str(escape(category.label)) in html
         for permission in category.permissions:
-            assert f'name="{permission.key}"' in html
+            if permission.scoped:
+                # Team-Rechte werden seit 0.9.12 als Bereichsauswahl gerendert.
+                assert f'name="{permission.scope_key}"' in html
+            else:
+                assert f'name="{permission.key}"' in html
             assert str(escape(permission.label)) in html
     assert "Administratorrechte" in html
 
@@ -164,8 +168,8 @@ def test_group_create_via_form_and_overview_badges(client):
         data={
             "csrf_token": token,
             "name": "Teamleitung",
-            "can_view_time_reports": "on",
-            "can_manage_vacations": "on",
+            "can_view_time_reports_scope": "all",
+            "can_manage_vacations_scope": "all",
             "can_edit_own_notes": "on",
             "can_manual_time_entries": "on",
             "can_request_vacations": "on",

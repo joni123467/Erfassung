@@ -2,7 +2,12 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.11`
+**Version:** `0.9.12`
+
+> Seit 0.9.12: **Geltungsbereich für Team-Rechte** – Freigaben, Berichte und
+> Buchungsbearbeitung lassen sich je Gruppe auf das **eigene Team (Gruppe)**
+> oder **alle Benutzer** eingrenzen. Details unter
+> [„Gruppen & Berechtigungen"](#gruppen--berechtigungen).
 
 > Seit 0.9.11: **Überarbeitete Gruppenberechtigungen** – kategorisierte
 > Berechtigungsmatrix in der Gruppenverwaltung mit neuen Rechten für
@@ -53,13 +58,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.11 .
+docker build -t erfassung:0.9.12 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.11
+  erfassung:0.9.12
 ```
 
 ## GHCR & GitHub Actions
@@ -69,20 +74,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.11`)
+- Push von Tags `v*` (z. B. `v0.9.12`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.11`)
+- Versions-Tag aus `VERSION` (hier `0.9.12`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.11`)
+- Git-Tag (`v0.9.12`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.11`
+`ghcr.io/OWNER/erfassung:0.9.12`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -95,7 +100,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.11
+    image: ghcr.io/OWNER/erfassung:0.9.12
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -209,21 +214,27 @@ Beschreibung je Recht dargestellt:
 | Eigene Zeiterfassung | Urlaubsanträge stellen | ✅ erlaubt |
 | Aufträge & Firmen | Firmen beim Stempeln anlegen | ❌ |
 | Aufträge & Firmen | Firmen verwalten (Administration) | ❌ |
-| Team & Freigaben | Manuelle Buchungen freigeben | ❌ |
-| Team & Freigaben | Urlaubsanträge verwalten | ❌ |
-| Team & Freigaben | Team-Zeitübersichten einsehen | ❌ |
-| Team & Freigaben | Zeitbuchungen aller Benutzer bearbeiten | ❌ |
+| Team & Freigaben | Manuelle Buchungen freigeben | ❌ (Bereich wählbar) |
+| Team & Freigaben | Urlaubsanträge verwalten | ❌ (Bereich wählbar) |
+| Team & Freigaben | Zeitübersichten einsehen | ❌ (Bereich wählbar) |
+| Team & Freigaben | Zeitbuchungen bearbeiten | ❌ (Bereich wählbar) |
 | Verwaltung | Benutzer verwalten | ❌ |
 
+- **Geltungsbereich der Team-Rechte (seit 0.9.12)**: Jedes Recht unter
+  „Team & Freigaben" wird dreistufig vergeben – **Nicht erlaubt**,
+  **Eigenes Team (Gruppe)** oder **Alle Benutzer**. „Eigenes Team" beschränkt
+  Freigabelisten, Berichte/Exporte und die Buchungsbearbeitung auf Benutzer
+  derselben Gruppe; der Server prüft das zusätzlich bei jeder Aktion.
+  Bestandsgruppen behalten beim Update automatisch „Alle Benutzer".
 - **Administratorrechte** umfassen automatisch alle Berechtigungen (inklusive
-  System, Backups, Terminals und Gruppenverwaltung); die Einzelrechte sind im
-  Formular dann gesperrt sichtbar.
+  System, Backups, Terminals und Gruppenverwaltung) mit Geltungsbereich
+  „Alle Benutzer"; die Einzelrechte sind im Formular dann gesperrt sichtbar.
 - **Selbstbedienungsrechte** (Kategorie „Eigene Zeiterfassung") sind
   standardmäßig aktiv; Benutzer ohne Gruppe behalten sie. Entzogene Rechte
   blenden die zugehörigen Funktionen in Web und mobiler App aus und werden
   serverseitig durchgesetzt (auch für Offline-Aktionen).
 - Die Gruppenübersicht zeigt vergebene Rechte kompakt je Kategorie
-  (z. B. „Team & Freigaben: 2/4").
+  (z. B. „Team & Freigaben: 2/4", Zusatz „(eigenes Team)" bei Team-Bereich).
 
 ## Datenbank (SQLite, MySQL, MariaDB, PostgreSQL)
 
@@ -291,7 +302,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.11
+    image: ghcr.io/OWNER/erfassung:0.9.12
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -326,7 +337,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.11
+    image: ghcr.io/OWNER/erfassung:0.9.12
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -362,7 +373,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.11
+    image: ghcr.io/OWNER/erfassung:0.9.12
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -398,7 +409,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.11
+    image: ghcr.io/OWNER/erfassung:0.9.12
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -482,8 +493,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.11`)
-- optional Image-Name/Tag (`erfassung`, `0.9.11`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.12`)
+- optional Image-Name/Tag (`erfassung`, `0.9.12`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 
