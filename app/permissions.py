@@ -17,11 +17,29 @@ Zwei Arten von Berechtigungen:
 - ``self_service=False``: Team-/Verwaltungsrechte. Standard ist
   **nicht erlaubt**; Benutzer ohne Gruppe haben sie nicht.
   Administratorgruppen (``is_admin``) besitzen immer alle Rechte.
+
+Rechte über andere Benutzer (``scoped=True``) haben zusätzlich einen
+**Geltungsbereich** (Spalte ``<key>_scope``): ``'group'`` beschränkt das
+Recht auf Benutzer der eigenen Gruppe (Team), ``'all'`` gilt für alle
+Benutzer. Im Formular werden sie dreistufig dargestellt
+(Nicht erlaubt / Eigenes Team / Alle Benutzer).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+SCOPE_GROUP = "group"
+SCOPE_ALL = "all"
+SCOPE_CHOICES = (
+    ("none", "Nicht erlaubt"),
+    (SCOPE_GROUP, "Eigenes Team (Gruppe)"),
+    (SCOPE_ALL, "Alle Benutzer"),
+)
+
+
+def scope_column(key: str) -> str:
+    return f"{key}_scope"
 
 
 @dataclass(frozen=True)
@@ -31,6 +49,11 @@ class Permission:
     description: str
     default: bool = False
     self_service: bool = False
+    scoped: bool = False
+
+    @property
+    def scope_key(self) -> str:
+        return scope_column(self.key)
 
 
 @dataclass(frozen=True)
@@ -99,27 +122,34 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
     PermissionCategory(
         key="team",
         label="Team & Freigaben",
-        description="Rechte über Buchungen und Anträge anderer Benutzer.",
+        description=(
+            "Rechte über Buchungen und Anträge anderer Benutzer. Geltungsbereich "
+            "wählbar: nur Benutzer der eigenen Gruppe (Team) oder alle Benutzer."
+        ),
         permissions=(
             Permission(
                 key="can_approve_manual_entries",
                 label="Manuelle Buchungen freigeben",
                 description="Nachgetragene Zeitbuchungen anderer Benutzer freigeben oder ablehnen.",
+                scoped=True,
             ),
             Permission(
                 key="can_manage_vacations",
                 label="Urlaubsanträge verwalten",
                 description="Urlaubsanträge anderer Benutzer genehmigen, ablehnen und zurücknehmen.",
+                scoped=True,
             ),
             Permission(
                 key="can_view_time_reports",
-                label="Team-Zeitübersichten einsehen",
-                description="Zeitkonten, Berichte und Exporte aller Benutzer einsehen.",
+                label="Zeitübersichten einsehen",
+                description="Zeitkonten, Berichte und Exporte anderer Benutzer einsehen.",
+                scoped=True,
             ),
             Permission(
                 key="can_edit_time_entries",
-                label="Zeitbuchungen aller Benutzer bearbeiten",
+                label="Zeitbuchungen bearbeiten",
                 description="Buchungen anderer Benutzer korrigieren, anlegen und löschen.",
+                scoped=True,
             ),
         ),
     ),
@@ -151,11 +181,35 @@ SELF_SERVICE_KEYS: tuple[str, ...] = tuple(
     permission.key for permission in ALL_PERMISSIONS if permission.self_service
 )
 
+SCOPED_KEYS: tuple[str, ...] = tuple(
+    permission.key for permission in ALL_PERMISSIONS if permission.scoped
+)
 
-def parse_form_values(form) -> dict[str, bool]:
-    """Liest alle Berechtigungs-Checkboxen aus einem (Starlette-)Formular."""
-    return {key: form.get(key) == "on" for key in PERMISSION_KEYS}
+
+def parse_form_values(form) -> dict[str, object]:
+    """Liest alle Berechtigungen aus einem (Starlette-)Formular.
+
+    Checkbox-Rechte kommen als ``on``; Rechte mit Geltungsbereich als
+    Dreifach-Auswahl ``<key>_scope`` (none/group/all) und werden in Boolean
+    (Recht vorhanden) + Scope-Spalte zerlegt.
+    """
+    values: dict[str, object] = {}
+    for permission in ALL_PERMISSIONS:
+        if permission.scoped:
+            raw = str(form.get(permission.scope_key) or "none")
+            if raw not in ("none", SCOPE_GROUP, SCOPE_ALL):
+                raw = "none"
+            values[permission.key] = raw != "none"
+            values[permission.scope_key] = raw if raw != "none" else SCOPE_ALL
+        else:
+            values[permission.key] = form.get(permission.key) == "on"
+    return values
 
 
-def grant_all() -> dict[str, bool]:
-    return {key: True for key in PERMISSION_KEYS}
+def grant_all() -> dict[str, object]:
+    values: dict[str, object] = {}
+    for permission in ALL_PERMISSIONS:
+        values[permission.key] = True
+        if permission.scoped:
+            values[permission.scope_key] = SCOPE_ALL
+    return values

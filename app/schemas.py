@@ -39,6 +39,10 @@ class GroupBase(BaseModel):
     can_manual_time_entries: bool = True
     can_edit_own_notes: bool = True
     can_request_vacations: bool = True
+    can_manage_vacations_scope: str = "all"
+    can_approve_manual_entries_scope: str = "all"
+    can_view_time_reports_scope: str = "all"
+    can_edit_time_entries_scope: str = "all"
 
 
 class GroupCreate(GroupBase):

@@ -3789,3 +3789,21 @@ tr.company-deleted td {
     background: var(--neutral-soft);
     color: var(--text-muted);
 }
+
+.permission-row--scoped {
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.permission-row--scoped .permission-row__text {
+    flex: 1;
+}
+
+.permission-row--scoped select {
+    flex-shrink: 0;
+    width: auto;
+    min-width: 12rem;
+    height: var(--control-h-sm);
+    padding: 0 0.5rem;
+}

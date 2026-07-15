@@ -5,6 +5,33 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.12] – 2026-07-08
+
+### Added – Geltungsbereich für Team-Rechte (eigenes Team oder alle Benutzer)
+
+- **Dreistufige Vergabe**: Die Rechte der Kategorie „Team & Freigaben"
+  (Manuelle Buchungen freigeben, Urlaubsanträge verwalten, Zeitübersichten
+  einsehen, Zeitbuchungen bearbeiten) werden im Gruppenformular jetzt als
+  Bereichsauswahl vergeben: **Nicht erlaubt**, **Eigenes Team (Gruppe)**
+  oder **Alle Benutzer**.
+- **Durchsetzung überall**: Bei „Eigenes Team" sehen Berechtigte in den
+  Freigaben nur Buchungen/Urlaubsanträge von Benutzern der eigenen Gruppe,
+  Berichte/Exporte (Team- und Benutzerauswertung, PDF/Excel) enthalten nur
+  Gruppenmitglieder, und die Bearbeitung fremder Buchungen (Seite, Update,
+  Löschen, Freigabe-POSTs) wird serverseitig mit klarer Meldung abgelehnt –
+  auch das Umbuchen einer Buchung auf einen Benutzer außerhalb des Teams.
+- **Übersicht**: Die Gruppenliste kennzeichnet Team-beschränkte Rechte im
+  Badge-Tooltip mit „(eigenes Team)".
+- Administratorrechte wirken unverändert immer auf alle Benutzer.
+
+### Datenbank
+
+- Neue Spalten in `groups`: `can_approve_manual_entries_scope`,
+  `can_manage_vacations_scope`, `can_view_time_reports_scope`,
+  `can_edit_time_entries_scope` (VARCHAR(10), Default `'all'`).
+  Migration 11 bzw. `ensure_schema()` ergänzen sie idempotent; Bestands-
+  gruppen behalten mit `'all'` exakt ihr bisheriges Verhalten.
+
 ## [0.9.11] – 2026-07-08
 
 ### Changed – Gruppenberechtigungen überarbeitet

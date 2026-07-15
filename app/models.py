@@ -46,6 +46,11 @@ class Group(Base):
     can_view_time_reports = Column(Boolean, default=False)
     can_edit_time_entries = Column(Boolean, default=False)
     can_manage_companies = Column(Boolean, default=False)
+    # Geltungsbereich der Team-Rechte: 'group' = eigene Gruppe, 'all' = alle Benutzer
+    can_manage_vacations_scope = Column(String(10), default="all")
+    can_approve_manual_entries_scope = Column(String(10), default="all")
+    can_view_time_reports_scope = Column(String(10), default="all")
+    can_edit_time_entries_scope = Column(String(10), default="all")
     # Selbstbedienungsrechte: Standard erlaubt (Bestandsverhalten bleibt erhalten)
     can_manual_time_entries = Column(Boolean, default=True)
     can_edit_own_notes = Column(Boolean, default=True)

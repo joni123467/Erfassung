@@ -522,6 +522,14 @@ def deny_vacation_withdrawal(db: Session, vacation_id: int) -> Optional[models.V
     )
 
 
+def get_vacation_request(db: Session, vacation_id: int) -> Optional[models.VacationRequest]:
+    return (
+        db.query(models.VacationRequest)
+        .filter(models.VacationRequest.id == vacation_id)
+        .first()
+    )
+
+
 def get_vacation_requests(
     db: Session,
     status: Optional[str] = None,

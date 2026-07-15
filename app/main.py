@@ -465,6 +465,21 @@ def ensure_schema() -> None:
                     connection.execute(
                         text(f"UPDATE groups SET {column_name} = 1 WHERE {column_name} IS NULL")
                     )
+            # Geltungsbereich der Team-Rechte: Default 'all' = Bestandsverhalten
+            # (Rechte galten bisher für alle Benutzer).
+            for column_name in (
+                "can_manage_vacations_scope",
+                "can_approve_manual_entries_scope",
+                "can_view_time_reports_scope",
+                "can_edit_time_entries_scope",
+            ):
+                if column_name not in columns:
+                    connection.execute(
+                        text(f"ALTER TABLE groups ADD COLUMN {column_name} VARCHAR(10) DEFAULT 'all'")
+                    )
+                    connection.execute(
+                        text(f"UPDATE groups SET {column_name} = 'all' WHERE {column_name} IS NULL")
+                    )
         if "holidays" in table_names:
             index_rows = connection.execute(text("PRAGMA index_list('holidays')")).fetchall()
             legacy_unique_index = None
@@ -691,7 +706,9 @@ def _build_user_totals(
     return results
 
 
-def _build_time_report_data(params, db: Session) -> dict[str, object]:
+def _build_time_report_data(
+    params, db: Session, allowed_user_ids: Optional[set[int]] = None
+) -> dict[str, object]:
     view = params.get("view", "month")
     if view not in {"month", "week", "range"}:
         view = "month"
@@ -743,6 +760,11 @@ def _build_time_report_data(params, db: Session) -> dict[str, object]:
         end_date,
         statuses=[models.VacationStatus.APPROVED],
     )
+
+    # Geltungsbereich "eigenes Team": nur Buchungen/Urlaube der erlaubten Benutzer
+    if allowed_user_ids is not None:
+        entries = [entry for entry in entries if entry.user_id in allowed_user_ids]
+        vacations = [vacation for vacation in vacations if vacation.user_id in allowed_user_ids]
     vacation_minutes_total = 0
     vacation_minutes_by_user: dict[int, int] = {}
     vacation_records: list[dict[str, object]] = []
@@ -2454,6 +2476,51 @@ def _can_manage_companies(user: models.User) -> bool:
     return _has_group_permission(user, "can_manage_companies")
 
 
+def _permission_scope(user: models.User, attribute: str) -> str:
+    """Geltungsbereich eines Team-Rechts: 'none' | 'group' | 'all'.
+
+    Administratoren wirken immer auf alle Benutzer. 'group' beschränkt das
+    Recht auf Benutzer der eigenen Gruppe (Team).
+    """
+    if _ensure_admin(user):
+        return group_permissions.SCOPE_ALL
+    if not user.group or not getattr(user.group, attribute, False):
+        return "none"
+    scope = getattr(user.group, group_permissions.scope_column(attribute), None) or group_permissions.SCOPE_ALL
+    if scope not in (group_permissions.SCOPE_GROUP, group_permissions.SCOPE_ALL):
+        scope = group_permissions.SCOPE_ALL
+    return scope
+
+
+def _scoped_user_ids(db: Session, user: models.User, attribute: str) -> Optional[set[int]]:
+    """Benutzer, auf die ein Team-Recht wirkt.
+
+    ``None`` = keine Einschränkung (alle Benutzer), sonst die Menge erlaubter
+    Benutzer-IDs (bei Scope 'group' die Mitglieder der eigenen Gruppe, bei
+    'none' die leere Menge).
+    """
+    scope = _permission_scope(user, attribute)
+    if scope == group_permissions.SCOPE_ALL:
+        return None
+    if scope == "none":
+        return set()
+    rows = (
+        db.query(models.User.id)
+        .filter(models.User.group_id == user.group_id)
+        .all()
+    )
+    ids = {row[0] for row in rows}
+    ids.add(user.id)
+    return ids
+
+
+def _user_in_permission_scope(db: Session, user: models.User, attribute: str, target_user_id: Optional[int]) -> bool:
+    allowed = _scoped_user_ids(db, user, attribute)
+    if allowed is None:
+        return True
+    return target_user_id is not None and target_user_id in allowed
+
+
 def _has_self_service_permission(user: models.User, attribute: str) -> bool:
     """Selbstbedienungsrechte (eigene Buchungen/Anträge): Standard erlaubt.
 
@@ -2645,6 +2712,7 @@ def admin_groups_new(request: Request, db: Session = Depends(database.get_db)):
         error=error,
         group=None,
         permission_categories=group_permissions.CATEGORIES,
+        scope_choices=group_permissions.SCOPE_CHOICES,
     )
 
 
@@ -2671,6 +2739,7 @@ def admin_groups_edit(request: Request, group_id: int, db: Session = Depends(dat
         error=error,
         group=group,
         permission_categories=group_permissions.CATEGORIES,
+        scope_choices=group_permissions.SCOPE_CHOICES,
     )
 
 
@@ -2823,6 +2892,9 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         if can_manual
         else []
     )
+    manual_scope_ids = _scoped_user_ids(db, user, "can_approve_manual_entries")
+    if manual_scope_ids is not None:
+        pending_entries = [entry for entry in pending_entries if entry.user_id in manual_scope_ids]
     pending_vacations: list[models.VacationRequest] = []
     withdrawal_requests: list[models.VacationRequest] = []
     if can_vacation:
@@ -2832,6 +2904,10 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         withdrawal_requests = crud.get_vacation_requests(
             db, statuses=[models.VacationStatus.WITHDRAW_REQUESTED]
         )
+        vacation_scope_ids = _scoped_user_ids(db, user, "can_manage_vacations")
+        if vacation_scope_ids is not None:
+            pending_vacations = [item for item in pending_vacations if item.user_id in vacation_scope_ids]
+            withdrawal_requests = [item for item in withdrawal_requests if item.user_id in vacation_scope_ids]
     return _admin_template(
         "admin/approvals.html",
         request,
@@ -2855,7 +2931,9 @@ def admin_time_reports_page(request: Request, db: Session = Depends(database.get
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    report_data = _build_time_report_data(request.query_params, db)
+    report_data = _build_time_report_data(
+        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+    )
     return _admin_template(
         "admin/time_reports.html",
         request,
@@ -2866,7 +2944,9 @@ def admin_time_reports_page(request: Request, db: Session = Depends(database.get
     )
 
 
-def _build_user_report_data(params, db: Session) -> dict[str, object]:
+def _build_user_report_data(
+    params, db: Session, allowed_user_ids: Optional[set[int]] = None
+) -> dict[str, object]:
     """Per-user evaluation for a selectable set of users and period."""
     today = date.today()
     default_start = today.replace(day=1)
@@ -2877,6 +2957,8 @@ def _build_user_report_data(params, db: Session) -> dict[str, object]:
         start_date, end_date = end_date, start_date
 
     all_users = crud.get_users(db)
+    if allowed_user_ids is not None:
+        all_users = [item for item in all_users if item.id in allowed_user_ids]
     selected_ids: set[int] = set()
     for raw in params.getlist("users"):
         try:
@@ -2969,7 +3051,9 @@ def admin_user_reports_page(request: Request, db: Session = Depends(database.get
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    report_data = _build_user_report_data(request.query_params, db)
+    report_data = _build_user_report_data(
+        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+    )
     return _admin_template(
         "admin/user_reports.html",
         request,
@@ -2987,7 +3071,9 @@ def admin_user_reports_pdf(request: Request, db: Session = Depends(database.get_
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    report_data = _build_user_report_data(request.query_params, db)
+    report_data = _build_user_report_data(
+        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+    )
     try:
         buffer = export_user_summary_pdf(
             period_range=report_data["period_range"],
@@ -3016,7 +3102,9 @@ def admin_user_reports_excel(request: Request, db: Session = Depends(database.ge
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    report_data = _build_user_report_data(request.query_params, db)
+    report_data = _build_user_report_data(
+        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+    )
     buffer = export_user_summary_excel(
         rows=report_data["report_rows"],
         totals=report_data["report_totals"],
@@ -3037,7 +3125,9 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    report_data = _build_time_report_data(request.query_params, db)
+    report_data = _build_time_report_data(
+        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+    )
     # report_data["vacations"] only contains approved requests (KPI basis);
     # the PDF vacation overview lists every request in the period with status.
     period_vacations = crud.get_vacations_in_range(
@@ -3045,6 +3135,9 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
         report_data["start_date"],
         report_data["end_date"],
     )
+    report_scope_ids = _scoped_user_ids(db, user, "can_view_time_reports")
+    if report_scope_ids is not None:
+        period_vacations = [item for item in period_vacations if item.user_id in report_scope_ids]
     try:
         buffer = export_team_overview_pdf(
             period_label=report_data["period_label"],
@@ -3085,7 +3178,9 @@ def admin_time_reports_excel(request: Request, db: Session = Depends(database.ge
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    report_data = _build_time_report_data(request.query_params, db)
+    report_data = _build_time_report_data(
+        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+    )
     buffer = export_time_entries(
         report_data["entries_sorted"],
         report_data.get("vacations"),
@@ -3464,6 +3559,11 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
             "/admin/users", next_param, error="Buchung nicht gefunden"
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    if not _user_in_permission_scope(db, user, "can_edit_time_entries", entry.user_id):
+        redirect = _build_redirect_with_next(
+            "/admin/users", next_param, error="Buchung gehört nicht zu deinem Team"
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     companies = crud.get_companies(db)
     active_tab = "approvals" if sanitized_next.startswith("/admin/approvals") else "users"
     return _admin_template(
@@ -3496,6 +3596,18 @@ def update_time_entry_html(
     user = get_logged_in_user(request, db)
     if not user or not (_ensure_admin(user) or _can_edit_time_entries(user)):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    existing_entry = crud.get_time_entry(db, entry_id)
+    if not _user_in_permission_scope(db, user, "can_edit_time_entries", user_id) or (
+        existing_entry
+        and not _user_in_permission_scope(db, user, "can_edit_time_entries", existing_entry.user_id)
+    ):
+        redirect = _build_redirect_with_next(
+            "/admin/users",
+            next_url,
+            error="Buchung gehört nicht zu deinem Team",
+            user=redirect_user,
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if end_time <= start_time:
         redirect = _build_redirect_with_next(
             "/admin/users",
@@ -3557,6 +3669,17 @@ def delete_time_entry_html(
     user = get_logged_in_user(request, db)
     if not user or not (_ensure_admin(user) or _can_edit_time_entries(user)):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    existing_entry = crud.get_time_entry(db, entry_id)
+    if existing_entry and not _user_in_permission_scope(
+        db, user, "can_edit_time_entries", existing_entry.user_id
+    ):
+        redirect = _build_redirect_with_next(
+            "/admin/users",
+            next_url,
+            error="Buchung gehört nicht zu deinem Team",
+            user=redirect_user,
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if not crud.delete_time_entry(db, entry_id):
         redirect = _build_redirect_with_next(
             "/admin/users",
@@ -3586,6 +3709,14 @@ def set_time_entry_status_admin(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_approve_manual_entries(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    target_entry = crud.get_time_entry(db, entry_id)
+    if target_entry and not _user_in_permission_scope(
+        db, user, "can_approve_manual_entries", target_entry.user_id
+    ):
+        redirect = _build_redirect(
+            "/admin/approvals", error="Buchung gehört nicht zu deinem Team"
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if action == "approve":
         new_status = models.TimeEntryStatus.APPROVED
     elif action == "reject":
@@ -3614,6 +3745,14 @@ def set_vacation_status_admin(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_manage_vacations(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    target_vacation = crud.get_vacation_request(db, vacation_id)
+    if target_vacation and not _user_in_permission_scope(
+        db, user, "can_manage_vacations", target_vacation.user_id
+    ):
+        redirect = _build_redirect(
+            "/admin/approvals", error="Urlaubsantrag gehört nicht zu deinem Team"
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if action == "approve":
         updated = crud.update_vacation_status(db, vacation_id, models.VacationStatus.APPROVED)
         message = "Urlaub genehmigt"
