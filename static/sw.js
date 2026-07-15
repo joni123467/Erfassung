@@ -1,9 +1,12 @@
-// The cache version is derived at runtime from the `?v=` query the service
-// worker was registered with (see app.js). That value is in turn driven by the
-// server-side app_version (VERSION file), so bumping VERSION automatically
-// produces a new cache name here and purges the previous cache on activate —
-// no manual edit of this file is needed on a release.
-const APP_VERSION = new URLSearchParams(self.location.search).get('v') || 'dev';
+// The version is stamped into the file CONTENT by the /sw.js route
+// (self.__ERFASSUNG_VERSION), driven by the server-side VERSION file. A new
+// release therefore changes the script bytes, which the browser's service
+// worker update check detects even when an installed PWA still runs an old
+// cached page (whose registration URL carries an old `?v=`). The `?v=` query
+// remains as fallback for serving the raw static file.
+const APP_VERSION = self.__ERFASSUNG_VERSION
+  || new URLSearchParams(self.location.search).get('v')
+  || 'dev';
 const CACHE_VERSION = `erfassung-mobile-v${APP_VERSION}`;
 const MOBILE_SHELL = '/mobile';
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
@@ -23,7 +26,10 @@ const CORE_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_VERSION).then(async (cache) => {
-      await cache.addAll(CORE_ASSETS);
+      // 'no-cache' erzwingt eine Revalidierung am Server: Der neue Worker darf
+      // seine Assets nicht aus einem stalen HTTP-Cache übernehmen, sonst wäre
+      // die neue Cache-Version mit alten Dateien gefüllt.
+      await cache.addAll(CORE_ASSETS.map((url) => new Request(url, { cache: 'no-cache' })));
       // Pre-seed /mobile with the offline shell so the app always opens offline,
       // even before the first authenticated online visit. This entry is silently
       // replaced with the real page the first time the user loads /mobile online.

@@ -189,6 +189,13 @@ def service_worker() -> Response:
     a /static/sw.js registration with {scope:'/'} would be rejected by browsers.
     """
     content = (_STATIC_DIR / "sw.js").read_text(encoding="utf-8")
+    # Die Version wird in den DATEIINHALT eingebrannt (nicht nur in die
+    # Registrierungs-URL): Nur so ändert sich das Skript byteweise bei jedem
+    # Release und der Browser-Update-Check erkennt die neue Version auch dann,
+    # wenn eine installierte PWA noch eine alte (gecachte) Seite mit alter
+    # Registrierungs-URL ausführt. Ohne das blieb die PWA dauerhaft auf einem
+    # alten Stand hängen (Update kam erst nach Neuinstallation an).
+    content = f'self.__ERFASSUNG_VERSION = "{APP_VERSION}";\n{content}'
     return Response(
         content,
         media_type="application/javascript",

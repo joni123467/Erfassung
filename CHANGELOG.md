@@ -5,6 +5,54 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.13] – 2026-07-15
+
+### Fixed – PWA-Updates erreichen installierte Geräte zuverlässig (iOS)
+
+- **Version in `/sw.js` eingebrannt**: Die Route stempelt die App-Version in
+  den Skriptinhalt (`self.__ERFASSUNG_VERSION`). Bisher steckte die Version
+  nur in der Registrierungs-URL (`?v=`) – eine installierte PWA lädt `/mobile`
+  aber aus dem Service-Worker-Cache, die alte Seite registrierte wieder die
+  alte URL mit unverändertem Skript, und der Browser sah **nie** ein Update.
+  Die PWA blieb dauerhaft auf dem alten Stand (Synchronisation brach, bis die
+  App neu installiert wurde). Mit eingebrannter Version ändert jedes Release
+  die Skript-Bytes und der Update-Check des Browsers greift immer.
+- **Aktive Update-Prüfung**: Registrierung mit `updateViaCache: 'none'`;
+  `registration.update()` läuft bei jedem Start, beim Zurückholen der App in
+  den Vordergrund (App-Resume, wichtig für iOS) und sobald ein Sync eine
+  geänderte Server-Version meldet (`/mobile/sync-data` → `version`).
+- **Einmaliger Auto-Reload nach Update**: Übernimmt ein neuer Worker die
+  Kontrolle (`controllerchange`), lädt sich die Seite einmalig neu, damit
+  sofort die frischen Assets aktiv sind. Kein Reload bei Erstinstallation,
+  kein Reload-Loop; die Offline-Queue bleibt erhalten (IndexedDB).
+- **Kein staler HTTP-Cache bei der Installation**: Der Worker lädt seine
+  Assets beim `install` mit `cache: 'no-cache'`, damit die neue Cache-Version
+  nicht mit alten Dateien gefüllt wird.
+- **Konstante Registrierungs-URL (`/sw.js` ohne `?v=`)**: Wird `app.js` vom
+  Service Worker aus dem Cache bedient, verliert `import.meta.url` seinen
+  `?v=`-Parameter – die Registrierung flatterte dadurch zwischen
+  `/sw.js?v=<version>` und `/sw.js?v=dev` und erzeugte Worker mit
+  Cache-Namen `erfassung-mobile-vdev`, wodurch die versionsbasierte
+  Cache-Rotation auf installierten Geräten vollständig ausgehebelt war.
+  Die Version kommt jetzt ausschließlich aus dem eingebrannten Skriptinhalt.
+
+### Added – Synchronisation bei App-Resume
+
+- Beim Wechsel der (iOS-)PWA in den Vordergrund wird automatisch
+  synchronisiert (`visibilitychange`) – zuvor nur beim Seitenstart und beim
+  `online`-Ereignis, wodurch lange im Hintergrund geparkte Apps nicht mehr
+  synchronisierten.
+
+### Dokumentation
+
+- README: neuer Abschnitt „PWA am Desktop/PC verwenden" (Nutzung im
+  Desktop-Browser und Installation über Chrome/Edge) sowie aktualisierte
+  Beschreibung des Update-Mechanismus.
+
+### Datenbank
+
+- Keine Schemaänderungen; keine Migration erforderlich.
+
 ## [0.9.12] – 2026-07-08
 
 ### Added – Geltungsbereich für Team-Rechte (eigenes Team oder alle Benutzer)

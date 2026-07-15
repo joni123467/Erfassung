@@ -767,6 +767,7 @@ async function syncServerData() {
     updateLastSyncLabel(nowIso);
     await hydrateCompaniesFromCache();
     applyMobilePermissions(payload.permissions || null);
+    await handleServerVersion(payload.version || '');
     return true;
   } catch (error) {
     const msg = `Sync fehlgeschlagen: ${error?.message || 'Netzwerkfehler'}. Bitte erneut versuchen.`;
@@ -1695,6 +1696,59 @@ function setupConnectionHandlers() {
     dispatchSyncStatus('Keine Verbindung. Eingaben werden lokal gespeichert.', 'offline');
     await checkServerReachability(true);
   });
+  // iOS-PWA: Beim Zurückholen in den Vordergrund synchronisieren – die App
+  // bleibt dort oft tagelang "geladen", ohne dass ein online-Event oder ein
+  // Seitenstart erneut feuert.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      performReconnectSync('resume').catch(() => {});
+    }
+  });
+}
+
+// ── Service-Worker-Updates ────────────────────────────────────────────────────
+// Die installierte PWA lädt /mobile aus dem SW-Cache; ohne aktive Update-Prüfung
+// bekam sie neue Versionen nie mit (Sync brach, bis die App neu installiert
+// wurde). Deshalb: update() bei Start/Resume und nach jedem Sync mit neuer
+// Server-Version; übernimmt ein neuer Worker die Kontrolle, wird die Seite
+// einmalig neu geladen, damit frische Assets aktiv werden.
+let swReloadedForUpdate = false;
+
+function setupServiceWorkerUpdateHandling() {
+  if (!('serviceWorker' in navigator)) return;
+
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // Erstinstallation (clients.claim ohne vorherigen Controller) nicht neu
+    // laden – nur echte Updates; und nur einmal (kein Reload-Loop).
+    if (!hadController || swReloadedForUpdate) return;
+    swReloadedForUpdate = true;
+    window.location.reload();
+  });
+
+  const triggerUpdateCheck = () => {
+    navigator.serviceWorker.getRegistration()
+      .then((registration) => registration?.update())
+      .catch(() => {});
+  };
+  triggerUpdateCheck();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') triggerUpdateCheck();
+  });
+}
+
+async function handleServerVersion(serverVersion) {
+  if (!serverVersion) return;
+  const stored = await getRecord(META_STORE, 'appVersion');
+  if (stored?.value === serverVersion) return;
+  await putRecord(META_STORE, { key: 'appVersion', value: serverVersion, updatedAt: Date.now() });
+  if (stored?.value) {
+    // Neue Server-Version erkannt: Service-Worker-Update anstoßen; der
+    // controllerchange-Handler lädt die Seite danach einmalig neu.
+    navigator.serviceWorker?.getRegistration()
+      .then((registration) => registration?.update())
+      .catch(() => {});
+  }
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -1713,6 +1767,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   registerOfflineForms();
   registerCompanySearch();
   setupConnectionHandlers();
+  setupServiceWorkerUpdateHandling();
   initializeServerStateFromDataset();
   await initializeSyncMeta();
   await initSettingsTab();

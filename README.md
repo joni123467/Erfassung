@@ -2,7 +2,13 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.12`
+**Version:** `0.9.13`
+
+> Seit 0.9.13: **Zuverlässige PWA-Updates** – installierte PWAs (insbesondere
+> iOS) erkennen neue Versionen jetzt automatisch bei App-Start/-Resume und
+> nach jedem Sync und laden sich einmalig selbst neu; zusätzlich wird beim
+> Zurückholen in den Vordergrund synchronisiert. Details unter
+> [„Updates & Service-Worker-Versionierung"](#updates--service-worker-versionierung).
 
 > Seit 0.9.12: **Geltungsbereich für Team-Rechte** – Freigaben, Berichte und
 > Buchungsbearbeitung lassen sich je Gruppe auf das **eigene Team (Gruppe)**
@@ -58,13 +64,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.12 .
+docker build -t erfassung:0.9.13 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.12
+  erfassung:0.9.13
 ```
 
 ## GHCR & GitHub Actions
@@ -74,20 +80,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.12`)
+- Push von Tags `v*` (z. B. `v0.9.13`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.12`)
+- Versions-Tag aus `VERSION` (hier `0.9.13`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.12`)
+- Git-Tag (`v0.9.13`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.12`
+`ghcr.io/OWNER/erfassung:0.9.13`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -100,7 +106,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.12
+    image: ghcr.io/OWNER/erfassung:0.9.13
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -302,7 +308,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.12
+    image: ghcr.io/OWNER/erfassung:0.9.13
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -337,7 +343,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.12
+    image: ghcr.io/OWNER/erfassung:0.9.13
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -373,7 +379,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.12
+    image: ghcr.io/OWNER/erfassung:0.9.13
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -409,7 +415,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.12
+    image: ghcr.io/OWNER/erfassung:0.9.13
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -493,8 +499,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.12`)
-- optional Image-Name/Tag (`erfassung`, `0.9.12`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.13`)
+- optional Image-Name/Tag (`erfassung`, `0.9.13`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 
@@ -581,14 +587,45 @@ Die mobile Seite zeigt nutzerfreundlich an:
 
 ### Updates & Service-Worker-Versionierung
 
-- Der Service Worker leitet seinen Cache-Namen (`erfassung-mobile-v<VERSION>`) zur
-  Laufzeit aus dem `?v=`-Parameter ab, mit dem er registriert wird. Dieser Parameter
-  stammt aus `app_version` (Datei `VERSION`).
-- **Folge:** Beim Anheben der Version in `VERSION` ändert sich automatisch der
-  Cache-Name. Der alte Cache wird beim `activate`-Event gelöscht (`skipWaiting()` +
-  `clients.claim()`), sodass ausgelieferte JS/CSS-Assets nicht „eingefroren" bleiben.
+- Die Route `GET /sw.js` **brennt die Version in den Skriptinhalt ein**
+  (`self.__ERFASSUNG_VERSION`, Quelle: Datei `VERSION`) und liefert mit
+  `Cache-Control: no-cache` aus. Jedes Release ändert damit die Skript-Bytes –
+  der Update-Check des Browsers erkennt die neue Version auch dann, wenn eine
+  installierte PWA noch eine alte gecachte Seite (mit alter
+  Registrierungs-URL) ausführt. Vorher blieb die PWA in diesem Fall dauerhaft
+  auf dem alten Stand hängen (Update kam erst nach Neuinstallation an).
+- Der Cache-Name (`erfassung-mobile-v<VERSION>`) folgt der eingebrannten
+  Version; der alte Cache wird beim `activate`-Event gelöscht (`skipWaiting()`
+  + `clients.claim()`). Beim Installieren lädt der Worker die Assets mit
+  `cache: 'no-cache'`, damit kein staler HTTP-Cache in die neue Cache-Version
+  gelangt.
+- **Aktive Update-Prüfung (ab 0.9.13):** Die Registrierung nutzt
+  `updateViaCache: 'none'`; zusätzlich stößt die App `registration.update()`
+  bei jedem Start, beim Zurückholen in den Vordergrund (App-Resume, wichtig
+  für iOS) und nach jedem Sync mit geänderter Server-Version an. Übernimmt
+  ein neuer Worker die Kontrolle, lädt sich die Seite **einmalig automatisch
+  neu**, sodass sofort die frischen Assets aktiv sind (Offline-Queue bleibt
+  erhalten – sie liegt persistent in IndexedDB).
+- **Sync bei App-Resume (ab 0.9.13):** Beim Wechsel der PWA in den Vordergrund
+  wird automatisch synchronisiert – zuvor geschah das nur beim Seitenstart
+  und beim `online`-Ereignis.
 - Es ist **kein** manuelles Editieren von `static/sw.js` oder `static/app.js` pro
   Release mehr nötig.
+
+### PWA am Desktop/PC verwenden
+
+Ja – die mobile Oberfläche ist nicht auf Smartphones beschränkt:
+
+- **Ohne Installation:** `/mobile` einfach im Desktop-Browser öffnen; alle
+  Funktionen (Stempeln, Offline-Queue, Synchronisation) stehen zur Verfügung.
+- **Als installierte App:** Chrome/Edge am PC bieten über das Symbol in der
+  Adressleiste (bzw. Menü → „App installieren") die Installation an
+  (`display: standalone`). Die App startet dann in einem eigenen Fenster mit
+  `/mobile` als Startseite und funktioniert offline wie am Smartphone.
+- Die Oberfläche ist für schmale Bildschirme gestaltet, läuft im
+  Desktop-Fenster aber uneingeschränkt; für die volle Desktop-Oberfläche
+  (Administration, Berichte) bleibt die normale Web-Ansicht (`/dashboard`)
+  die bessere Wahl.
 
 ### Installierbarkeit
 

@@ -1,8 +1,9 @@
-// Loaded as a module via `app.js?v={{ app_version }}` (see templates/base.html),
-// so import.meta.url carries the current app version. We forward that same
-// version to the service worker registration URL so that the SW cache name
-// (derived from `?v=` in sw.js) tracks the deployed VERSION automatically.
-const SW_VERSION = new URL(import.meta.url).searchParams.get('v') || 'dev';
+// Die Service-Worker-Version steckt seit 0.9.13 im SKRIPTINHALT von /sw.js
+// (vom Server eingebrannt) – nicht mehr in der Registrierungs-URL. Eine
+// konstante URL ist wichtig: Wird app.js vom Service Worker aus dem Cache
+// bedient, verliert import.meta.url seinen ?v-Parameter; eine daraus gebaute
+// Registrierungs-URL flatterte dann zwischen ?v=<version> und ?v=dev und
+// erzeugte ständige Neuinstallationen mit falschem Cache-Namen.
 
 // Info tooltips: hover/focus is pure CSS; this click handler covers touch
 // devices (tap to open, tap elsewhere or Escape to close).
@@ -39,8 +40,20 @@ window.addEventListener('DOMContentLoaded', () => {
     // Registering a /static/sw.js with {scope:'/'} would be REJECTED by the
     // browser (a worker's max scope is its own path), which is why the offline
     // start previously failed: install never ran, nothing was precached.
+    //
+    // updateViaCache 'none' + explicit update() checks make releases reach
+    // installed PWAs reliably (esp. iOS): the /sw.js route stamps the version
+    // into the script bytes, so every check after a release finds a new worker.
     navigator.serviceWorker
-      .register(`/sw.js?v=${SW_VERSION}`, { scope: '/' })
+      .register('/sw.js', { scope: '/', updateViaCache: 'none' })
+      .then((registration) => {
+        registration.update().catch(() => {});
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            registration.update().catch(() => {});
+          }
+        });
+      })
       .catch((error) => console.warn('Service Worker Registrierung fehlgeschlagen', error));
   }
 });
