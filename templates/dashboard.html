@@ -433,6 +433,7 @@
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
     <p class="form-hint">Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.</p>
+    <p class="form-hint">Fällt der Zeitraum in die laufende Arbeitszeit, wird diese automatisch geteilt und läuft nach dem Nachtrag weiter.</p>
     {% if user.auto_break_deduction %}
         <p class="form-hint">Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.</p>
     {% endif %}

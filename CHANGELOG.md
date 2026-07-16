@@ -5,6 +5,32 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.14] – 2026-07-16
+
+### Added – Nachtrag bei laufender Arbeitszeit (laufende Buchung wird geteilt)
+
+- **Manuelle Buchung innerhalb der laufenden Arbeitszeit**: Ein Nachtrag
+  (z. B. ein Telefonat), der in die aktuell laufende Buchung fällt, wurde
+  bisher pauschal als Überschneidung abgelehnt. Jetzt wird die laufende
+  Buchung geteilt – exakt das Ergebnis, das beim Live-Stempeln entstanden
+  wäre: Der bereits gearbeitete Teil wird bis zum Beginn des Nachtrags
+  abgeschlossen (bisherige Pausenminuten bleiben dort), der Nachtrag wird
+  eingefügt (wartet wie gehabt auf Freigabe), und die Arbeitszeit läuft ab
+  dem Ende des Nachtrags mit Firma/Kommentar unverändert weiter. Es
+  entstehen keine doppelt gezählten Zeiten.
+- **Randfälle**: Beginnt der Nachtrag exakt mit der laufenden Buchung,
+  entfällt der erste Teil (Pausenminuten bleiben an der weiterlaufenden
+  Buchung). Bei laufender Pause kommt die klare Meldung, zuerst die Pause
+  zu beenden. Nur teilweise Überlappungen (Beginn vor der laufenden
+  Buchung, Ende in der Zukunft) und Kollisionen mit anderen Buchungen
+  werden weiterhin abgelehnt.
+- Erfolgsmeldung weist auf die Teilung hin („… die laufende Arbeitszeit
+  wurde entsprechend geteilt und läuft weiter").
+
+### Datenbank
+
+- Keine Schemaänderungen; keine Migration erforderlich.
+
 ## [0.9.13] – 2026-07-15
 
 ### Fixed – PWA-Updates erreichen installierte Geräte zuverlässig (iOS)

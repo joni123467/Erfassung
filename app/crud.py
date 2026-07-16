@@ -217,6 +217,81 @@ def _ensure_no_vacation_overlap(db: Session, vacation: schemas.VacationRequestCr
         raise ValueError("VACATION_OVERLAP")
 
 
+def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tuple[models.TimeEntry, bool]:
+    """Manuelle Buchung anlegen; liegt sie innerhalb der laufenden Buchung des
+    Benutzers, wird die laufende Buchung geteilt.
+
+    Ergebnis entspricht dem Live-Stempeln: Der bereits gearbeitete Teil wird
+    bis zum Beginn des Nachtrags abgeschlossen (bisherige Pausenminuten bleiben
+    dort), der Nachtrag eingefügt (typisch: PENDING), und die laufende Buchung
+    läuft ab dem Ende des Nachtrags mit Firma/Kommentar unverändert weiter.
+    So entstehen keine doppelt gezählten Zeiten.
+
+    Rückgabe: (angelegter Eintrag, wurde_geteilt). Fehler:
+    - ``BREAK_RUNNING``: laufende Pause muss zuerst beendet werden.
+    - ``OVERLAPPING_TIME_ENTRY``: Überschneidung mit anderen Buchungen oder
+      nur teilweise Überlappung mit der laufenden Buchung (z. B. Ende in der
+      Zukunft).
+    """
+    payload = entry.model_dump()
+    open_entry = get_open_time_entry(db, payload["user_id"])
+    if not open_entry:
+        return create_time_entry(db, entry), False
+
+    new_start, new_end = _entry_bounds(
+        payload["work_date"], payload["start_time"], payload["end_time"], False
+    )
+    new_start = _normalize_time(new_start)
+    new_end = _normalize_time(new_end)
+    open_start, open_end = _entry_bounds(
+        open_entry.work_date, open_entry.start_time, open_entry.end_time, True
+    )
+    if not _intervals_overlap(new_start, new_end, open_start, open_end):
+        return create_time_entry(db, entry), False
+
+    if open_entry.break_started_at:
+        raise ValueError("BREAK_RUNNING")
+    if new_start < open_start or new_end > open_end:
+        # Nur teilweise Überlappung (beginnt vor der laufenden Buchung oder
+        # endet in der Zukunft) lässt sich nicht sinnvoll teilen.
+        raise ValueError("OVERLAPPING_TIME_ENTRY")
+
+    # Kollisionen mit allen ANDEREN Buchungen prüfen, bevor etwas verändert wird.
+    _ensure_no_time_overlap(db, payload, exclude_id=open_entry.id)
+
+    # 1. Bereits gearbeiteten Teil abschließen (falls nicht leer); die bisher
+    #    erfassten Pausenminuten bleiben in diesem Abschnitt.
+    if new_start - open_start >= timedelta(minutes=1):
+        first_part = models.TimeEntry(
+            user_id=open_entry.user_id,
+            company_id=open_entry.company_id,
+            work_date=open_entry.work_date,
+            start_time=open_entry.start_time,
+            end_time=new_start.time(),
+            break_minutes=open_entry.break_minutes or 0,
+            break_started_at=None,
+            is_open=False,
+            notes=open_entry.notes or "",
+            status=models.TimeEntryStatus.APPROVED,
+            is_manual=False,
+        )
+        db.add(first_part)
+        open_entry.break_minutes = 0
+
+    # 2. Laufende Buchung ab dem Ende des Nachtrags weiterlaufen lassen
+    #    (offene Einträge führen end_time als Platzhalter == start_time).
+    open_entry.work_date = new_end.date()
+    open_entry.start_time = new_end.time()
+    open_entry.end_time = new_end.time()
+
+    # 3. Nachtrag anlegen.
+    manual_entry = models.TimeEntry(**payload)
+    db.add(manual_entry)
+    db.commit()
+    db.refresh(manual_entry)
+    return manual_entry, True
+
+
 def create_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> models.TimeEntry:
     payload = entry.model_dump()
     if payload.get("break_started_at") and not payload.get("is_open"):

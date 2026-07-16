@@ -184,8 +184,8 @@ def team_setup(client):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.13"
-    assert client.get("/health").json()["version"] == "0.9.13"
+    assert client.main.APP_VERSION == "0.9.14"
+    assert client.get("/health").json()["version"] == "0.9.14"
 
 
 # --- registry / model ------------------------------------------------------------

@@ -1681,16 +1681,24 @@ def submit_time_entry(
             status=models.TimeEntryStatus.PENDING,
             is_manual=True,
         )
-        crud.create_time_entry(db, entry)
+        _, split_performed = crud.create_manual_time_entry(db, entry)
     except ValueError as exc:
         error_message = "Ungültige Zeiteingabe"
         if str(exc) == "OVERLAPPING_TIME_ENTRY":
             error_message = "Zeit überschneidet sich mit einer bestehenden Buchung"
+        elif str(exc) == "BREAK_RUNNING":
+            error_message = (
+                "Bitte zuerst die laufende Pause beenden, dann die Buchung nachtragen"
+            )
         redirect = _build_redirect(_sanitize_next(next_url), error=error_message)
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    redirect = _build_redirect(
-        _sanitize_next(next_url), msg="Zeitbuchung eingereicht und wartet auf Freigabe"
-    )
+    success_message = "Zeitbuchung eingereicht und wartet auf Freigabe"
+    if split_performed:
+        success_message = (
+            "Zeitbuchung eingereicht und wartet auf Freigabe – "
+            "die laufende Arbeitszeit wurde entsprechend geteilt und läuft weiter"
+        )
+    redirect = _build_redirect(_sanitize_next(next_url), msg=success_message)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
