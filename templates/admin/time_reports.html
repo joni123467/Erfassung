@@ -237,10 +237,12 @@
                 <th>Status</th>
                 <th>Quelle</th>
                 <th>Kommentar</th>
+                {% if admin_permissions.edit_time_entries %}<th>Aktionen</th>{% endif %}
             </tr>
             </thead>
             <tbody>
             {% if entries_sorted %}
+                {% set report_next = '/admin/reports/time' ~ ('?' ~ request.url.query if request.url.query else '') %}
                 {% for entry in entries_sorted %}
                     <tr class="status-{{ entry.status }}{% if entry.deleted_company_name and not entry.company %} company-deleted{% endif %}">
                         <td>{{ entry.work_date.strftime('%d.%m.%Y') }}</td>
@@ -252,10 +254,19 @@
                         <td>{{ status_labels.get(entry.status, entry.status.title()) }}</td>
                         <td>{{ 'Manuell' if entry.is_manual else 'Automatisch' }}</td>
                         <td>{{ entry.notes or '-' }}</td>
+                        {% if admin_permissions.edit_time_entries %}
+                            <td>
+                                {% if not entry.is_open %}
+                                    <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/edit?next={{ report_next | urlencode }}&user={{ entry.user_id }}">Bearbeiten</a>
+                                {% else %}
+                                    <span class="text-muted">läuft</span>
+                                {% endif %}
+                            </td>
+                        {% endif %}
                     </tr>
                 {% endfor %}
             {% else %}
-                <tr><td colspan="9">Keine Buchungen vorhanden.</td></tr>
+                <tr><td colspan="{{ 10 if admin_permissions.edit_time_entries else 9 }}">Keine Buchungen vorhanden.</td></tr>
             {% endif %}
             </tbody>
         </table>
