@@ -5,6 +5,29 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.16] – 2026-07-23
+
+### Fixed – Bearbeiten scheiterte an bereits bestehenden Überschneidungen
+
+- **Korrektur einer Buchung wurde durch fremde Überlappung blockiert**: Eine
+  Buchung (z. B. automatisch „14:18–19:20") ließ sich nicht auf „16:00"
+  verkürzen – es kam „Zeiten überschneiden sich mit einer bestehenden
+  Buchung", obwohl der Zeitraum kleiner wird. Ursache: Die
+  Überschneidungsprüfung beim Bearbeiten zählte auch Überlappungen mit, die
+  bereits mit dem *bisherigen* Zeitraum bestanden – etwa eine noch laufende
+  (offene) Buchung, deren Fenster bis „jetzt" reicht, oder eine bereits
+  vorhandene Doppelbuchung. Dadurch ließ sich eine fehlerhafte Buchung nicht
+  einmal verkürzen.
+- **Neu**: Beim Bearbeiten werden nur noch **neu entstehende** Überschneidungen
+  abgelehnt. Eine Überschneidung, die schon mit dem ursprünglichen Zeitraum
+  bestand, blockiert die Korrektur nicht mehr. Das Verschieben auf einen bisher
+  freien, aber belegten Zeitraum wird weiterhin abgelehnt. Das Anlegen neuer
+  Buchungen (inkl. Nachträge/Teilen) bleibt unverändert streng geprüft.
+
+### Datenbank
+
+- Keine Schemaänderungen; keine Migration erforderlich.
+
 ## [0.9.15] – 2026-07-16
 
 ### Added – Nachtrag zwischen bestehenden Buchungen & Bearbeiten aus den Berichten
