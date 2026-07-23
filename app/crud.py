@@ -168,9 +168,11 @@ def _intervals_overlap(
     return first_start < second_end and second_start < first_end
 
 
-def _ensure_no_time_overlap(
+def _overlapping_entries(
     db: Session, payload: dict, *, exclude_id: Optional[int] = None
-) -> None:
+) -> list[models.TimeEntry]:
+    """Alle (nicht abgelehnten) Buchungen desselben Benutzers, deren Zeitraum
+    sich mit dem übergebenen überschneidet."""
     user_id = payload["user_id"]
     work_date = payload["work_date"]
     start_time = payload["start_time"]
@@ -188,12 +190,21 @@ def _ensure_no_time_overlap(
     )
     if exclude_id is not None:
         query = query.filter(models.TimeEntry.id != exclude_id)
+    conflicts: list[models.TimeEntry] = []
     for existing in query.all():
         existing_start, existing_end = _entry_bounds(
             existing.work_date, existing.start_time, existing.end_time, existing.is_open
         )
         if _intervals_overlap(new_start, new_end, existing_start, existing_end):
-            raise ValueError("OVERLAPPING_TIME_ENTRY")
+            conflicts.append(existing)
+    return conflicts
+
+
+def _ensure_no_time_overlap(
+    db: Session, payload: dict, *, exclude_id: Optional[int] = None
+) -> None:
+    if _overlapping_entries(db, payload, exclude_id=exclude_id):
+        raise ValueError("OVERLAPPING_TIME_ENTRY")
 
 
 def _ensure_no_vacation_overlap(db: Session, vacation: schemas.VacationRequestCreate) -> None:
@@ -558,7 +569,23 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
     payload["is_open"] = False
     payload.pop("source", None)
     payload.pop("external_id", None)
-    _ensure_no_time_overlap(db, payload, exclude_id=entry_id)
+
+    # Beim Bearbeiten nur NEU entstehende Überschneidungen ablehnen. Eine
+    # Buchung, die bereits mit dem bisherigen Zeitraum kollidierte (z. B. eine
+    # noch laufende Buchung, deren Fenster bis „jetzt" reicht, oder eine bereits
+    # vorhandene Doppelbuchung), darf eine Korrektur nicht blockieren – sonst
+    # ließe sich eine falsche Buchung nicht einmal verkürzen.
+    old_start, old_end = _entry_bounds(
+        db_entry.work_date, db_entry.start_time, db_entry.end_time, db_entry.is_open
+    )
+    for conflict in _overlapping_entries(db, payload, exclude_id=entry_id):
+        conflict_start, conflict_end = _entry_bounds(
+            conflict.work_date, conflict.start_time, conflict.end_time, conflict.is_open
+        )
+        if not _intervals_overlap(old_start, old_end, conflict_start, conflict_end):
+            # Überschneidung existierte vorher nicht → echter neuer Konflikt.
+            raise ValueError("OVERLAPPING_TIME_ENTRY")
+
     for key, value in payload.items():
         setattr(db_entry, key, value)
     db.commit()
