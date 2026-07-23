@@ -5,6 +5,32 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.15] – 2026-07-16
+
+### Added – Nachtrag zwischen bestehenden Buchungen & Bearbeiten aus den Berichten
+
+- **Nachtrag in eine abgeschlossene Buchung**: Fällt eine manuelle Buchung
+  (z. B. ein Telefonat) in eine bereits abgeschlossene Buchung, wird diese –
+  wie bisher schon die laufende Buchung – automatisch geteilt: Abschnitt
+  davor und danach behalten Firma, Kommentar, Status und Quelle der
+  Bestandsbuchung, dazwischen wird der Nachtrag eingefügt. Randfälle
+  (Beginn = Start, Ende = Ende, exakte Deckung) werden korrekt behandelt;
+  die erfassten Pausenminuten bleiben beim führenden Abschnitt. So lassen
+  sich neue Stempelungen zwischen bestehenden manuellen Buchungen einfügen,
+  ohne dass Zeiten doppelt zählen.
+- **Zeitbuchungen aus den Berichten bearbeiten**: Die Einzelbuchungs-Tabelle
+  unter Administration → Zeiterfassung → Zeitübersichten hat für Berechtigte
+  (Administratoren bzw. Gruppen mit „Zeitbuchungen bearbeiten") eine Spalte
+  „Aktionen" mit Bearbeiten-Link zum bestehenden Bearbeitungsformular.
+  Bisher war das Formular nur aus den Freigaben (offene manuelle Buchungen)
+  erreichbar; jetzt lassen sich auch freigegebene/automatische Buchungen
+  direkt aus der Übersicht korrigieren. Der Geltungsbereich (eigenes Team /
+  alle Benutzer) aus 0.9.12 gilt unverändert.
+
+### Datenbank
+
+- Keine Schemaänderungen; keine Migration erforderlich.
+
 ## [0.9.14] – 2026-07-16
 
 ### Added – Nachtrag bei laufender Arbeitszeit (laufende Buchung wird geteilt)

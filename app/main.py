@@ -3580,7 +3580,12 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     companies = crud.get_companies(db)
-    active_tab = "approvals" if sanitized_next.startswith("/admin/approvals") else "users"
+    if sanitized_next.startswith("/admin/approvals"):
+        active_tab = "approvals"
+    elif sanitized_next.startswith("/admin/reports"):
+        active_tab = "reports"
+    else:
+        active_tab = "users"
     return _admin_template(
         "admin/time_entry_form.html",
         request,

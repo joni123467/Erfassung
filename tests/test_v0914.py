@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -138,8 +138,8 @@ def _entries_for(user_id: int):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.14"
-    assert client.get("/health").json()["version"] == "0.9.14"
+    assert client.main.APP_VERSION == "0.9.15"
+    assert client.get("/health").json()["version"] == "0.9.15"
 
 
 # --- split behaviour --------------------------------------------------------------
@@ -260,11 +260,13 @@ def test_manual_entry_partially_overlapping_rejected(client):
     assert len(entries) == 1 and entries[0].is_open
 
 
-def test_manual_entry_colliding_with_closed_entry_rejected(client):
+def test_manual_entry_partially_overlapping_closed_entry_rejected(client):
+    """Nur teilweise Überlappung mit einer abgeschlossenen Buchung (nicht
+    vollständig umschlossen) wird weiterhin abgelehnt."""
     from app import crud, database, models, schemas
 
     uid = _admin_id()
-    now = datetime.now()
+    day = date.today() - timedelta(days=1)
     db = database.SessionLocal()
     try:
         crud.create_time_entry(
@@ -272,9 +274,9 @@ def test_manual_entry_colliding_with_closed_entry_rejected(client):
             schemas.TimeEntryCreate(
                 user_id=uid,
                 company_id=None,
-                work_date=date.today() - timedelta(days=1),
-                start_time=(now - timedelta(hours=2)).time(),
-                end_time=(now - timedelta(hours=1)).time(),
+                work_date=day,
+                start_time=time(8, 0),
+                end_time=time(9, 0),
                 break_minutes=0,
                 break_started_at=None,
                 is_open=False,
@@ -283,13 +285,14 @@ def test_manual_entry_colliding_with_closed_entry_rejected(client):
                 is_manual=False,
             ),
         )
+        # Beginnt innerhalb, endet aber nach der Bestandsbuchung → nicht umschlossen.
         with pytest.raises(ValueError, match="OVERLAPPING_TIME_ENTRY"):
             crud.create_manual_time_entry(
                 db,
                 _manual_entry_payload(
                     uid,
-                    datetime.combine(date.today() - timedelta(days=1), (now - timedelta(hours=1, minutes=30)).time()),
-                    datetime.combine(date.today() - timedelta(days=1), (now - timedelta(hours=1, minutes=15)).time()),
+                    datetime.combine(day, time(8, 30)),
+                    datetime.combine(day, time(9, 30)),
                 ),
             )
     finally:

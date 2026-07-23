@@ -2,7 +2,13 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.14`
+**Version:** `0.9.15`
+
+> Seit 0.9.15: **Nachtrag zwischen bestehenden Buchungen & Bearbeiten aus den
+> Berichten** – eine manuelle Buchung, die in eine abgeschlossene Buchung
+> fällt, teilt diese automatisch (wie bei der laufenden Buchung); die
+> Einzelbuchungs-Tabelle der Zeitübersichten bietet Berechtigten einen
+> Bearbeiten-Link.
 
 > Seit 0.9.14: **Nachtrag bei laufender Arbeitszeit** – eine manuelle Buchung
 > (z. B. ein Telefonat), die in die laufende Buchung fällt, teilt diese
@@ -69,13 +75,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.14 .
+docker build -t erfassung:0.9.15 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.14
+  erfassung:0.9.15
 ```
 
 ## GHCR & GitHub Actions
@@ -85,20 +91,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.14`)
+- Push von Tags `v*` (z. B. `v0.9.15`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.14`)
+- Versions-Tag aus `VERSION` (hier `0.9.15`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.14`)
+- Git-Tag (`v0.9.15`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.14`
+`ghcr.io/OWNER/erfassung:0.9.15`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -111,7 +117,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.14
+    image: ghcr.io/OWNER/erfassung:0.9.15
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -313,7 +319,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.14
+    image: ghcr.io/OWNER/erfassung:0.9.15
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -348,7 +354,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.14
+    image: ghcr.io/OWNER/erfassung:0.9.15
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -384,7 +390,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.14
+    image: ghcr.io/OWNER/erfassung:0.9.15
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -420,7 +426,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.14
+    image: ghcr.io/OWNER/erfassung:0.9.15
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -504,8 +510,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.14`)
-- optional Image-Name/Tag (`erfassung`, `0.9.14`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.15`)
+- optional Image-Name/Tag (`erfassung`, `0.9.15`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 
