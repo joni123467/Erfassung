@@ -5,6 +5,28 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.18] – 2026-07-24
+
+### Fixed – Falsche Überschneidung zwischen direkt angrenzenden Buchungen (Sekunden)
+
+- **Ursache gefunden**: Direkt aneinandergrenzende Buchungen teilen sich bei
+  Terminal-Importen denselben Stempel-Zeitpunkt **inklusive Sekunden** (z. B.
+  Ende der einen `14:18:45` = Beginn der nächsten `14:18:45`). Das
+  Bearbeiten-Formular arbeitet nur mit Minuten (`HH:MM`): Beim Speichern wurde
+  die Startzeit auf `14:18:00` abgerundet und „überlappte" dadurch die
+  Vorbuchung um bis zu 59 Sekunden. Folge: „Zeiten überschneiden sich mit
+  einer bestehenden Buchung" beim reinen Verkürzen einer Buchung, obwohl gar
+  kein echter Konflikt vorliegt.
+- **Behebung**: Die Überschneidungsprüfung (Anlegen, Bearbeiten, Nachtrag/
+  Teilen) vergleicht jetzt **minutengenau**. Sekunden-Grenzfälle direkt
+  angrenzender Buchungen gelten damit korrekt als *nicht* überlappend; echte
+  Überschneidungen von mindestens einer Minute werden weiterhin erkannt und
+  abgelehnt.
+
+### Datenbank
+
+- Keine Schemaänderungen; keine Migration erforderlich.
+
 ## [0.9.17] – 2026-07-24
 
 ### Changed – Aussagekräftige Überschneidungs-Meldung beim Bearbeiten
