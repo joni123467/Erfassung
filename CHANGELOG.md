@@ -5,6 +5,28 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.17] – 2026-07-24
+
+### Changed – Aussagekräftige Überschneidungs-Meldung beim Bearbeiten
+
+- Wird das Bearbeiten einer Buchung durch eine **tatsächlich neu entstehende**
+  Überschneidung blockiert, nennt die Fehlermeldung jetzt die **konkret
+  kollidierende Buchung** (Datum + Start–Ende), z. B. „Zeiten überschneiden
+  sich mit einer bestehenden Buchung: 22.07.2026 16:00–19:20". So ist sofort
+  erkennbar, welche Buchung im Weg ist.
+- Der eigentliche Fix aus 0.9.16 bleibt unverändert: Eine bereits mit dem
+  ursprünglichen Zeitraum bestehende Überschneidung (z. B. eine noch laufende
+  Buchung) blockiert eine Korrektur weiterhin **nicht**.
+
+> Hinweis: Sollte die Meldung „Zeiten überschneiden sich …" beim reinen
+> Verkürzen einer Buchung weiterhin **ohne** Detailangabe erscheinen, läuft die
+> Instanz noch nicht auf 0.9.16/0.9.17 – bitte das aktuelle Image ausrollen
+> (die laufende Version steht im Footer bzw. unter Administration → System).
+
+### Datenbank
+
+- Keine Schemaänderungen; keine Migration erforderlich.
+
 ## [0.9.16] – 2026-07-23
 
 ### Fixed – Bearbeiten scheiterte an bereits bestehenden Überschneidungen
