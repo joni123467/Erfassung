@@ -168,6 +168,17 @@ def _intervals_overlap(
     return first_start < second_end and second_start < first_end
 
 
+def _describe_entry(entry: models.TimeEntry) -> str:
+    """Kurzbeschreibung einer Buchung für Fehlermeldungen (Diagnose)."""
+    day = entry.work_date.strftime("%d.%m.%Y") if entry.work_date else "?"
+    start = entry.start_time.strftime("%H:%M") if entry.start_time else "?"
+    if entry.is_open:
+        end = "läuft"
+    else:
+        end = entry.end_time.strftime("%H:%M") if entry.end_time else "?"
+    return f"{day} {start}–{end}"
+
+
 def _overlapping_entries(
     db: Session, payload: dict, *, exclude_id: Optional[int] = None
 ) -> list[models.TimeEntry]:
@@ -584,7 +595,9 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
         )
         if not _intervals_overlap(old_start, old_end, conflict_start, conflict_end):
             # Überschneidung existierte vorher nicht → echter neuer Konflikt.
-            raise ValueError("OVERLAPPING_TIME_ENTRY")
+            # Details der kollidierenden Buchung mitgeben, damit die Meldung
+            # nennt, WELCHE Buchung blockiert (Diagnose).
+            raise ValueError(f"OVERLAPPING_TIME_ENTRY:{_describe_entry(conflict)}")
 
     for key, value in payload.items():
         setattr(db_entry, key, value)

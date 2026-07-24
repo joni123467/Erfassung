@@ -3655,8 +3655,13 @@ def update_time_entry_html(
         )
     except ValueError as exc:
         error_message = "Ungültige Angaben"
-        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+        exc_text = str(exc)
+        if exc_text.startswith("OVERLAPPING_TIME_ENTRY"):
             error_message = "Zeiten überschneiden sich mit einer bestehenden Buchung"
+            # Detail (kollidierende Buchung) an die Meldung anhängen, falls vorhanden.
+            _, _, detail = exc_text.partition(":")
+            if detail:
+                error_message = f"{error_message}: {detail}"
         redirect = _build_redirect_with_next(
             "/admin/users", next_url, error=error_message, user=redirect_user
         )
