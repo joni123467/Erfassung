@@ -168,6 +168,32 @@ def _intervals_overlap(
     return first_start < second_end and second_start < first_end
 
 
+def _floor_to_minute(moment: datetime) -> datetime:
+    return moment.replace(second=0, microsecond=0)
+
+
+def _intervals_overlap_minute(
+    first_start: datetime, first_end: datetime, second_start: datetime, second_end: datetime
+) -> bool:
+    """Überschneidung minutengenau prüfen.
+
+    Die Oberfläche arbeitet mit Minuten (``HH:MM``), Terminal-Importe speichern
+    jedoch Sekunden. Direkt aneinandergrenzende Buchungen teilen sich denselben
+    Stempel-Zeitpunkt inkl. Sekunden (z. B. Ende 14:18:45 = Beginn 14:18:45).
+    Wird eine solche Buchung im Formular gespeichert, rundet die Startzeit auf
+    die Minute ab (14:18:00) und würde die Vorbuchung um <1 Minute „überlappen".
+    Durch das Abrunden auf die Minute werden solche Sekunden-Grenzfälle korrekt
+    als *nicht* überlappend behandelt; echte Überschneidungen (≥ 1 Minute)
+    bleiben erkannt.
+    """
+    return _intervals_overlap(
+        _floor_to_minute(first_start),
+        _floor_to_minute(first_end),
+        _floor_to_minute(second_start),
+        _floor_to_minute(second_end),
+    )
+
+
 def _describe_entry(entry: models.TimeEntry) -> str:
     """Kurzbeschreibung einer Buchung für Fehlermeldungen (Diagnose)."""
     day = entry.work_date.strftime("%d.%m.%Y") if entry.work_date else "?"
@@ -206,7 +232,7 @@ def _overlapping_entries(
         existing_start, existing_end = _entry_bounds(
             existing.work_date, existing.start_time, existing.end_time, existing.is_open
         )
-        if _intervals_overlap(new_start, new_end, existing_start, existing_end):
+        if _intervals_overlap_minute(new_start, new_end, existing_start, existing_end):
             conflicts.append(existing)
     return conflicts
 
@@ -355,7 +381,7 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
         open_start, open_end = _entry_bounds(
             open_entry.work_date, open_entry.start_time, open_entry.end_time, True
         )
-        if _intervals_overlap(new_start, new_end, open_start, open_end):
+        if _intervals_overlap_minute(new_start, new_end, open_start, open_end):
             if open_entry.break_started_at:
                 raise ValueError("BREAK_RUNNING")
             if new_start < open_start or new_end > open_end:
@@ -593,7 +619,7 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
         conflict_start, conflict_end = _entry_bounds(
             conflict.work_date, conflict.start_time, conflict.end_time, conflict.is_open
         )
-        if not _intervals_overlap(old_start, old_end, conflict_start, conflict_end):
+        if not _intervals_overlap_minute(old_start, old_end, conflict_start, conflict_end):
             # Überschneidung existierte vorher nicht → echter neuer Konflikt.
             # Details der kollidierenden Buchung mitgeben, damit die Meldung
             # nennt, WELCHE Buchung blockiert (Diagnose).
