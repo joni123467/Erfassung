@@ -5,6 +5,51 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.19] – 2026-07-24
+
+### Added – Abteilungsadministration (Gruppenadmins)
+
+- **Administrationsbereich für Abteilungsadministratoren**: Der
+  Administration-Link und der Bereich `/admin` waren an volle Adminrechte
+  (`is_admin`) gebunden – Gruppen mit Team-Rechten kamen gar nicht hinein.
+  Jetzt genügt **eine beliebige Administrationsberechtigung**; `/admin` landet
+  automatisch auf der ersten erlaubten Seite (Benutzer → Freigaben →
+  Zeitübersichten → …). Die Navigation zeigt weiterhin nur die freigegebenen
+  Bereiche.
+- **„Benutzer verwalten“ mit Geltungsbereich**: Das Recht ist jetzt – wie die
+  Team-Rechte aus 0.9.12 – dreistufig (Nicht erlaubt / Eigenes Team / Alle
+  Benutzer). Bei „Eigenes Team“ sieht und bearbeitet ein Abteilungsadmin nur
+  Benutzer der eigenen Gruppe; die Benutzerliste, die Detailseite sowie
+  Anlegen/Ändern/Löschen sind entsprechend begrenzt.
+- **Schutz vor Rechteausweitung**: Im Bereich „Eigenes Team“ lässt sich nur die
+  eigene Gruppe zuweisen – insbesondere keine Administratorgruppe. Das
+  Gruppen-Auswahlfeld bietet nur zulässige Gruppen an, und der Server lehnt
+  abweichende Zuweisungen ab.
+- **Benutzer-Detailseite**: verlangte bisher volle Adminrechte und ist jetzt
+  für Berechtigte mit „Benutzer verwalten“ (im Geltungsbereich) erreichbar.
+
+### Added – Buchungen überschreiben mit Bestätigung
+
+- Führt das Bearbeiten einer Buchung zu einer **neuen** Überschneidung, wird
+  die Änderung nicht mehr abgelehnt. Stattdessen erscheint eine
+  **Bestätigungsseite**, die auflistet, welche Buchungen betroffen sind
+  (Datum, Zeitraum, Mitarbeiter, Firma) und **was mit ihnen passiert**:
+  - vollständig überdeckt → wird gelöscht,
+  - teilweise überlappt → wird gekürzt (mit Angabe der neuen Zeiten),
+  - neue Zeiten liegen mittendrin → wird geteilt (beide Abschnitte werden
+    genannt).
+- Erst „Überschreiben und speichern“ führt die Änderung aus; „Zurück zum
+  Bearbeiten“ und „Abbrechen“ lassen alles unverändert.
+- **Laufende Buchungen werden nie gelöscht**, sondern ab dem Ende der neuen
+  Buchung fortgeführt – eine laufende Zeiterfassung bricht durch eine
+  Korrektur nicht ab.
+
+### Datenbank
+
+- Neue Spalte `groups.can_manage_users_scope` (VARCHAR(10), Default `'all'`).
+  Migration 12 bzw. `ensure_schema()` ergänzen sie idempotent; Bestandsgruppen
+  behalten mit `'all'` ihr bisheriges Verhalten.
+
 ## [0.9.18] – 2026-07-24
 
 ### Fixed – Falsche Überschneidung zwischen direkt angrenzenden Buchungen (Sekunden)

@@ -597,7 +597,120 @@ def get_time_entries(
     return query.all()
 
 
-def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate) -> Optional[models.TimeEntry]:
+def plan_time_entry_overwrite(
+    db: Session, entry_id: int, entry: schemas.TimeEntryCreate
+) -> list[dict]:
+    """Ermittelt, welche Buchungen eine Änderung überschreiben würde.
+
+    Liefert je betroffener Buchung ein Dict mit ``entry`` (die kollidierende
+    Buchung), ``action`` (``delete`` | ``shorten`` | ``split``) und – bei
+    ``shorten``/``split`` – den resultierenden Zeiten. Nur Konflikte, die neu
+    entstehen (siehe ``update_time_entry``), werden gemeldet.
+    """
+    db_entry = get_time_entry(db, entry_id)
+    if not db_entry:
+        return []
+    payload = entry.model_dump()
+    payload["break_started_at"] = None
+    payload["is_open"] = False
+    payload.pop("source", None)
+    payload.pop("external_id", None)
+
+    old_start, old_end = _entry_bounds(
+        db_entry.work_date, db_entry.start_time, db_entry.end_time, db_entry.is_open
+    )
+    new_start, new_end = _entry_bounds(
+        payload["work_date"], payload["start_time"], payload["end_time"], False
+    )
+    new_start, new_end = _floor_to_minute(new_start), _floor_to_minute(new_end)
+
+    plan: list[dict] = []
+    for conflict in _overlapping_entries(db, payload, exclude_id=entry_id):
+        conflict_start, conflict_end = _entry_bounds(
+            conflict.work_date, conflict.start_time, conflict.end_time, conflict.is_open
+        )
+        if _intervals_overlap_minute(old_start, old_end, conflict_start, conflict_end):
+            continue  # bestand schon vorher – kein Überschreiben nötig
+        c_start = _floor_to_minute(conflict_start)
+        c_end = _floor_to_minute(conflict_end)
+        if new_start <= c_start and c_end <= new_end:
+            action, result = "delete", None
+        elif c_start < new_start and new_end < c_end:
+            action = "split"
+            result = ((c_start.time(), new_start.time()), (new_end.time(), c_end.time()))
+        elif c_start < new_start:
+            action, result = "shorten", (c_start.time(), new_start.time())
+        else:
+            action, result = "shorten", (new_end.time(), c_end.time())
+        plan.append({
+            "entry": conflict,
+            "action": action,
+            "result": result,
+            "description": _describe_entry(conflict),
+        })
+    return plan
+
+
+def _apply_overwrite(
+    db: Session, plan: list[dict], new_start: datetime, new_end: datetime
+) -> None:
+    """Kollidierende Buchungen gemäß Plan kürzen, teilen oder entfernen.
+
+    Offene (laufende) Buchungen werden nie gelöscht, sondern nur verschoben –
+    die laufende Zeiterfassung darf durch eine Korrektur nicht abbrechen.
+    """
+    for item in plan:
+        conflict: models.TimeEntry = item["entry"]
+        action = item["action"]
+        if action == "delete":
+            if conflict.is_open:
+                # Laufende Buchung ab dem Ende der neuen Buchung fortführen.
+                conflict.work_date = new_end.date()
+                conflict.start_time = new_end.time()
+                conflict.end_time = new_end.time()
+                continue
+            db.delete(conflict)
+        elif action == "shorten":
+            start_time, end_time = item["result"]
+            conflict.start_time = start_time
+            if conflict.is_open:
+                conflict.end_time = start_time
+            else:
+                conflict.end_time = end_time
+        elif action == "split":
+            (first_start, first_end), (second_start, second_end) = item["result"]
+            conflict.start_time = first_start
+            conflict.end_time = first_end
+            conflict.is_open = False
+            db.add(models.TimeEntry(
+                user_id=conflict.user_id,
+                company_id=conflict.company_id,
+                work_date=conflict.work_date,
+                start_time=second_start,
+                end_time=second_end,
+                break_minutes=0,
+                break_started_at=None,
+                is_open=False,
+                notes=conflict.notes or "",
+                status=conflict.status,
+                is_manual=conflict.is_manual,
+            ))
+
+
+def update_time_entry(
+    db: Session,
+    entry_id: int,
+    entry: schemas.TimeEntryCreate,
+    *,
+    overwrite: bool = False,
+) -> Optional[models.TimeEntry]:
+    """Buchung aktualisieren.
+
+    ``overwrite=True`` löst neu entstehende Überschneidungen auf, statt sie
+    abzulehnen: kollidierende Buchungen werden gekürzt, geteilt oder entfernt
+    (siehe ``plan_time_entry_overwrite``). Ohne das Flag wird bei einem neuen
+    Konflikt ``OVERLAPPING_TIME_ENTRY:<Beschreibung>`` ausgelöst.
+    """
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return None
@@ -612,18 +725,28 @@ def update_time_entry(db: Session, entry_id: int, entry: schemas.TimeEntryCreate
     # noch laufende Buchung, deren Fenster bis „jetzt" reicht, oder eine bereits
     # vorhandene Doppelbuchung), darf eine Korrektur nicht blockieren – sonst
     # ließe sich eine falsche Buchung nicht einmal verkürzen.
-    old_start, old_end = _entry_bounds(
-        db_entry.work_date, db_entry.start_time, db_entry.end_time, db_entry.is_open
-    )
-    for conflict in _overlapping_entries(db, payload, exclude_id=entry_id):
-        conflict_start, conflict_end = _entry_bounds(
-            conflict.work_date, conflict.start_time, conflict.end_time, conflict.is_open
+    if overwrite:
+        # Kollidierende Buchungen zuerst anpassen/entfernen, damit die
+        # anschließende Änderung konfliktfrei ist.
+        plan = plan_time_entry_overwrite(db, entry_id, entry)
+        new_start, new_end = _entry_bounds(
+            payload["work_date"], payload["start_time"], payload["end_time"], False
         )
-        if not _intervals_overlap_minute(old_start, old_end, conflict_start, conflict_end):
-            # Überschneidung existierte vorher nicht → echter neuer Konflikt.
-            # Details der kollidierenden Buchung mitgeben, damit die Meldung
-            # nennt, WELCHE Buchung blockiert (Diagnose).
-            raise ValueError(f"OVERLAPPING_TIME_ENTRY:{_describe_entry(conflict)}")
+        _apply_overwrite(db, plan, _floor_to_minute(new_start), _floor_to_minute(new_end))
+        db.flush()
+    else:
+        old_start, old_end = _entry_bounds(
+            db_entry.work_date, db_entry.start_time, db_entry.end_time, db_entry.is_open
+        )
+        for conflict in _overlapping_entries(db, payload, exclude_id=entry_id):
+            conflict_start, conflict_end = _entry_bounds(
+                conflict.work_date, conflict.start_time, conflict.end_time, conflict.is_open
+            )
+            if not _intervals_overlap_minute(old_start, old_end, conflict_start, conflict_end):
+                # Überschneidung existierte vorher nicht → echter neuer Konflikt.
+                # Details der kollidierenden Buchung mitgeben, damit die Meldung
+                # nennt, WELCHE Buchung blockiert (Diagnose).
+                raise ValueError(f"OVERLAPPING_TIME_ENTRY:{_describe_entry(conflict)}")
 
     for key, value in payload.items():
         setattr(db_entry, key, value)

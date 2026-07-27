@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Buchung überschreiben – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = active_tab %}
+{% set admin_nav_collapse = true %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>Überschneidung bestätigen</h1>
+        <a href="{{ next_url }}" class="button ghost">Abbrechen</a>
+    </div>
+
+    <p class="form-hint">
+        Die geänderte Buchung überschneidet sich mit {{ overwrite_plan|length }}
+        bestehende{{ 'n' if overwrite_plan|length == 1 else '' }} Buchung{{ 'en' if overwrite_plan|length != 1 else '' }}.
+        Beim Speichern {{ 'wird diese' if overwrite_plan|length == 1 else 'werden diese' }} wie folgt angepasst:
+    </p>
+
+    <dl class="overwrite-summary">
+        <div>
+            <dt>Neue Zeiten</dt>
+            <dd>
+                {{ form_values.work_date.strftime('%d.%m.%Y') }},
+                {{ form_values.start_time.strftime('%H:%M') }}–{{ form_values.end_time.strftime('%H:%M') }} Uhr
+            </dd>
+        </div>
+        <div>
+            <dt>Bisher</dt>
+            <dd>
+                {{ entry.work_date.strftime('%d.%m.%Y') }},
+                {{ entry.start_time.strftime('%H:%M') }}–{% if entry.is_open %}läuft{% else %}{{ entry.end_time.strftime('%H:%M') }}{% endif %} Uhr
+            </dd>
+        </div>
+    </dl>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Betroffene Buchung</th>
+                <th>Mitarbeiter</th>
+                <th>Firma</th>
+                <th>Auswirkung</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for item in overwrite_plan %}
+                <tr>
+                    <td>{{ item.description }}</td>
+                    <td>{{ item.entry.user.full_name if item.entry.user else '–' }}</td>
+                    <td>{{ item.entry.company_display_name }}</td>
+                    <td>
+                        {% if item.action == 'delete' %}
+                            {% if item.entry.is_open %}
+                                <span class="permission-badge">Läuft ab {{ form_values.end_time.strftime('%H:%M') }} Uhr weiter</span>
+                            {% else %}
+                                <span class="permission-badge permission-badge--none">Wird gelöscht</span>
+                            {% endif %}
+                        {% elif item.action == 'shorten' %}
+                            <span class="permission-badge">Wird gekürzt auf {{ item.result[0].strftime('%H:%M') }}–{{ item.result[1].strftime('%H:%M') }} Uhr</span>
+                        {% elif item.action == 'split' %}
+                            <span class="permission-badge">Wird geteilt in
+                                {{ item.result[0][0].strftime('%H:%M') }}–{{ item.result[0][1].strftime('%H:%M') }} und
+                                {{ item.result[1][0].strftime('%H:%M') }}–{{ item.result[1][1].strftime('%H:%M') }} Uhr</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <form method="post" action="/admin/time-entries/{{ entry_id }}/update" class="form-actions overwrite-actions">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <input type="hidden" name="user_id" value="{{ form_values.user_id }}">
+        <input type="hidden" name="work_date" value="{{ form_values.work_date.strftime('%Y-%m-%d') }}">
+        <input type="hidden" name="start_time" value="{{ form_values.start_time.strftime('%H:%M') }}">
+        <input type="hidden" name="end_time" value="{{ form_values.end_time.strftime('%H:%M') }}">
+        <input type="hidden" name="break_minutes" value="{{ form_values.break_minutes }}">
+        <input type="hidden" name="company_id" value="{{ form_values.company_id }}">
+        <input type="hidden" name="notes" value="{{ form_values.notes }}">
+        <input type="hidden" name="redirect_user" value="{{ redirect_user }}">
+        <input type="hidden" name="next_url" value="{{ next_url }}">
+        <input type="hidden" name="confirm_overwrite" value="1">
+        <a href="/admin/time-entries/{{ entry_id }}/edit?next={{ next_url | urlencode }}&user={{ redirect_user }}" class="button ghost">Zurück zum Bearbeiten</a>
+        <button type="submit" class="button danger">Überschreiben und speichern</button>
+    </form>
+</section>
+{% endblock %}

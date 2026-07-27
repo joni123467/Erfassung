@@ -43,6 +43,7 @@ class GroupBase(BaseModel):
     can_approve_manual_entries_scope: str = "all"
     can_view_time_reports_scope: str = "all"
     can_edit_time_entries_scope: str = "all"
+    can_manage_users_scope: str = "all"
 
 
 class GroupCreate(GroupBase):

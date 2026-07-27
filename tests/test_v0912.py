@@ -184,8 +184,8 @@ def team_setup(client):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.18"
-    assert client.get("/health").json()["version"] == "0.9.18"
+    assert client.main.APP_VERSION == "0.9.19"
+    assert client.get("/health").json()["version"] == "0.9.19"
 
 
 # --- registry / model ------------------------------------------------------------
@@ -193,11 +193,13 @@ def test_version(client):
 def test_scope_columns_exist(client):
     from app import models, permissions
 
+    # Team-Rechte (0.9.12) + Benutzerverwaltung (ab 0.9.19 ebenfalls scoped)
     assert set(permissions.SCOPED_KEYS) == {
         "can_approve_manual_entries",
         "can_manage_vacations",
         "can_view_time_reports",
         "can_edit_time_entries",
+        "can_manage_users",
     }
     for key in permissions.SCOPED_KEYS:
         assert hasattr(models.Group, permissions.scope_column(key))
