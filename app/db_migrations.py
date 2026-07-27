@@ -246,6 +246,19 @@ def _add_group_permission_scopes(engine: Engine) -> None:
         )
 
 
+def _add_manage_users_scope(engine: Engine) -> None:
+    """Geltungsbereich für „Benutzer verwalten“ (§0.9.19).
+
+    Ermöglicht Abteilungsadministratoren, die Benutzer der eigenen Gruppe zu
+    verwalten. Default 'all' erhält das Bestandsverhalten.
+    """
+
+    db_schema.add_column(
+        engine, "groups", "can_manage_users_scope", "VARCHAR(10)",
+        default="'all'", backfill_null_to="'all'",
+    )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -258,6 +271,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (9, _add_terminal_tables),
     (10, _add_group_permission_overhaul),
     (11, _add_group_permission_scopes),
+    (12, _add_manage_users_scope),
 ]
 
 

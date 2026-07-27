@@ -103,8 +103,8 @@ def _entry(user_id, start, end):
 
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.18"
-    assert client.get("/health").json()["version"] == "0.9.18"
+    assert client.main.APP_VERSION == "0.9.19"
+    assert client.get("/health").json()["version"] == "0.9.19"
 
 
 def test_crud_new_conflict_error_names_booking(client):
@@ -134,7 +134,9 @@ def test_crud_new_conflict_error_names_booking(client):
     assert "20:00" in text and "21:00" in text and "22.07.2026" in text
 
 
-def test_route_overlap_message_includes_detail(client):
+def test_route_overlap_shows_confirmation_with_detail(client):
+    """Seit 0.9.19 fragt die Route bei einem neuen Konflikt nach (statt hart
+    abzulehnen) und nennt dabei die betroffene Buchung."""
     login(client)
     uid = _admin_id()
     a = _entry(uid, time(14, 18), time(19, 20))
@@ -150,10 +152,12 @@ def test_route_overlap_message_includes_detail(client):
         },
         follow_redirects=False,
     )
-    assert response.status_code == 303
-    location = unquote(response.headers["location"])
-    assert "überschneiden" in location
-    assert "20:00" in location and "21:00" in location
+    assert response.status_code == 200
+    html = response.text
+    assert "Überschneidung bestätigen" in html
+    # Nennt die betroffene Buchung 20:00–21:00
+    assert "20:00" in html and "21:00" in html
+    assert 'name="confirm_overwrite"' in html
 
 
 def test_shrink_still_ok_and_no_error_detail(client):

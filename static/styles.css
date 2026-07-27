@@ -3807,3 +3807,31 @@ tr.company-deleted td {
     height: var(--control-h-sm);
     padding: 0 0.5rem;
 }
+
+/* ── Buchung überschreiben (Bestätigung) ───────────────────────────── */
+
+.overwrite-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin: 0 0 1rem;
+}
+
+.overwrite-summary dt {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.overwrite-summary dd {
+    margin: 0.15rem 0 0;
+    font-weight: 600;
+}
+
+.overwrite-actions {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    margin-top: 1rem;
+}

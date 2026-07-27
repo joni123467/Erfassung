@@ -156,12 +156,21 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
     PermissionCategory(
         key="administration",
         label="Verwaltung",
-        description="Zugriff auf Verwaltungsbereiche der Anwendung.",
+        description=(
+            "Zugriff auf Verwaltungsbereiche der Anwendung. Der Geltungsbereich "
+            "legt fest, ob nur die eigene Abteilung (Gruppe) oder alle Benutzer "
+            "verwaltet werden dürfen."
+        ),
         permissions=(
             Permission(
                 key="can_manage_users",
                 label="Benutzer verwalten",
-                description="Benutzerkonten und deren Einstellungen anlegen und bearbeiten.",
+                description=(
+                    "Benutzerkonten und deren Einstellungen anlegen und bearbeiten. "
+                    "Bei „Eigenes Team“ nur Benutzer der eigenen Gruppe; "
+                    "Administratorgruppen können dann nicht vergeben werden."
+                ),
+                scoped=True,
             ),
         ),
     ),

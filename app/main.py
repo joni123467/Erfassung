@@ -479,6 +479,7 @@ def ensure_schema() -> None:
                 "can_approve_manual_entries_scope",
                 "can_view_time_reports_scope",
                 "can_edit_time_entries_scope",
+                "can_manage_users_scope",
             ):
                 if column_name not in columns:
                     connection.execute(
@@ -2536,6 +2537,29 @@ def _user_in_permission_scope(db: Session, user: models.User, attribute: str, ta
     return target_user_id is not None and target_user_id in allowed
 
 
+def _manageable_groups(db: Session, user: models.User) -> list[models.Group]:
+    """Gruppen, die der Benutzer bei der Benutzerverwaltung zuweisen darf.
+
+    Abteilungsadministratoren (Geltungsbereich „Eigenes Team“) dürfen nur die
+    eigene Gruppe vergeben – insbesondere keine Administratorgruppe, sonst
+    ließen sich die eigenen Rechte ausweiten.
+    """
+    if _permission_scope(user, "can_manage_users") == group_permissions.SCOPE_ALL:
+        return crud.get_groups(db)
+    if not user.group_id:
+        return []
+    group = crud.get_group(db, user.group_id)
+    return [group] if group else []
+
+
+def _group_assignment_allowed(db: Session, user: models.User, group_id: Optional[int]) -> bool:
+    """Darf der Benutzer einem Konto diese Gruppe zuweisen?"""
+    if _permission_scope(user, "can_manage_users") == group_permissions.SCOPE_ALL:
+        return True
+    # Eingeschränkter Bereich: nur die eigene Gruppe, keine "ohne Gruppe".
+    return group_id is not None and group_id == user.group_id
+
+
 def _has_self_service_permission(user: models.User, attribute: str) -> bool:
     """Selbstbedienungsrechte (eigene Buchungen/Anträge): Standard erlaubt.
 
@@ -2577,7 +2601,50 @@ def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
     }
     permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
     permissions["create_companies"] = _can_create_companies(user)
+    # "any" steuert, ob der Administrationsbereich überhaupt erreichbar ist –
+    # auch für Abteilungsadministratoren ohne volle Adminrechte.
+    permissions["any"] = any(
+        permissions[key]
+        for key in (
+            "users", "groups", "companies", "holidays", "approvals",
+            "reports", "edit_time_entries", "integrations", "system",
+        )
+    )
     return permissions
+
+
+# Reihenfolge der Startseiten des Administrationsbereichs: die erste Seite, für
+# die der Benutzer berechtigt ist, wird beim Aufruf von /admin angesteuert.
+_ADMIN_ENTRY_PAGES: tuple[tuple[str, str], ...] = (
+    ("users", "/admin/users"),
+    ("approvals", "/admin/approvals"),
+    ("reports", "/admin/reports/time"),
+    ("groups", "/admin/groups"),
+    ("companies", "/admin/companies"),
+    ("holidays", "/admin/holidays"),
+    ("integrations", "/admin/terminals"),
+    ("system", "/admin/system/status"),
+)
+
+
+def _admin_landing_page(user: models.User) -> Optional[str]:
+    permissions = _resolve_admin_permissions(user)
+    for key, url in _ADMIN_ENTRY_PAGES:
+        if permissions.get(key):
+            return url
+    return None
+
+
+def has_admin_access(user: Optional[models.User]) -> bool:
+    """Für Templates: Ist der Administrationsbereich für den Benutzer sichtbar?"""
+    if not user:
+        return False
+    return _resolve_admin_permissions(user)["any"]
+
+
+# In base.html wird der Administrations-Link damit auch für
+# Abteilungsadministratoren (ohne volle Adminrechte) eingeblendet.
+templates.env.globals["has_admin_access"] = has_admin_access
 
 
 def _admin_template(
@@ -2605,9 +2672,10 @@ def admin_portal(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_manage_users(user):
+    landing = _admin_landing_page(user)
+    if not landing:
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    return RedirectResponse(url="/admin/users", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=landing, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/admin/users", response_class=HTMLResponse)
@@ -2620,6 +2688,10 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     users = crud.get_users(db)
+    # Abteilungsadministratoren sehen nur Benutzer der eigenen Gruppe.
+    user_scope_ids = _scoped_user_ids(db, user, "can_manage_users")
+    if user_scope_ids is not None:
+        users = [item for item in users if item.id in user_scope_ids]
     mobile_install_url = str(request.url_for("mobile_dashboard"))
     mobile_quick_login_urls = {
         item.id: f"{request.url_for('mobile_quick_login')}?token={_create_mobile_autologin_token(item.id)}"
@@ -2644,7 +2716,7 @@ def admin_users_new(request: Request, db: Session = Depends(database.get_db)):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    groups = crud.get_groups(db)
+    groups = _manageable_groups(db, user)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     return _admin_template(
@@ -2663,7 +2735,7 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     target = crud.get_user(db, user_id)
     if not target:
@@ -2671,7 +2743,12 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
             url="/admin/users?error=Benutzer+nicht+gefunden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    groups = crud.get_groups(db)
+    if not _user_in_permission_scope(db, user, "can_manage_users", target.id):
+        return RedirectResponse(
+            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinem+Team",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    groups = _manageable_groups(db, user)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     quick_login_url = (
@@ -3325,6 +3402,11 @@ def create_user_html(
     if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     group_value = int(group_id) if group_id else None
+    if not _group_assignment_allowed(db, user, group_value):
+        return RedirectResponse(
+            url="/admin/users/new?error=Gruppe+darf+nicht+zugewiesen+werden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     time_account_value = time_account_enabled == "on"
     overtime_vacation_value = overtime_vacation_enabled == "on"
     carryover_enabled = vacation_carryover_enabled == "on"
@@ -3403,7 +3485,17 @@ def update_user_html(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    if not _user_in_permission_scope(db, user, "can_manage_users", user_id):
+        return RedirectResponse(
+            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinem+Team",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     group_value = int(group_id) if group_id else None
+    if not _group_assignment_allowed(db, user, group_value):
+        return RedirectResponse(
+            url=f"/admin/users/{user_id}?error=Gruppe+darf+nicht+zugewiesen+werden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     time_account_value = time_account_enabled == "on"
     overtime_vacation_value = overtime_vacation_enabled == "on"
     carryover_enabled = vacation_carryover_enabled == "on"
@@ -3471,6 +3563,11 @@ def delete_user_html(request: Request, user_id: int, db: Session = Depends(datab
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_manage_users(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    if not _user_in_permission_scope(db, user, "can_manage_users", user_id):
+        return RedirectResponse(
+            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinem+Team",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     if not crud.delete_user(db, user_id):
         return RedirectResponse(
             url="/admin/users?error=Benutzer+konnte+nicht+gelöscht+werden",
@@ -3611,6 +3708,7 @@ def update_time_entry_html(
     notes: str = Form(""),
     redirect_user: Optional[str] = Form(None),
     next_url: Optional[str] = Form(None),
+    confirm_overwrite: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -3637,21 +3735,45 @@ def update_time_entry_html(
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     company_value = int(company_id) if company_id else None
+    payload = schemas.TimeEntryCreate(
+        user_id=user_id,
+        company_id=company_value,
+        work_date=work_date,
+        start_time=start_time,
+        end_time=end_time,
+        break_minutes=max(break_minutes, 0),
+        break_started_at=None,
+        is_open=False,
+        notes=notes,
+    )
+    # Ohne Bestätigung: bei einem neuen Konflikt zuerst nachfragen und
+    # auflisten, welche Buchungen überschrieben würden.
+    if confirm_overwrite != "1":
+        overwrite_plan = crud.plan_time_entry_overwrite(db, entry_id, payload)
+        if overwrite_plan:
+            return _admin_template(
+                "admin/time_entry_overwrite.html",
+                request,
+                user,
+                entry=crud.get_time_entry(db, entry_id),
+                overwrite_plan=overwrite_plan,
+                form_values={
+                    "user_id": user_id,
+                    "work_date": work_date,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "break_minutes": max(break_minutes, 0),
+                    "company_id": company_id or "",
+                    "notes": notes,
+                },
+                entry_id=entry_id,
+                next_url=_sanitize_next(next_url or "/admin/users", "/admin/users"),
+                redirect_user=redirect_user or "",
+                active_tab="reports",
+            )
     try:
         updated = crud.update_time_entry(
-            db,
-            entry_id,
-            schemas.TimeEntryCreate(
-                user_id=user_id,
-                company_id=company_value,
-                work_date=work_date,
-                start_time=start_time,
-                end_time=end_time,
-                break_minutes=max(break_minutes, 0),
-                break_started_at=None,
-                is_open=False,
-                notes=notes,
-            ),
+            db, entry_id, payload, overwrite=confirm_overwrite == "1",
         )
     except ValueError as exc:
         error_message = "Ungültige Angaben"
