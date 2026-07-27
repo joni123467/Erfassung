@@ -1557,6 +1557,26 @@ body.modal-open {
     margin: 0;
 }
 
+.export-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.export-inline__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.export-inline__toggle input {
+    margin: 0;
+}
+
 .filter-bar {
     display: flex;
     flex-wrap: wrap;

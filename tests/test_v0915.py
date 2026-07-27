@@ -156,8 +156,8 @@ def _insert(user_id, payload):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.19"
-    assert client.get("/health").json()["version"] == "0.9.19"
+    assert client.main.APP_VERSION == "0.9.20"
+    assert client.get("/health").json()["version"] == "0.9.20"
 
 
 # --- split a closed entry ----------------------------------------------------------

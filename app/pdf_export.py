@@ -470,14 +470,50 @@ def export_time_overview_pdf(
     return buffer
 
 
+def _entry_table(styles: dict, entries: Sequence[TimeEntry], doc_width: float) -> Table:
+    """Stamp times of a single user – same layout as the personal overview."""
+    entry_rows: list[list[str]] = []
+    total_minutes = 0
+    for entry in sorted(entries, key=lambda item: (item.work_date, item.start_time)):
+        end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
+        company_name = entry.company.name if entry.company else "Allgemeine Arbeitszeit"
+        total_minutes += entry.worked_minutes
+        entry_rows.append(
+            [
+                entry.work_date.strftime("%d.%m.%Y"),
+                company_name,
+                entry.start_time.strftime("%H:%M"),
+                end_value,
+                f"{_format_minutes(entry.worked_minutes)} Std",
+                _status_label(entry.status),
+                entry.notes or "–",
+            ]
+        )
+    return _data_table(
+        styles,
+        header=["Datum", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Kommentar"],
+        rows=entry_rows,
+        fractions=[0.105, 0.205, 0.065, 0.065, 0.10, 0.14, 0.32],
+        aligns=["L", "L", "C", "C", "R", "L", "L"],
+        doc_width=doc_width,
+        total_row=["Summe", "", "", "", f"{_format_minutes(total_minutes)} Std", "", ""],
+        total_span=4,
+    )
+
+
 def export_user_summary_pdf(
     *,
     period_range: str,
     rows: Sequence[dict[str, object]],
     totals: dict[str, int],
+    include_entries: bool = False,
 ) -> BytesIO:
     """Per-user evaluation: one row per selected user, layout consistent
-    with the other reports (same style system)."""
+    with the other reports (same style system).
+
+    With ``include_entries`` the individual stamp times of every listed user
+    are appended – the same table the users get in their own overview.
+    """
     _ensure_reportlab()
 
     buffer = BytesIO()
@@ -495,11 +531,13 @@ def export_user_summary_pdf(
     story.append(Spacer(1, 3 * mm))
 
     table_rows: list[list[str]] = []
+    entry_sections: list[tuple[str, Sequence[TimeEntry]]] = []
     for row in rows:
         row_user = row.get("user")
         full_name = str(getattr(row_user, "full_name", "")) or "–"
         username = str(getattr(row_user, "username", ""))
         label = f"{full_name} ({username})" if username else full_name
+        entry_sections.append((label, row.get("entries") or []))  # type: ignore[arg-type]
         table_rows.append(
             [
                 label,
@@ -540,6 +578,24 @@ def export_user_summary_pdf(
             styles["meta"],
         )
     )
+
+    if include_entries:
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph("Stempelzeiten", styles["h2"]))
+        story.append(
+            Paragraph(
+                "Einzelne freigegebene Buchungen je Benutzer im gewählten Zeitraum.",
+                styles["meta"],
+            )
+        )
+        for label, entries in entry_sections:
+            story.append(Paragraph(escape(label), styles["h2"]))
+            if entries:
+                story.append(_entry_table(styles, entries, doc.width))
+            else:
+                story.append(
+                    Paragraph("Keine freigegebenen Buchungen im Zeitraum.", styles["meta"])
+                )
 
     footer = _page_footer(
         "Benutzerauswertung – Zeitübersicht",

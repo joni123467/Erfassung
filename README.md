@@ -2,7 +2,12 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.19`
+**Version:** `0.9.20`
+
+> Seit 0.9.20: **Stempelzeiten im PDF der Benutzerauswertung** – der
+> Administrations-Export bietet optional zusätzlich alle einzelnen Buchungen je
+> Benutzer, so wie Benutzer sie schon aus ihrer eigenen Arbeitszeitübersicht
+> kennen. Details unter [„Auswertungen & Exporte"](#auswertungen--exporte).
 
 > Seit 0.9.19: **Abteilungsadministration & Überschreiben mit Bestätigung** –
 > Gruppen mit Team-Rechten erreichen jetzt den Administrationsbereich und
@@ -90,13 +95,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.19 .
+docker build -t erfassung:0.9.20 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.19
+  erfassung:0.9.20
 ```
 
 ## GHCR & GitHub Actions
@@ -106,20 +111,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.19`)
+- Push von Tags `v*` (z. B. `v0.9.20`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.19`)
+- Versions-Tag aus `VERSION` (hier `0.9.20`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.19`)
+- Git-Tag (`v0.9.20`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.19`
+`ghcr.io/OWNER/erfassung:0.9.20`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -132,7 +137,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.19
+    image: ghcr.io/OWNER/erfassung:0.9.20
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -291,6 +296,32 @@ Abteilungsleitung:
   Administratorgruppen stehen nicht zur Auswahl und werden serverseitig
   abgelehnt.
 
+## Auswertungen & Exporte
+
+| Auswertung | Aufruf | Formate |
+|------------|--------|---------|
+| Eigene Arbeitszeitübersicht | `/records` | PDF (inkl. Einzelbuchungen), Excel |
+| Zeitübersichten (alle/Team) | `/admin/reports/time` | PDF, Excel |
+| Benutzerauswertung | `/admin/reports/users` | PDF (optional inkl. Stempelzeiten), Excel |
+
+### Stempelzeiten in der Benutzerauswertung (seit 0.9.20)
+
+Die Benutzerauswertung zeigt je Benutzer eine Summenzeile (Buchungen,
+Arbeitszeit, Pausen, Soll, Urlaub, Über-/Minusstunden). Über die Option
+**„Stempelzeiten"** neben dem PDF-Export enthält das PDF zusätzlich für jeden
+gelisteten Benutzer eine Tabelle mit den **einzelnen freigegebenen Buchungen**
+des Zeitraums – dieselben Spalten wie in der persönlichen Arbeitszeitübersicht:
+
+| Datum | Firma | Start | Ende | Arbeitszeit | Status | Kommentar |
+|-------|-------|-------|------|-------------|--------|-----------|
+
+- Die Option wirkt nur auf den PDF-Export (Parameter `entries=1`); der
+  Excel-Export bleibt die reine Summenauswertung.
+- Der Geltungsbereich von „Zeitübersichten einsehen" gilt unverändert: Ein
+  Abteilungsadministrator exportiert ausschließlich Buchungen des eigenen Teams.
+- Ohne Buchungen im Zeitraum erscheint je Benutzer der Hinweis „Keine
+  freigegebenen Buchungen im Zeitraum."
+
 ## Datenbank (SQLite, MySQL, MariaDB, PostgreSQL)
 
 Standard ist SQLite. Unterstützt werden außerdem **MySQL 8+, MariaDB 10.6+ und
@@ -357,7 +388,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.19
+    image: ghcr.io/OWNER/erfassung:0.9.20
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -392,7 +423,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.19
+    image: ghcr.io/OWNER/erfassung:0.9.20
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -428,7 +459,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.19
+    image: ghcr.io/OWNER/erfassung:0.9.20
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -464,7 +495,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.19
+    image: ghcr.io/OWNER/erfassung:0.9.20
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -548,8 +579,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.19`)
-- optional Image-Name/Tag (`erfassung`, `0.9.19`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.20`)
+- optional Image-Name/Tag (`erfassung`, `0.9.20`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

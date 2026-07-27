@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Iterable, List, Optional
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from . import models, schemas
 from . import security
@@ -579,8 +579,12 @@ def get_time_entries(
     statuses: Optional[Iterable[str]] = None,
     is_manual: Optional[bool] = None,
 ) -> List[models.TimeEntry]:
-    query = db.query(models.TimeEntry).order_by(
-        models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc()
+    query = (
+        db.query(models.TimeEntry)
+        # Firma direkt mitladen: die Auswertungen zeigen den Firmennamen je
+        # Buchung (auch im PDF-Export) – ohne Eager-Loading je Zeile eine Abfrage.
+        .options(joinedload(models.TimeEntry.company))
+        .order_by(models.TimeEntry.work_date.desc(), models.TimeEntry.start_time.desc())
     )
     if user_id:
         query = query.filter(models.TimeEntry.user_id == user_id)

@@ -5,6 +5,32 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.20] – 2026-07-27
+
+### Added – Stempelzeiten im PDF der Benutzerauswertung
+
+- **Optionale Einzelbuchungen im Administrations-Export**: Die
+  Benutzerauswertung (`/admin/reports/users`) lieferte im PDF bisher nur die
+  Summen je Benutzer. Neben dem PDF-Export gibt es jetzt die Option
+  **„Stempelzeiten"**; ist sie gesetzt, enthält das PDF zusätzlich je Benutzer
+  eine Tabelle mit allen freigegebenen Einzelbuchungen des Zeitraums –
+  Datum, Firma, Start, Ende, Arbeitszeit, Status und Kommentar samt Summenzeile.
+  Damit steht Administratoren dieselbe Detailtiefe zur Verfügung, die Benutzer
+  aus ihrer eigenen Arbeitszeitübersicht (`/records`) kennen.
+- **Gleiches Layout wie die persönliche Übersicht**: Die Tabelle nutzt das
+  gemeinsame Stilsystem (`_entry_table`), sodass persönliche Übersicht und
+  Administrations-Export identisch aussehen.
+- **Dateiname erkennbar**: Der Export heißt mit Stempelzeiten
+  `benutzer_zeit_<von>_<bis>_stempelzeiten.pdf`.
+
+### Notes
+
+- Der Geltungsbereich von „Zeitübersichten einsehen" gilt unverändert: Ein
+  Abteilungsadministrator erhält ausschließlich Buchungen des eigenen Teams.
+- Der Excel-Export der Benutzerauswertung bleibt unverändert die reine
+  Summenauswertung.
+- Keine Datenbankänderung.
+
 ## [0.9.19] – 2026-07-24
 
 ### Added – Abteilungsadministration (Gruppenadmins)

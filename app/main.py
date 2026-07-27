@@ -3099,6 +3099,7 @@ def _build_user_report_data(
         rows.append(
             {
                 "user": report_user,
+                "entries": entries,
                 "count": len(entries),
                 "work_minutes": work_minutes,
                 "break_minutes": break_minutes,
@@ -3117,11 +3118,14 @@ def _build_user_report_data(
         totals["balance_minutes"] += balance_minutes
 
     period_range = f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
-    export_query = urlencode(
-        [("start", start_date.strftime("%Y-%m-%d")), ("end", end_date.strftime("%Y-%m-%d"))]
-        + [("users", str(user_id)) for user_id in sorted(selected_ids)]
-    )
+    export_params = [
+        ("start", start_date.strftime("%Y-%m-%d")),
+        ("end", end_date.strftime("%Y-%m-%d")),
+    ] + [("users", str(user_id)) for user_id in sorted(selected_ids)]
+    export_query = urlencode(export_params)
+    include_entries = _parse_checkbox(params.get("entries"))
     return {
+        "include_entries": include_entries,
         "report_rows": rows,
         "report_totals": totals,
         "all_users": all_users,
@@ -3171,6 +3175,7 @@ def admin_user_reports_pdf(request: Request, db: Session = Depends(database.get_
             period_range=report_data["period_range"],
             rows=report_data["report_rows"],
             totals=report_data["report_totals"],
+            include_entries=bool(report_data["include_entries"]),
         )
     except RuntimeError as exc:
         params = list(request.query_params.multi_items())
@@ -3179,7 +3184,8 @@ def admin_user_reports_pdf(request: Request, db: Session = Depends(database.get_
             url=f"/admin/reports/users?{urlencode(params)}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    filename = f"benutzer_zeit_{report_data['period_filename']}.pdf"
+    suffix = "_stempelzeiten" if report_data["include_entries"] else ""
+    filename = f"benutzer_zeit_{report_data['period_filename']}{suffix}.pdf"
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
