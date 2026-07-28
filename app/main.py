@@ -368,6 +368,10 @@ def ensure_schema() -> None:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_manual INTEGER DEFAULT 0"))
             if "deleted_company_name" not in columns:
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN deleted_company_name VARCHAR"))
+            if "is_remote" not in columns:
+                # Default 0: Bestandsbuchungen gelten als vor Ort erfasst.
+                connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_remote BOOLEAN DEFAULT 0"))
+                connection.execute(text("UPDATE time_entries SET is_remote = 0 WHERE is_remote IS NULL"))
             connection.execute(text("UPDATE time_entries SET is_open = 0 WHERE is_open IS NULL"))
         if "users" in table_names:
             columns = {column["name"] for column in inspector.get_columns("users")}
@@ -414,6 +418,15 @@ def ensure_schema() -> None:
                 )
                 connection.execute(
                     text("UPDATE users SET auto_break_deduction = 1 WHERE auto_break_deduction IS NULL")
+                )
+            if "remote_flag_enabled" not in columns:
+                # Default 0: Das Remote-Kennzeichen erscheint erst, wenn es je
+                # Benutzer bewusst aktiviert wird.
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN remote_flag_enabled BOOLEAN DEFAULT 0")
+                )
+                connection.execute(
+                    text("UPDATE users SET remote_flag_enabled = 0 WHERE remote_flag_enabled IS NULL")
                 )
             if "password_hash" not in columns:
                 connection.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR"))
@@ -1475,6 +1488,7 @@ def _build_dashboard_context(db: Session, user: models.User):
         "can_submit_manual_entries": _can_submit_manual_entries(user),
         "can_edit_own_notes": _can_edit_own_notes(user),
         "can_request_vacations": _can_request_vacations(user),
+        "can_flag_remote": _can_flag_remote(user),
         "vacations": vacations,
         "pending_vacations": sum(
             1
@@ -1632,6 +1646,7 @@ def submit_time_entry(
     notes: str = Form(""),
     company_id: Optional[str] = Form(None),
     new_company_name: Optional[str] = Form(None),
+    is_remote: Optional[str] = Form(None),
     next_url: str = Form("/time"),
     db: Session = Depends(database.get_db),
 ):
@@ -1681,6 +1696,7 @@ def submit_time_entry(
             notes=notes,
             status=models.TimeEntryStatus.PENDING,
             is_manual=True,
+            is_remote=_can_flag_remote(user) and _parse_checkbox(is_remote),
         )
         _, split_performed = crud.create_manual_time_entry(db, entry)
     except ValueError as exc:
@@ -1714,6 +1730,7 @@ def _serialize_mobile_entry(entry: models.TimeEntry) -> dict[str, object]:
         "is_open": bool(entry.is_open),
         "notes": entry.notes or "",
         "status": entry.status,
+        "is_remote": bool(entry.is_remote),
         "company_id": entry.company_id,
         "company_name": entry.company_display_name if (entry.company or entry.deleted_company_name) else "",
         "worked_minutes": entry.worked_minutes,
@@ -1806,6 +1823,7 @@ def mobile_sync_data(
             "manual_time_entries": _can_submit_manual_entries(user),
             "edit_own_notes": _can_edit_own_notes(user),
             "request_vacations": _can_request_vacations(user),
+            "flag_remote": _can_flag_remote(user),
         },
         "metrics": {
             "worked_minutes": metrics.total_work_minutes + metrics.vacation_minutes,
@@ -1918,6 +1936,7 @@ def punch_action(
     company_name: Optional[str] = Form(None),
     entry_id: Optional[str] = Form(None),
     notes: str = Form(""),
+    is_remote: Optional[str] = Form(None),
     next_url: str = Form("/dashboard"),
     client_action_id: Optional[str] = Form(None),
     event_time: Optional[str] = Form(None),
@@ -1940,6 +1959,10 @@ def punch_action(
     now = _parse_event_time(event_time)
     message = ""
     error = ""
+    # Einsatzort nur berücksichtigen, wenn das Feld für den Benutzer
+    # freigeschaltet ist – sonst bleibt es bei „vor Ort".
+    remote_allowed = _can_flag_remote(user)
+    remote_value = remote_allowed and _parse_checkbox(is_remote)
 
     def _safe_start_running_entry(*, company_id: Optional[int] = None, notes_value: str = "") -> bool:
         nonlocal error
@@ -1950,6 +1973,7 @@ def punch_action(
                 started_at=now,
                 company_id=company_id,
                 notes=notes_value,
+                is_remote=remote_value,
             )
             return True
         except ValueError as exc:
@@ -2098,7 +2122,12 @@ def punch_action(
         if target_entry is None:
             error = "Keine beendete Buchung zum Bearbeiten gefunden."
         else:
-            crud.update_time_entry_notes(db, target_entry, notes.strip())
+            crud.update_time_entry_notes(
+                db,
+                target_entry,
+                notes.strip(),
+                is_remote=remote_value if remote_allowed else None,
+            )
             message = "Kommentar gespeichert."
     else:
         error = "Unbekannte Aktion."
@@ -2584,6 +2613,16 @@ def _can_edit_own_notes(user: models.User) -> bool:
 
 def _can_request_vacations(user: models.User) -> bool:
     return _has_self_service_permission(user, "can_request_vacations")
+
+
+def _can_flag_remote(user: Optional[models.User]) -> bool:
+    """Einsatzort-Kennzeichen (Remote/vor Ort) für diesen Benutzer aktiv?
+
+    Wird – wie das Zeitkonto – je Benutzer in der Benutzerverwaltung
+    freigeschaltet. Ohne Freischaltung erscheint das Feld nicht und alle
+    Buchungen gelten als vor Ort.
+    """
+    return bool(getattr(user, "remote_flag_enabled", False))
 
 
 def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
@@ -3400,6 +3439,7 @@ def create_user_html(
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
     auto_break_deduction: Optional[str] = Form(None),
+    remote_flag_enabled: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -3419,6 +3459,7 @@ def create_user_html(
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
     auto_break_value = auto_break_deduction == "on"
+    remote_flag_value = remote_flag_enabled == "on"
     try:
         overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
     except ValueError:
@@ -3447,6 +3488,7 @@ def create_user_html(
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
                 auto_break_deduction=auto_break_value,
+                remote_flag_enabled=remote_flag_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -3484,6 +3526,7 @@ def update_user_html(
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
     auto_break_deduction: Optional[str] = Form(None),
+    remote_flag_enabled: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -3508,6 +3551,7 @@ def update_user_html(
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
     auto_break_value = auto_break_deduction == "on"
+    remote_flag_value = remote_flag_enabled == "on"
     try:
         overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
     except ValueError:
@@ -3539,6 +3583,7 @@ def update_user_html(
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
                 auto_break_deduction=auto_break_value,
+                remote_flag_enabled=remote_flag_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -3698,6 +3743,9 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
         next_url=sanitized_next,
         redirect_user=redirect_user or (str(entry.user_id) if entry.user_id else None),
         active_tab=active_tab,
+        # Einsatzort nur anbieten, wenn er für den Benutzer freigeschaltet ist
+        # oder die Buchung bereits als Remote erfasst wurde.
+        remote_editable=_can_flag_remote(entry.user) or bool(entry.is_remote),
     )
 
 
@@ -3712,6 +3760,7 @@ def update_time_entry_html(
     break_minutes: int = Form(0),
     company_id: Optional[str] = Form(None),
     notes: str = Form(""),
+    is_remote: Optional[str] = Form(None),
     redirect_user: Optional[str] = Form(None),
     next_url: Optional[str] = Form(None),
     confirm_overwrite: Optional[str] = Form(None),
@@ -3741,6 +3790,13 @@ def update_time_entry_html(
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     company_value = int(company_id) if company_id else None
+    # Einsatzort nur übernehmen, wenn das Feld für den betroffenen Benutzer
+    # freigeschaltet ist (oder die Buchung bereits als Remote erfasst wurde).
+    # Andernfalls bleibt der bisherige Wert erhalten, statt still gelöscht zu
+    # werden.
+    remote_current = bool(existing_entry.is_remote) if existing_entry else False
+    remote_editable = _can_flag_remote(crud.get_user(db, user_id)) or remote_current
+    remote_value = _parse_checkbox(is_remote) if remote_editable else remote_current
     payload = schemas.TimeEntryCreate(
         user_id=user_id,
         company_id=company_value,
@@ -3751,6 +3807,7 @@ def update_time_entry_html(
         break_started_at=None,
         is_open=False,
         notes=notes,
+        is_remote=remote_value,
     )
     # Ohne Bestätigung: bei einem neuen Konflikt zuerst nachfragen und
     # auflisten, welche Buchungen überschrieben würden.
@@ -3771,6 +3828,7 @@ def update_time_entry_html(
                     "break_minutes": max(break_minutes, 0),
                     "company_id": company_id or "",
                     "notes": notes,
+                    "is_remote": remote_value,
                 },
                 entry_id=entry_id,
                 next_url=_sanitize_next(next_url or "/admin/users", "/admin/users"),

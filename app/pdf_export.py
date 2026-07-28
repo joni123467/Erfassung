@@ -308,6 +308,62 @@ def _make_doc(buffer: BytesIO) -> SimpleDocTemplate:
     )
 
 
+def any_remote(entries: Iterable[TimeEntry]) -> bool:
+    """Ist mindestens eine Buchung als Remote erfasst?
+
+    Steuert die zusätzliche Spalte „Ort" in den Exporten: Wer den Einsatzort
+    nicht nutzt, bekommt die gewohnte Tabelle ohne zusätzliche Spalte.
+    """
+    return any(bool(getattr(entry, "is_remote", False)) for entry in entries)
+
+
+def _entry_table(styles: dict, entries: Sequence[TimeEntry], doc_width: float) -> Table:
+    """Buchungstabelle eines Benutzers – Layout der persönlichen Übersicht.
+
+    Die Spalte „Ort" erscheint nur, wenn mindestens eine Buchung Remote
+    erfasst wurde.
+    """
+    show_location = any_remote(entries)
+    entry_rows: list[list[str]] = []
+    total_minutes = 0
+    for entry in sorted(entries, key=lambda item: (item.work_date, item.start_time)):
+        end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
+        company_name = entry.company.name if entry.company else "Allgemeine Arbeitszeit"
+        total_minutes += entry.worked_minutes
+        row = [
+            entry.work_date.strftime("%d.%m.%Y"),
+            company_name,
+            entry.start_time.strftime("%H:%M"),
+            end_value,
+            f"{_format_minutes(entry.worked_minutes)} Std",
+            _status_label(entry.status),
+            entry.notes or "–",
+        ]
+        if show_location:
+            row.insert(2, entry.location_label)
+        entry_rows.append(row)
+
+    header = ["Datum", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Kommentar"]
+    fractions = [0.105, 0.205, 0.065, 0.065, 0.10, 0.14, 0.32]
+    aligns = ["L", "L", "C", "C", "R", "L", "L"]
+    total_row = ["Summe", "", "", "", f"{_format_minutes(total_minutes)} Std", "", ""]
+    if show_location:
+        header.insert(2, "Ort")
+        fractions = [0.10, 0.165, 0.075, 0.06, 0.06, 0.095, 0.135, 0.31]
+        aligns.insert(2, "L")
+        total_row.insert(2, "")
+    return _data_table(
+        styles,
+        header=header,
+        rows=entry_rows,
+        fractions=fractions,
+        aligns=aligns,
+        doc_width=doc_width,
+        total_row=total_row,
+        total_span=5 if show_location else 4,
+    )
+
+
 def export_time_overview_pdf(
     *,
     user: User,
@@ -411,37 +467,8 @@ def export_time_overview_pdf(
             )
         )
 
-    sorted_entries = sorted(entries, key=lambda item: (item.work_date, item.start_time))
-    entry_rows: list[list[str]] = []
-    total_minutes = 0
-    for entry in sorted_entries:
-        end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
-        company_name = entry.company.name if entry.company else "Allgemeine Arbeitszeit"
-        total_minutes += entry.worked_minutes
-        entry_rows.append(
-            [
-                entry.work_date.strftime("%d.%m.%Y"),
-                company_name,
-                entry.start_time.strftime("%H:%M"),
-                end_value,
-                f"{_format_minutes(entry.worked_minutes)} Std",
-                _status_label(entry.status),
-                entry.notes or "–",
-            ]
-        )
     story.append(Paragraph("Zeitbuchungen (Monat)", styles["h2"]))
-    story.append(
-        _data_table(
-            styles,
-            header=["Datum", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Kommentar"],
-            rows=entry_rows,
-            fractions=[0.105, 0.205, 0.065, 0.065, 0.10, 0.14, 0.32],
-            aligns=["L", "L", "C", "C", "R", "L", "L"],
-            doc_width=doc.width,
-            total_row=["Summe", "", "", "", f"{_format_minutes(total_minutes)} Std", "", ""],
-            total_span=4,
-        )
-    )
+    story.append(_entry_table(styles, entries, doc.width))
 
     vacation_rows = _vacation_overview_rows(
         vacations or [], month_start, month_end, include_user=False
@@ -468,37 +495,6 @@ def export_time_overview_pdf(
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     buffer.seek(0)
     return buffer
-
-
-def _entry_table(styles: dict, entries: Sequence[TimeEntry], doc_width: float) -> Table:
-    """Stamp times of a single user – same layout as the personal overview."""
-    entry_rows: list[list[str]] = []
-    total_minutes = 0
-    for entry in sorted(entries, key=lambda item: (item.work_date, item.start_time)):
-        end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
-        company_name = entry.company.name if entry.company else "Allgemeine Arbeitszeit"
-        total_minutes += entry.worked_minutes
-        entry_rows.append(
-            [
-                entry.work_date.strftime("%d.%m.%Y"),
-                company_name,
-                entry.start_time.strftime("%H:%M"),
-                end_value,
-                f"{_format_minutes(entry.worked_minutes)} Std",
-                _status_label(entry.status),
-                entry.notes or "–",
-            ]
-        )
-    return _data_table(
-        styles,
-        header=["Datum", "Firma", "Start", "Ende", "Arbeitszeit", "Status", "Kommentar"],
-        rows=entry_rows,
-        fractions=[0.105, 0.205, 0.065, 0.065, 0.10, 0.14, 0.32],
-        aligns=["L", "L", "C", "C", "R", "L", "L"],
-        doc_width=doc_width,
-        total_row=["Summe", "", "", "", f"{_format_minutes(total_minutes)} Std", "", ""],
-        total_span=4,
-    )
 
 
 def export_user_summary_pdf(

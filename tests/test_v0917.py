@@ -103,8 +103,8 @@ def _entry(user_id, start, end):
 
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.20"
-    assert client.get("/health").json()["version"] == "0.9.20"
+    assert client.main.APP_VERSION == "0.9.21"
+    assert client.get("/health").json()["version"] == "0.9.21"
 
 
 def test_crud_new_conflict_error_names_booking(client):

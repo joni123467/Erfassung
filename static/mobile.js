@@ -215,6 +215,7 @@ function buildStateFromEntry(entry) {
       pendingPunchSync: false,
       entryId: null,
       notes: '',
+      isRemote: false,
     };
   }
   const startIso = `${entry.work_date}T${entry.start_time}`;
@@ -238,6 +239,7 @@ function buildStateFromEntry(entry) {
     pendingPunchSync: false,
     entryId: entry.id || null,
     notes: entry.notes || '',
+    isRemote: !!entry.is_remote,
   };
 }
 
@@ -257,7 +259,15 @@ function cloneState(state) {
     pendingPunchSync: !!state.pendingPunchSync,
     entryId: state.entryId || null,
     notes: state.notes || '',
+    isRemote: !!state.isRemote,
   };
+}
+
+// Checkbox-Werte aus dem serialisierten Formular ('1'/'on') robust auswerten.
+function isTruthyFlag(value) {
+  if (value === true) return true;
+  const text = String(value ?? '').trim().toLowerCase();
+  return text === '1' || text === 'on' || text === 'true' || text === 'yes';
 }
 
 function formatTime(ms) {
@@ -323,6 +333,7 @@ function applyPunchActionToState(state, action, payload = {}) {
     next.companyName = '';
     next.entryId = null;
     next.notes = (payload.notes || '').trim();
+    next.isRemote = isTruthyFlag(payload.is_remote);
   } else if (action === 'end_work') {
     return buildStateFromEntry(null);
   } else if (action === 'start_break' && next.isWorking && !next.onBreak) {
@@ -350,6 +361,7 @@ function applyPunchActionToState(state, action, payload = {}) {
     next.companyName = (payload.new_company_name || '').trim() || payload.company_name || '';
     next.entryId = null;
     next.notes = (payload.notes || '').trim();
+    next.isRemote = isTruthyFlag(payload.is_remote);
   } else if (action === 'end_company') {
     next.isWorking = true;
     next.onBreak = false;
@@ -363,6 +375,7 @@ function applyPunchActionToState(state, action, payload = {}) {
     next.companyName = '';
     next.entryId = null;
     next.notes = '';
+    next.isRemote = false;
   }
   return next;
 }
@@ -527,6 +540,7 @@ function updateUiState() {
   applyStateVisibility('break-active', mobileState.isWorking && mobileState.onBreak);
   applyStateVisibility('break-idle', mobileState.isWorking && !mobileState.onBreak);
   applyStateVisibility('company-active', mobileState.isWorking && mobileState.hasCompany);
+  applyStateVisibility('remote-active', mobileState.isWorking && mobileState.isRemote);
 
   const values = {
     'header-start': mobileState.isWorking ? mobileState.startLabel || '--:--' : '',
@@ -682,6 +696,13 @@ function applyMobilePermissions(perms) {
 
   if (perms.create_companies === false) {
     document.querySelectorAll('input[name="new_company_name"]').forEach((input) => {
+      const label = input.closest('label');
+      setElementHidden(label || input, true);
+    });
+  }
+
+  if (perms.flag_remote === false) {
+    document.querySelectorAll('input[name="is_remote"]').forEach((input) => {
       const label = input.closest('label');
       setElementHidden(label || input, true);
     });
@@ -966,7 +987,11 @@ async function processPunchSubmission(form, payload) {
     && mobileState?.isWorking
     && mobilePermissions?.edit_own_notes !== false
   ) {
-    notesFollowUp = { entryId: mobileState.entryId || '', notes: mobileState.notes || '' };
+    notesFollowUp = {
+      entryId: mobileState.entryId || '',
+      notes: mobileState.notes || '',
+      isRemote: !!mobileState.isRemote,
+    };
   }
 
   // ── Queue-first, ALWAYS: every punch is persisted to IndexedDB before any
@@ -979,10 +1004,14 @@ async function processPunchSubmission(form, payload) {
   showFeedback('Buchung lokal erfasst. Synchronisiere …', 'info');
 
   if (notesFollowUp) {
-    updateNotesLaunchButton(notesFollowUp.entryId, notesFollowUp.notes);
-    openNotesModal(notesFollowUp.entryId, notesFollowUp.notes);
+    updateNotesLaunchButton(notesFollowUp.entryId, notesFollowUp.notes, notesFollowUp.isRemote);
+    openNotesModal(notesFollowUp.entryId, notesFollowUp.notes, notesFollowUp.isRemote);
   } else if (payload.action === 'update_notes') {
-    updateNotesLaunchButton(payload.entry_id || '', (payload.notes || '').trim());
+    updateNotesLaunchButton(
+      payload.entry_id || '',
+      (payload.notes || '').trim(),
+      payload.is_remote,
+    );
   }
 
   // Attempt immediate sync in background (non-blocking for UI)
@@ -1116,25 +1145,28 @@ function setNotesModalVisible(visible) {
   document.body.classList.toggle('modal-open', visible);
 }
 
-function openNotesModal(entryId, notes) {
+function openNotesModal(entryId, notes, isRemote) {
   const modal = document.getElementById(NOTES_MODAL_ID);
   if (!modal) return;
   const idInput = modal.querySelector('input[name="entry_id"]');
   const textarea = modal.querySelector('textarea[name="notes"]');
+  const remoteInput = modal.querySelector('input[name="is_remote"]');
   if (idInput instanceof HTMLInputElement) idInput.value = entryId ? String(entryId) : '';
   if (textarea instanceof HTMLTextAreaElement) textarea.value = notes || '';
+  if (remoteInput instanceof HTMLInputElement) remoteInput.checked = isTruthyFlag(isRemote);
   setNotesModalVisible(true);
   if (textarea instanceof HTMLTextAreaElement) textarea.focus();
 }
 
 // Hält den "Kommentar bearbeiten"-Button unter den Stempel-Aktionen aktuell,
 // damit der Kommentar auch nach dem Schließen des Dialogs erreichbar bleibt.
-function updateNotesLaunchButton(entryId, notes) {
+function updateNotesLaunchButton(entryId, notes, isRemote) {
   if (mobilePermissions?.edit_own_notes === false) return;
   const button = document.getElementById('mobile-notes-launch');
   if (!button) return;
   button.dataset.entryId = entryId ? String(entryId) : '';
   button.dataset.entryNotes = notes || '';
+  button.dataset.entryRemote = isTruthyFlag(isRemote) ? '1' : '';
   setElementHidden(button, false);
 }
 
@@ -1157,7 +1189,11 @@ function registerNotesModal() {
   if (launch) {
     launch.addEventListener('click', (event) => {
       event.preventDefault();
-      openNotesModal(launch.dataset.entryId || '', launch.dataset.entryNotes || '');
+      openNotesModal(
+        launch.dataset.entryId || '',
+        launch.dataset.entryNotes || '',
+        launch.dataset.entryRemote || '',
+      );
     });
   }
 }
@@ -1342,6 +1378,7 @@ function _renderDayView(container, allEntries, dailyTarget, today) {
             <span>Arbeitszeit ${fmtMins(entry.worked_minutes)} Std</span>
             ${entry.total_break_minutes ? `<span>Pausen ${fmtMins(entry.total_break_minutes)} Std</span>` : ''}
             ${entry.company_name ? `<span>${escHtml(entry.company_name)}</span>` : ''}
+            ${entry.is_remote ? '<span class="mobile-badge mobile-badge--remote">Remote</span>' : ''}
             ${entry.notes ? `<span class="mobile-entry__notes">${escHtml(entry.notes)}</span>` : ''}
           </div>
         </li>`;

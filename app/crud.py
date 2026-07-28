@@ -328,6 +328,7 @@ def _split_closed_entry(
             notes=existing.notes or "",
             status=existing.status,
             is_manual=existing.is_manual,
+            is_remote=bool(existing.is_remote),
             source=existing.source,
             external_id=existing.external_id,
         )
@@ -404,6 +405,7 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
                     notes=open_entry.notes or "",
                     status=models.TimeEntryStatus.APPROVED,
                     is_manual=False,
+                    is_remote=bool(open_entry.is_remote),
                 )
                 db.add(first_part)
                 open_entry.break_minutes = 0
@@ -479,8 +481,21 @@ def get_last_finished_time_entry(db: Session, user_id: int) -> Optional[models.T
     )
 
 
-def update_time_entry_notes(db: Session, entry: models.TimeEntry, notes: str) -> models.TimeEntry:
+def update_time_entry_notes(
+    db: Session,
+    entry: models.TimeEntry,
+    notes: str,
+    *,
+    is_remote: Optional[bool] = None,
+) -> models.TimeEntry:
+    """Kommentar (und optional den Einsatzort) einer Buchung nachtragen.
+
+    ``is_remote=None`` lässt den Einsatzort unverändert – so ändert ein reiner
+    Kommentar-Nachtrag die Angabe nicht versehentlich.
+    """
     entry.notes = (notes or "")[:255]
+    if is_remote is not None:
+        entry.is_remote = bool(is_remote)
     db.commit()
     db.refresh(entry)
     return entry
@@ -497,6 +512,7 @@ def start_running_entry(
     started_at: datetime,
     company_id: Optional[int] = None,
     notes: str = "",
+    is_remote: bool = False,
 ) -> models.TimeEntry:
     normalized = _normalize_time(started_at)
     entry = schemas.TimeEntryCreate(
@@ -511,6 +527,7 @@ def start_running_entry(
         notes=notes,
         status=models.TimeEntryStatus.APPROVED,
         is_manual=False,
+        is_remote=is_remote,
     )
     return create_time_entry(db, entry)
 
@@ -698,6 +715,7 @@ def _apply_overwrite(
                 notes=conflict.notes or "",
                 status=conflict.status,
                 is_manual=conflict.is_manual,
+                is_remote=bool(conflict.is_remote),
             ))
 
 

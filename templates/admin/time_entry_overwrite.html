@@ -79,6 +79,7 @@
         <input type="hidden" name="break_minutes" value="{{ form_values.break_minutes }}">
         <input type="hidden" name="company_id" value="{{ form_values.company_id }}">
         <input type="hidden" name="notes" value="{{ form_values.notes }}">
+        {% if form_values.is_remote %}<input type="hidden" name="is_remote" value="1">{% endif %}
         <input type="hidden" name="redirect_user" value="{{ redirect_user }}">
         <input type="hidden" name="next_url" value="{{ next_url }}">
         <input type="hidden" name="confirm_overwrite" value="1">

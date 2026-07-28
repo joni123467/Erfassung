@@ -110,6 +110,11 @@ def export_time_entries(
     ws = wb.active
     ws.title = "Arbeitszeiten"
 
+    entry_list = list(entries)
+    # Spalte „Ort" nur, wenn der Einsatzort genutzt wird – sonst bleibt der
+    # Export unverändert zur bisherigen Struktur.
+    show_location = any(bool(getattr(entry, "is_remote", False)) for entry in entry_list)
+
     headers = [
         "Mitarbeiter",
         "Firma",
@@ -121,6 +126,8 @@ def export_time_entries(
         "Überstunden (Min)",
         "Kommentar",
     ]
+    if show_location:
+        headers.insert(2, "Ort")
     ws.append(headers)
 
     header_font = Font(bold=True)
@@ -128,21 +135,22 @@ def export_time_entries(
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
 
-    for entry in entries:
+    for entry in entry_list:
         end_value = "läuft" if entry.is_open else entry.end_time.strftime("%H:%M")
-        ws.append(
-            [
-                entry.user.full_name if entry.user else "",
-                entry.company.name if entry.company else "",
-                entry.work_date.strftime("%d.%m.%Y"),
-                entry.start_time.strftime("%H:%M"),
-                end_value,
-                entry.total_break_minutes,
-                entry.worked_minutes,
-                entry.overtime_minutes,
-                entry.notes,
-            ]
-        )
+        row = [
+            entry.user.full_name if entry.user else "",
+            entry.company.name if entry.company else "",
+            entry.work_date.strftime("%d.%m.%Y"),
+            entry.start_time.strftime("%H:%M"),
+            end_value,
+            entry.total_break_minutes,
+            entry.worked_minutes,
+            entry.overtime_minutes,
+            entry.notes,
+        ]
+        if show_location:
+            row.insert(2, entry.location_label)
+        ws.append(row)
 
     for column_cells in ws.columns:
         max_length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)

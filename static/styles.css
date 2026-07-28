@@ -1919,6 +1919,29 @@ body.modal-open {
     color: var(--warning);
 }
 
+.status-badge.remote {
+    background: var(--info-soft);
+    color: var(--info);
+}
+
+/* Einsatzort einer Buchung (Remote statt vor Ort) – steht neben der Firma. */
+.location-badge {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-xs);
+    background: var(--info-soft);
+    color: var(--info);
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.punch-remote-toggle {
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
 .striped-table tbody tr:nth-child(even) {
     background: var(--hover);
 }
@@ -2282,6 +2305,11 @@ tr.company-deleted td {
     color: var(--warning);
 }
 
+
+.mobile-badge--remote {
+    background: var(--info-soft);
+    color: var(--info);
+}
 
 .mobile-badge--mode {
     background: var(--accent);

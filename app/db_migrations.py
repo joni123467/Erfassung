@@ -259,6 +259,23 @@ def _add_manage_users_scope(engine: Engine) -> None:
     )
 
 
+def _add_remote_location_flags(engine: Engine) -> None:
+    """Einsatzort einer Buchung: Remote (z. B. Telefon) oder vor Ort (§0.9.21).
+
+    ``users.remote_flag_enabled`` schaltet das Feld je Benutzer frei (wie das
+    Zeitkonto), ``time_entries.is_remote`` hält die Angabe an der Buchung.
+    Default 0 erhält das Bestandsverhalten: alle Buchungen gelten als vor Ort,
+    und das Feld erscheint erst, wenn es bewusst aktiviert wird.
+    """
+
+    db_schema.add_column(
+        engine, "users", "remote_flag_enabled", "BOOLEAN", default="0", backfill_null_to="0"
+    )
+    db_schema.add_column(
+        engine, "time_entries", "is_remote", "BOOLEAN", default="0", backfill_null_to="0"
+    )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -272,6 +289,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (10, _add_group_permission_overhaul),
     (11, _add_group_permission_scopes),
     (12, _add_manage_users_scope),
+    (13, _add_remote_location_flags),
 ]
 
 

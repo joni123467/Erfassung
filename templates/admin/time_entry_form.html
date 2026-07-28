@@ -47,6 +47,12 @@
             Kommentar
             <textarea name="notes" rows="3" placeholder="Optional">{{ entry.notes }}</textarea>
         </label>
+        {% if remote_editable %}
+            <label class="checkbox full-width">
+                <input type="checkbox" name="is_remote" value="1" {% if entry.is_remote %}checked{% endif %}>
+                Remote (z. B. Telefon) – nicht vor Ort
+            </label>
+        {% endif %}
         <div class="form-actions full-width">
             <button type="submit" class="button primary">Speichern</button>
         </div>

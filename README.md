@@ -2,7 +2,12 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.20`
+**Version:** `0.9.21`
+
+> Seit 0.9.21: **Einsatzort je Buchung (Remote / vor Ort)** – wird der
+> Einsatzort für einen Benutzer freigeschaltet, erscheint beim Stempeln und bei
+> manuellen Buchungen ein Haken „Remote" (z. B. Telefon). Details unter
+> [„Einsatzort (Remote / vor Ort)"](#einsatzort-remote--vor-ort).
 
 > Seit 0.9.20: **Stempelzeiten im PDF der Benutzerauswertung** – der
 > Administrations-Export bietet optional zusätzlich alle einzelnen Buchungen je
@@ -95,13 +100,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.20 .
+docker build -t erfassung:0.9.21 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.20
+  erfassung:0.9.21
 ```
 
 ## GHCR & GitHub Actions
@@ -111,20 +116,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.20`)
+- Push von Tags `v*` (z. B. `v0.9.21`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.20`)
+- Versions-Tag aus `VERSION` (hier `0.9.21`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.20`)
+- Git-Tag (`v0.9.21`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.20`
+`ghcr.io/OWNER/erfassung:0.9.21`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -137,7 +142,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.20
+    image: ghcr.io/OWNER/erfassung:0.9.21
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -296,6 +301,43 @@ Abteilungsleitung:
   Administratorgruppen stehen nicht zur Auswahl und werden serverseitig
   abgelehnt.
 
+## Einsatzort (Remote / vor Ort)
+
+Optionales Feld je Buchung: fand der Termin **vor Ort** statt oder **remote**
+(z. B. per Telefon)? Es wird – wie das Zeitkonto – **je Benutzer** in der
+Benutzerverwaltung freigeschaltet:
+
+> Administration → Benutzer → *Benutzer* → **Zeitkonto & Buchungen** →
+> „Einsatzort erfassen (Remote / vor Ort)"
+
+Ist die Option aus, erscheint das Feld nirgends und alle Buchungen gelten als
+vor Ort – der bisherige Zustand bleibt unverändert.
+
+Ist sie an, steht ein Haken **„Remote"** an diesen Stellen:
+
+| Stelle | Wirkung |
+|--------|---------|
+| Arbeitszeit starten (Web & mobil) | die gestartete Buchung wird als Remote erfasst |
+| Auftrag starten (Web & mobil) | die gestartete Auftragsbuchung wird als Remote erfasst |
+| Manuelle Buchung (Nachtrag) | der Nachtrag wird als Remote erfasst |
+| Kommentar der letzten Buchung bearbeiten (mobil) | Einsatzort nachträglich korrigieren |
+| Administration → Zeitbuchung bearbeiten | Einsatzort korrigieren |
+
+Weitere Eigenschaften:
+
+- **Offline-fähig**: Der Haken wird in der mobilen App mit der Stempelung in
+  die Offline-Warteschlange gelegt und beim Synchronisieren übertragen.
+- **Teilen bleibt konsistent**: Wird eine Buchung durch einen Nachtrag geteilt,
+  übernehmen beide Abschnitte den Einsatzort der Ursprungsbuchung.
+- **Anzeige**: Remote-Buchungen tragen in den Buchungslisten, den
+  Zeitübersichten und den Freigaben ein Kennzeichen „Remote" neben der Firma.
+- **Exporte**: PDF und Excel zeigen eine zusätzliche Spalte **„Ort"** (Remote /
+  Vor Ort) – aber nur, wenn im Zeitraum mindestens eine Buchung remote erfasst
+  wurde. Wer den Einsatzort nicht nutzt, bekommt unveränderte Exporte.
+- **Bestandsdaten**: Alle vorhandenen Buchungen gelten als vor Ort. Wird die
+  Option für einen Benutzer wieder deaktiviert, bleiben bereits erfasste
+  Remote-Kennzeichen erhalten (sie werden nur nicht mehr neu vergeben).
+
 ## Auswertungen & Exporte
 
 | Auswertung | Aufruf | Formate |
@@ -388,7 +430,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.20
+    image: ghcr.io/OWNER/erfassung:0.9.21
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -423,7 +465,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.20
+    image: ghcr.io/OWNER/erfassung:0.9.21
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -459,7 +501,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.20
+    image: ghcr.io/OWNER/erfassung:0.9.21
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -495,7 +537,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.20
+    image: ghcr.io/OWNER/erfassung:0.9.21
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -579,8 +621,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.20`)
-- optional Image-Name/Tag (`erfassung`, `0.9.20`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.21`)
+- optional Image-Name/Tag (`erfassung`, `0.9.21`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

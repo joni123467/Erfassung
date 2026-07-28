@@ -104,6 +104,9 @@
                             Auftrag: <strong data-field="company-name">{{ active_entry.company.name if active_entry and active_entry.company else '' }}</strong>.
                         </span>
                     </p>
+                    <p class="mobile-card__text" data-state="remote-active" {% if not (active_entry and active_entry.is_remote) %}hidden{% endif %}>
+                        <span class="mobile-badge mobile-badge--remote">Remote</span>
+                    </p>
                     <p class="mobile-card__text">Aktuelle Arbeitszeit: <span data-field="worked-duration">{{ active_entry.worked_minutes|format_minutes if active_entry else '0:00' }}</span> Std</p>
                     <p class="mobile-card__text" data-state="break-active" {% if not (active_entry and active_entry.break_started_at) %}hidden{% endif %}>
                         <span class="mobile-badge mobile-badge--break">Pause läuft</span>
@@ -121,6 +124,12 @@
                         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="start_work">
+                        {% if can_flag_remote %}
+                            <label class="mobile-checkbox">
+                                <input type="checkbox" name="is_remote" value="1">
+                                Remote (z. B. Telefon)
+                            </label>
+                        {% endif %}
                         <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
                     </form>
                     {% if companies or can_create_companies %}
@@ -162,6 +171,7 @@
                             data-open="mobile-notes-modal"
                             data-entry-id="{{ last_finished_entry.id if last_finished_entry else '' }}"
                             data-entry-notes="{{ last_finished_entry.notes if last_finished_entry and last_finished_entry.notes else '' }}"
+                            data-entry-remote="{{ '1' if last_finished_entry and last_finished_entry.is_remote else '' }}"
                             {% if not last_finished_entry %}hidden{% endif %}
                         >Kommentar der letzten Buchung bearbeiten</button>
                     </p>
@@ -209,6 +219,12 @@
                                 Kommentar (optional)
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
+                            {% if can_flag_remote %}
+                                <label class="mobile-checkbox">
+                                    <input type="checkbox" name="is_remote" value="1">
+                                    Remote (z. B. Telefon) – nicht vor Ort
+                                </label>
+                            {% endif %}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
                                     <span class="modal-action__icon" aria-hidden="true">✕</span>
@@ -240,6 +256,12 @@
                             Kommentar
                             <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
                         </label>
+                        {% if can_flag_remote %}
+                            <label class="mobile-checkbox">
+                                <input type="checkbox" name="is_remote" value="1">
+                                Remote (z. B. Telefon) – nicht vor Ort
+                            </label>
+                        {% endif %}
                         <div class="modal__actions modal-action-bar">
                             <button type="button" class="button ghost modal-action" data-close>
                                 <span class="modal-action__icon" aria-hidden="true">✕</span>

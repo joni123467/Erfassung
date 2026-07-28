@@ -97,6 +97,9 @@
                 Auftrag: <strong data-field="company-name"></strong>.
               </span>
             </p>
+            <p class="mobile-card__text" data-state="remote-active" hidden>
+              <span class="mobile-badge mobile-badge--remote">Remote</span>
+            </p>
             <p class="mobile-card__text">Aktuelle Arbeitszeit: <span data-field="worked-duration">0:00</span> Std</p>
             <p class="mobile-card__text" data-state="break-active" hidden>
               <span class="mobile-badge mobile-badge--break">Pause läuft</span>
@@ -117,6 +120,10 @@
               <input type="hidden" name="csrf_token" value="">
               <input type="hidden" name="next_url" value="/mobile">
               <input type="hidden" name="action" value="start_work">
+              <label class="mobile-checkbox">
+                <input type="checkbox" name="is_remote" value="1">
+                Remote (z. B. Telefon)
+              </label>
               <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
             </form>
             <button type="button" class="mobile-button" id="mobile-order-launch" data-open="mobile-order-modal">Auftrag starten</button>
@@ -157,6 +164,7 @@
               data-open="mobile-notes-modal"
               data-entry-id=""
               data-entry-notes=""
+              data-entry-remote=""
               hidden
             >Kommentar der letzten Buchung bearbeiten</button>
           </p>
@@ -194,6 +202,10 @@
                 Kommentar (optional)
                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
               </label>
+              <label class="mobile-checkbox">
+                <input type="checkbox" name="is_remote" value="1">
+                Remote (z. B. Telefon) – nicht vor Ort
+              </label>
               <div class="modal__actions modal-action-bar">
                 <button type="button" class="button ghost modal-action" data-close>
                   <span class="modal-action__icon" aria-hidden="true">✕</span>
@@ -223,6 +235,10 @@
               <label>
                 Kommentar
                 <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
+              </label>
+              <label class="mobile-checkbox">
+                <input type="checkbox" name="is_remote" value="1">
+                Remote (z. B. Telefon) – nicht vor Ort
               </label>
               <div class="modal__actions modal-action-bar">
                 <button type="button" class="button ghost modal-action" data-close>
