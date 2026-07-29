@@ -10,70 +10,33 @@
         <h1>{% if is_edit %}Gruppe bearbeiten{% else %}Neue Gruppe anlegen{% endif %}</h1>
         <a href="/admin/groups" class="button ghost">Zur Übersicht</a>
     </div>
-    <form method="post" action="{% if is_edit %}/admin/groups/{{ group.id }}/update{% else %}/admin/groups/create{% endif %}" class="permission-form">
+    <p class="form-hint">
+        Gruppen sind reine Organisationseinheiten (Abteilung, Team, Standort). Berechtigungen
+        werden ausschließlich über <a href="/admin/roles">Rollen</a> vergeben. Die Gruppe legt
+        fest, für wen Rechte mit dem Geltungsbereich „Eigene Gruppen“ gelten.
+    </p>
+    <form method="post" action="{% if is_edit %}/admin/groups/{{ group.id }}/update{% else %}/admin/groups/create{% endif %}" class="form-grid">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-        <label class="permission-form__name">
+        <label class="full-width">
             Gruppenname
             <input type="text" name="name" value="{{ group.name if is_edit else '' }}" required>
         </label>
-
-        <fieldset class="permission-section permission-section--admin">
-            <legend>Administration</legend>
-            <label class="permission-row">
-                <input type="checkbox" name="is_admin" data-permission-admin {% if is_edit and group.is_admin %}checked{% endif %}>
-                <span class="permission-row__text">
-                    <strong>Administratorrechte</strong>
-                    <small>Voller Zugriff auf alle Bereiche inklusive System, Backups, Terminals und Gruppenverwaltung. Umfasst automatisch alle folgenden Berechtigungen.</small>
-                </span>
-            </label>
-        </fieldset>
-
-        {% for category in permission_categories %}
-            <fieldset class="permission-section" data-permission-section>
-                <legend>{{ category.label }}</legend>
-                <p class="permission-section__hint">{{ category.description }}</p>
-                {% for permission in category.permissions %}
-                    {% if permission.scoped %}
-                        {% if is_edit and group|attr(permission.key) %}
-                            {% set current_scope = group|attr(permission.scope_key) or 'all' %}
-                        {% else %}
-                            {% set current_scope = 'none' %}
-                        {% endif %}
-                        <label class="permission-row permission-row--scoped">
-                            <span class="permission-row__text">
-                                <strong>{{ permission.label }}</strong>
-                                <small>{{ permission.description }}</small>
-                            </span>
-                            <select name="{{ permission.scope_key }}" data-permission-toggle data-permission-select>
-                                {% for scope_value, scope_label in scope_choices %}
-                                    <option value="{{ scope_value }}" {% if current_scope == scope_value %}selected{% endif %}>{{ scope_label }}</option>
-                                {% endfor %}
-                            </select>
-                        </label>
-                    {% else %}
-                        <label class="permission-row">
-                            <input
-                                type="checkbox"
-                                name="{{ permission.key }}"
-                                data-permission-toggle
-                                {% if is_edit %}
-                                    {% if group|attr(permission.key) %}checked{% endif %}
-                                {% elif permission.default %}
-                                    checked
-                                {% endif %}
-                            >
-                            <span class="permission-row__text">
-                                <strong>{{ permission.label }}</strong>
-                                <small>{{ permission.description }}</small>
-                            </span>
-                        </label>
-                    {% endif %}
+        <label class="full-width">
+            Beschreibung
+            <textarea name="description" rows="2" placeholder="z. B. Pflegedienst Nord">{{ group.description if is_edit and group.description else '' }}</textarea>
+        </label>
+        <label class="full-width">
+            Mitglieder
+            <select name="member_ids" multiple size="10">
+                {% for item in all_users %}
+                    <option value="{{ item.id }}" {% if is_edit and item in group.users %}selected{% endif %}>
+                        {{ item.full_name }} ({{ item.username }})
+                    </option>
                 {% endfor %}
-            </fieldset>
-        {% endfor %}
-
-        <p class="form-hint">Administratorgruppen erhalten automatisch alle Berechtigungen – die Einzelrechte sind dann gesperrt.</p>
-        <div class="form-actions">
+            </select>
+            <span class="form-hint">Mehrfachauswahl mit Strg/Cmd. Ein Benutzer kann in mehreren Gruppen sein.</span>
+        </label>
+        <div class="form-actions full-width">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Gruppe anlegen{% endif %}</button>
         </div>
     </form>
@@ -84,57 +47,4 @@
         </form>
     {% endif %}
 </section>
-{% endblock %}
-
-{% block scripts %}
-{{ super() }}
-<script>
-    // Administratorrechte implizieren alle Einzelrechte: beim Aktivieren werden
-    // alle Berechtigungen auf "voll" gesetzt und gesperrt (Anzeige des
-    // effektiven Stands). Checkboxen → angehakt, Bereichsauswahlen → "Alle Benutzer".
-    (function () {
-        var adminToggle = document.querySelector('[data-permission-admin]');
-        if (!adminToggle) return;
-        var toggles = document.querySelectorAll('[data-permission-toggle]');
-
-        function grantFull(toggle) {
-            if (toggle instanceof HTMLSelectElement) {
-                toggle.dataset.previousValue = toggle.value;
-                toggle.value = 'all';
-            } else {
-                toggle.dataset.previousValue = toggle.checked ? 'true' : 'false';
-                toggle.checked = true;
-            }
-            toggle.disabled = true;
-        }
-
-        function restore(toggle) {
-            toggle.disabled = false;
-            if (toggle.dataset.previousValue === undefined) return;
-            if (toggle instanceof HTMLSelectElement) {
-                toggle.value = toggle.dataset.previousValue;
-            } else {
-                toggle.checked = toggle.dataset.previousValue === 'true';
-            }
-            delete toggle.dataset.previousValue;
-        }
-
-        function apply() {
-            var isAdmin = adminToggle.checked;
-            toggles.forEach(function (toggle) {
-                if (isAdmin) grantFull(toggle);
-                else restore(toggle);
-            });
-        }
-
-        adminToggle.addEventListener('change', apply);
-        if (adminToggle.checked) {
-            toggles.forEach(function (toggle) {
-                if (toggle instanceof HTMLSelectElement) toggle.value = 'all';
-                else toggle.checked = true;
-                toggle.disabled = true;
-            });
-        }
-    }());
-</script>
 {% endblock %}

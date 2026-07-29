@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Rollen – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'roles' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>Rollen</h1>
+        <div class="card-header__actions">
+            <a href="/admin/permissions" class="button ghost">Berechtigungen</a>
+            <a href="/admin/roles/new" class="button">Neue Rolle anlegen</a>
+        </div>
+    </div>
+    <p class="form-hint">
+        Rollen bündeln Berechtigungen und werden Benutzern direkt zugewiesen – unabhängig von
+        der Gruppenzugehörigkeit. Systemrollen sind fest vorgegeben und nicht änderbar.
+    </p>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Name</th>
+                <th>Beschreibung</th>
+                <th>Berechtigungen</th>
+                <th>Benutzer</th>
+                <th>Status</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for role in roles %}
+                <tr>
+                    <td>
+                        {{ role.name }}
+                        {% if role.is_system %}<span class="permission-badge permission-badge--admin">Systemrolle</span>{% endif %}
+                    </td>
+                    <td>{{ role.description or '–' }}</td>
+                    <td>
+                        {% if role.permissions %}
+                            <div class="permission-badges">
+                                {% for item in role.permissions %}
+                                    {% set permission = permissions_by_key.get(item.permission_key) %}
+                                    <span class="permission-badge" title="{{ permission.description if permission else item.permission_key }}">
+                                        {{ permission.label if permission else item.permission_key }}
+                                        {% if permission and permission.scoped %}
+                                            <small>· {{ scope_labels.get(item.scope, item.scope) }}</small>
+                                        {% endif %}
+                                    </span>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <span class="permission-badge permission-badge--none">Keine Berechtigungen</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ role.users|length }}</td>
+                    <td>
+                        {% if role.is_active %}Aktiv{% else %}<span class="permission-badge permission-badge--none">Inaktiv</span>{% endif %}
+                    </td>
+                    <td>
+                        <a class="button small" href="/admin/roles/{{ role.id }}">{% if role.is_system %}Ansehen{% else %}Bearbeiten{% endif %}</a>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="6">Noch keine Rollen vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

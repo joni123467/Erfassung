@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Berechtigungen – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'roles' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+    <div class="card-header">
+        <h1>Berechtigungen</h1>
+        <a href="/admin/roles" class="button ghost">Zu den Rollen</a>
+    </div>
+    <p class="form-hint">
+        Übersicht aller Berechtigungen der Anwendung. Diese Liste ist fest im Programm
+        hinterlegt und kann nicht bearbeitet werden – vergeben werden Berechtigungen über
+        <a href="/admin/roles">Rollen</a>.
+    </p>
+    {% for category in permission_categories %}
+        <h2>{{ category.label }}</h2>
+        <p class="form-hint">{{ category.description }}</p>
+        <div class="table-scroll">
+            <table class="striped-table">
+                <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Bezeichnung</th>
+                    <th>Beschreibung</th>
+                    <th>Geltungsbereich</th>
+                    <th>Rollen</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for permission in category.permissions %}
+                    <tr>
+                        <td><code>{{ permission.key }}</code></td>
+                        <td>{{ permission.label }}</td>
+                        <td>
+                            {{ permission.description }}
+                            {% if permission.superadmin_only %}
+                                <span class="permission-badge permission-badge--admin">Superadministrator</span>
+                            {% endif %}
+                        </td>
+                        <td>{% if permission.scoped %}wählbar{% else %}–{% endif %}</td>
+                        <td>
+                            {% set holders = [] %}
+                            {% for role in roles %}
+                                {% if permission.key in role.permission_map %}
+                                    {% set label = role.name %}
+                                    {% if permission.scoped %}
+                                        {% set label = label ~ ' (' ~ scope_labels.get(role.permission_map[permission.key], role.permission_map[permission.key]) ~ ')' %}
+                                    {% endif %}
+                                    {% set _ = holders.append(label) %}
+                                {% endif %}
+                            {% endfor %}
+                            {{ holders | join(', ') or '–' }}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endfor %}
+</section>
+{% endblock %}

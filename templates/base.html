@@ -74,7 +74,7 @@
         <div class="timetac-header__profile">
             <div class="timetac-header__user">
                 <span class="timetac-header__name">{{ user.full_name }}</span>
-                <small class="timetac-header__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
+                <small class="timetac-header__group">{{ user.group_names | join(', ') or 'ohne Gruppe' }}</small>
             </div>
             <a class="timetac-header__logout" href="/logout">Abmelden</a>
         </div>
@@ -95,7 +95,7 @@
 <footer class="mobile-account-footer" aria-label="Konto">
     <div class="mobile-account-footer__user">
         <span class="mobile-account-footer__name">{{ user.full_name }}</span>
-        <small class="mobile-account-footer__group">{{ user.group.name if user.group else 'ohne Gruppe' }}</small>
+        <small class="mobile-account-footer__group">{{ user.group_names | join(', ') or 'ohne Gruppe' }}</small>
     </div>
     <button type="button" class="theme-toggle" data-theme-toggle aria-label="Dunkles Design umschalten" title="Hell / Dunkel">
         <svg class="theme-toggle__icon theme-toggle__icon--light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>

@@ -14,7 +14,8 @@
             <tr>
                 <th>Name</th>
                 <th>Email</th>
-                <th>Gruppe</th>
+                <th>Gruppen</th>
+                <th>Rollen</th>
                 <th>Wochenarbeitszeit</th>
                 <th>Zeitkonto</th>
                 <th>Überstundenabbau</th>
@@ -29,7 +30,8 @@
                 <tr>
                     <td>{{ item.full_name }} <small class="muted">({{ item.username }})</small></td>
                     <td>{{ item.email }}</td>
-                    <td>{{ item.group.name if item.group else 'ohne Gruppe' }}</td>
+                    <td>{{ item.group_names | join(', ') or 'ohne Gruppe' }}</td>
+                    <td>{{ item.role_names | join(', ') or '–' }}</td>
                     <td>{{ item.standard_weekly_hours|round(2) }} Std/Woche</td>
                     <td>{{ 'Aktiv' if item.time_account_enabled else 'Aus' }}</td>
                     <td>{{ 'Erlaubt' if item.overtime_vacation_enabled else 'Aus' }}</td>
@@ -49,7 +51,7 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="10">Es sind noch keine Benutzer vorhanden.</td></tr>
+                <tr><td colspan="11">Es sind noch keine Benutzer vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>
