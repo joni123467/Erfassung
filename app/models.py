@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     Time,
     UniqueConstraint,
@@ -33,31 +34,79 @@ class Company(Base):
     time_entries = relationship("TimeEntry", back_populates="company")
 
 
+#: Zuordnungstabellen des Rollenmodells (RBAC): Ein Benutzer gehört beliebig
+#: vielen Gruppen (Organisation) und beliebig vielen Rollen (Berechtigungen) an.
+user_groups = Table(
+    "user_groups",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", Integer, ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True),
+)
+
+user_roles = Table(
+    "user_roles",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class Group(Base):
+    """Organisationseinheit (Abteilung, Team, Standort) – ohne Berechtigungen.
+
+    Rechte werden ausschließlich über Rollen vergeben; Gruppen dienen der
+    Zuordnung und dem Geltungsbereich ``groups``.
+    """
+
     __tablename__ = "groups"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, index=True, nullable=False)
-    is_admin = Column(Boolean, default=False)
-    can_manage_users = Column(Boolean, default=False)
-    can_manage_vacations = Column(Boolean, default=False)
-    can_approve_manual_entries = Column(Boolean, default=False)
-    can_create_companies = Column(Boolean, default=False)
-    can_view_time_reports = Column(Boolean, default=False)
-    can_edit_time_entries = Column(Boolean, default=False)
-    can_manage_companies = Column(Boolean, default=False)
-    # Geltungsbereich der Team-Rechte: 'group' = eigene Gruppe, 'all' = alle Benutzer
-    can_manage_vacations_scope = Column(String(10), default="all")
-    can_approve_manual_entries_scope = Column(String(10), default="all")
-    can_view_time_reports_scope = Column(String(10), default="all")
-    can_edit_time_entries_scope = Column(String(10), default="all")
-    can_manage_users_scope = Column(String(10), default="all")
-    # Selbstbedienungsrechte: Standard erlaubt (Bestandsverhalten bleibt erhalten)
-    can_manual_time_entries = Column(Boolean, default=True)
-    can_edit_own_notes = Column(Boolean, default=True)
-    can_request_vacations = Column(Boolean, default=True)
+    description = Column(Text, default="")
 
-    users = relationship("User", back_populates="group")
+    users = relationship("User", secondary=user_groups, back_populates="groups")
+
+
+class Role(Base):
+    """Bündel von Berechtigungen, unabhängig von der Organisation."""
+
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, index=True, nullable=False)
+    description = Column(Text, default="")
+    #: Systemrollen (Administrator/Superadministrator) sind nicht änderbar.
+    is_system = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+
+    users = relationship("User", secondary=user_roles, back_populates="roles")
+    permissions = relationship(
+        "RolePermission",
+        back_populates="role",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    @property
+    def permission_map(self) -> dict[str, str]:
+        """Vergebene Rechte als ``{key: scope}``."""
+        return {item.permission_key: item.scope for item in self.permissions}
+
+
+class RolePermission(Base):
+    """Einzelne Berechtigung einer Rolle samt Geltungsbereich."""
+
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        UniqueConstraint("role_id", "permission_key", name="uq_role_permission"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    permission_key = Column(String(64), nullable=False, index=True)
+    scope = Column(String(16), nullable=False, default="all")
+
+    role = relationship("Role", back_populates="permissions")
 
 
 class User(Base):
@@ -72,6 +121,7 @@ class User(Base):
     pin_code = Column(String(4), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=True)
     must_change_password = Column(Boolean, default=True)
+    # Nur noch für Altbestände/Backups: die Zugehörigkeit steht in user_groups.
     group_id = Column(Integer, ForeignKey("groups.id"))
     time_account_enabled = Column(Boolean, default=False)
     overtime_vacation_enabled = Column(Boolean, default=False)
@@ -83,11 +133,24 @@ class User(Base):
     auto_break_deduction = Column(Boolean, default=True)
     remote_flag_enabled = Column(Boolean, default=False)
 
-    group = relationship("Group", back_populates="users")
+    groups = relationship("Group", secondary=user_groups, back_populates="users", lazy="selectin")
+    roles = relationship("Role", secondary=user_roles, back_populates="users", lazy="selectin")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
     vacation_requests = relationship(
         "VacationRequest", back_populates="user", cascade="all, delete-orphan"
     )
+
+    @property
+    def group_names(self) -> list[str]:
+        return sorted(group.name for group in self.groups)
+
+    @property
+    def group_ids(self) -> set[int]:
+        return {group.id for group in self.groups}
+
+    @property
+    def role_names(self) -> list[str]:
+        return sorted(role.name for role in self.roles)
 
     @property
     def weekly_target_minutes(self) -> int:
