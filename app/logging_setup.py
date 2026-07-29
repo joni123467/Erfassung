@@ -1,15 +1,20 @@
 """Professional, file based logging system for Erfassung.
 
-Six dedicated, rotating log files live in :data:`app.paths.LOGS_DIR`:
+One rotating log file per channel lives in :data:`app.paths.LOGS_DIR`
+(:data:`CHANNELS` is the single source of truth):
 
-==================  =========================================================
+===================  ========================================================
 ``application.log``  general application events
 ``api.log``          API calls
 ``sync.log``         offline / TimeMoto synchronisation
 ``security.log``     logins, logouts, permission related events
 ``error.log``        errors and exceptions (aggregated from all channels)
 ``audit.log``        administrative actions
-==================  =========================================================
+``backup.log``       backup and restore (since 0.9.4)
+``database.log``     database management and migration (since 0.9.7)
+``terminal.log``     terminal management and synchronisation (since 0.9.8)
+``license.log``      licence activation and verification (since 0.11.0)
+===================  ========================================================
 
 Every record is structured (timestamp, level, channel, optional user, message)
 and rotated by size.  Behaviour is driven by :class:`app.app_config.LoggingConfig`
@@ -37,6 +42,7 @@ CHANNELS: dict[str, str] = {
     "backup": "backup.log",
     "database": "database.log",
     "terminal": "terminal.log",
+    "license": "license.log",
 }
 
 LOG_FILES = tuple(CHANNELS.values())
@@ -144,6 +150,7 @@ def configure_logging(config: LoggingConfig | None = None) -> LoggingConfig:
         "backup": getattr(config, "backup_logging", True) or getattr(config, "restore_logging", True),
         "database": getattr(config, "database_logging", True),
         "terminal": getattr(config, "terminal_logging", True),
+        "license": getattr(config, "license_logging", True),
     }
 
     for channel, enabled in channel_enabled.items():
@@ -227,6 +234,14 @@ def log_terminal(message: str, *, level: int = logging.INFO, user: object = None
     _log("terminal", level, message, user=user)
 
 
+def log_license(message: str, *, level: int = logging.INFO, user: object = None) -> None:
+    """Lizenzierung: Aktivierung, Prüfung, Ablauf (license.log, ab 0.11.0).
+
+    Aktivierungsschlüssel werden hier grundsätzlich nur maskiert vermerkt.
+    """
+    _log("license", level, message, user=user)
+
+
 __all__ = [
     "CHANNELS",
     "LOG_FILES",
@@ -242,4 +257,5 @@ __all__ = [
     "log_backup",
     "log_database",
     "log_terminal",
+    "log_license",
 ]
