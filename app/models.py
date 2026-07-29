@@ -81,6 +81,7 @@ class User(Base):
     rfid_tag = Column(String(255), unique=True, nullable=True)
     monthly_overtime_limit_minutes = Column(Integer, nullable=True)
     auto_break_deduction = Column(Boolean, default=True)
+    remote_flag_enabled = Column(Boolean, default=False)
 
     group = relationship("Group", back_populates="users")
     time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
@@ -136,6 +137,7 @@ class TimeEntry(Base):
     notes = Column(String(255), default="")
     status = Column(String(32), default=TimeEntryStatus.APPROVED)
     is_manual = Column(Boolean, default=False)
+    is_remote = Column(Boolean, default=False)
     source = Column(String(64), nullable=True)
     external_id = Column(String(191), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -220,6 +222,11 @@ class TimeEntry(Base):
         if self.deleted_company_name:
             return f"Gelöscht ({self.deleted_company_name})"
         return "Allgemeine Arbeitszeit"
+
+    @property
+    def location_label(self) -> str:
+        """Einsatzort der Buchung: Remote (z. B. Telefon) oder vor Ort."""
+        return "Remote" if self.is_remote else "Vor Ort"
 
 
 class VacationStatus:

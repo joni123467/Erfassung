@@ -48,6 +48,9 @@
                         {% if active_entry.company %}
                             <p class="status-line">Firma: {{ active_entry.company.name }}</p>
                         {% endif %}
+                        {% if active_entry.is_remote %}
+                            <p class="status-line"><span class="status-badge remote">Remote</span></p>
+                        {% endif %}
                         <p class="status-line">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Stunden</p>
                         {% if active_entry.break_started_at %}
                             <p class="status-line">
@@ -95,6 +98,12 @@
                             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             <input type="hidden" name="next_url" value="/dashboard">
                             <input type="hidden" name="action" value="start_work">
+                            {% if can_flag_remote %}
+                                <label class="checkbox punch-remote-toggle">
+                                    <input type="checkbox" name="is_remote" value="1">
+                                    Remote (z. B. Telefon)
+                                </label>
+                            {% endif %}
                             <button type="submit" class="button primary">Arbeitszeit starten</button>
                         </form>
                         {% if companies or can_create_companies %}
@@ -144,6 +153,12 @@
                                 Kommentar (optional)
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
+                            {% if can_flag_remote %}
+                                <label class="checkbox">
+                                    <input type="checkbox" name="is_remote" value="1">
+                                    Remote (z. B. Telefon) – nicht vor Ort
+                                </label>
+                            {% endif %}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
                                     <span class="modal-action__icon" aria-hidden="true">✕</span>
@@ -430,6 +445,12 @@
             Kommentar
             <textarea name="notes" rows="2" placeholder="z. B. Projekt oder Kunde"></textarea>
         </label>
+        {% if can_flag_remote %}
+            <label class="checkbox full-width">
+                <input type="checkbox" name="is_remote" value="1">
+                Remote (z. B. Telefon) – nicht vor Ort
+            </label>
+        {% endif %}
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
     <p class="form-hint">Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.</p>

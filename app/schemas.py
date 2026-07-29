@@ -69,6 +69,7 @@ class UserBase(BaseModel):
     rfid_tag: Optional[str] = None
     monthly_overtime_limit_minutes: Optional[int] = None
     auto_break_deduction: bool = True
+    remote_flag_enabled: bool = False
 
     @field_validator("standard_weekly_hours")
     @classmethod
@@ -137,6 +138,7 @@ class TimeEntryBase(BaseModel):
     notes: str = ""
     status: str = models.TimeEntryStatus.APPROVED
     is_manual: bool = False
+    is_remote: bool = False
     source: Optional[str] = None
     external_id: Optional[str] = None
 

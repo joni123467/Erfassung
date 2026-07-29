@@ -81,6 +81,11 @@
                                 Automatische gesetzliche Pausen anwenden (ArbZG)
                             </label>
                             <p class="form-hint user-form__hint">Deaktiviert: Es werden nur tatsächlich gestempelte Pausen abgezogen, keine automatische Pausenkorrektur.</p>
+                            <label class="checkbox">
+                                <input type="checkbox" name="remote_flag_enabled" {% if is_edit and form_user.remote_flag_enabled %}checked{% endif %}>
+                                Einsatzort erfassen (Remote / vor Ort)
+                            </label>
+                            <p class="form-hint user-form__hint">Aktiviert: Beim Stempeln und bei manuellen Buchungen erscheint ein Haken „Remote“ (z. B. Telefon). Ohne Haken gilt eine Buchung als vor Ort.</p>
                         </div>
                     </fieldset>
                 </div>

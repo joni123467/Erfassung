@@ -10,7 +10,20 @@
             <p class="card-header__hint">Zeitübersicht je Benutzer für {{ period_range }} (freigegebene Buchungen).</p>
         </div>
         <div class="card-header__actions">
-            <a class="button ghost" href="/admin/reports/users/pdf{% if export_query %}?{{ export_query }}{% endif %}">PDF-Export</a>
+            <form method="get" action="/admin/reports/users/pdf" class="export-inline">
+                <input type="hidden" name="start" value="{{ start_value }}">
+                <input type="hidden" name="end" value="{{ end_value }}">
+                {% for item in all_users %}
+                    {% if item.id in selected_user_ids %}
+                        <input type="hidden" name="users" value="{{ item.id }}">
+                    {% endif %}
+                {% endfor %}
+                <label class="export-inline__toggle">
+                    <input type="checkbox" name="entries" value="1" {% if include_entries %}checked{% endif %}>
+                    Stempelzeiten
+                </label>
+                <button type="submit" class="button ghost">PDF-Export</button>
+            </form>
             <a class="button" href="/admin/reports/users/excel{% if export_query %}?{{ export_query }}{% endif %}">Excel-Export</a>
         </div>
     </div>
@@ -82,5 +95,6 @@
         </table>
     </div>
     <p class="form-hint">Soll = Arbeitstage (Mo–Fr) × Tagessoll · Urlaub = angerechnete genehmigte Urlaubsstunden · Über-/Minusstunden = Arbeitszeit + Urlaub − Soll.</p>
+    <p class="form-hint">Mit der Option „Stempelzeiten“ enthält der PDF-Export zusätzlich alle einzelnen Buchungen je Benutzer (Datum, Firma, Start, Ende, Arbeitszeit, Status, Kommentar).</p>
 </section>
 {% endblock %}

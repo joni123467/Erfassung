@@ -5,6 +5,76 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.21] – 2026-07-28
+
+### Added – Einsatzort einer Buchung (Remote / vor Ort)
+
+- **Optionales Feld je Buchung**: Eine Stempelung kann jetzt als **Remote**
+  (z. B. Telefon) gekennzeichnet werden; ohne Haken gilt sie als **vor Ort**.
+- **Freischaltung je Benutzer** – wie das Zeitkonto: In der Benutzerverwaltung
+  unter „Zeitkonto & Buchungen" die Option **„Einsatzort erfassen (Remote /
+  vor Ort)"** aktivieren. Ohne Freischaltung erscheint das Feld nirgends, und
+  ein trotzdem mitgesendeter Wert wird serverseitig ignoriert.
+- **Überall dort, wo gestempelt wird**: Arbeitszeit starten und Auftrag starten
+  (Web und mobil), manuelle Buchungen, die nachträgliche Kommentar-Bearbeitung
+  der letzten Buchung (mobil) sowie die Buchungsbearbeitung in der
+  Administration.
+- **Offline-fähig**: Der Haken wandert mit der Stempelung in die
+  Offline-Warteschlange der PWA und wird beim Synchronisieren übertragen; die
+  laufende Buchung zeigt das Kennzeichen auch ohne Netz an.
+- **Teilen bleibt konsistent**: Wird eine Buchung durch einen Nachtrag geteilt
+  oder beim Überschreiben zerlegt, übernehmen alle Abschnitte den Einsatzort
+  der Ursprungsbuchung.
+- **Anzeige**: Buchungslisten, Zeitübersichten und Freigaben zeigen ein
+  Kennzeichen „Remote" neben der Firma.
+- **Exporte**: PDF und Excel enthalten eine zusätzliche Spalte **„Ort"** –
+  aber nur, wenn im Zeitraum mindestens eine Buchung remote erfasst wurde.
+  Wer den Einsatzort nicht nutzt, bekommt unveränderte Exporte.
+
+### Changed
+
+- Die Buchungstabelle der persönlichen Arbeitszeitübersicht und die
+  Stempelzeiten des Administrations-Exports nutzen jetzt dieselbe Funktion
+  (`_entry_table`) – dadurch bleibt die neue Spalte in beiden gleich.
+
+### Datenbank
+
+Migration 13 (idempotent, datenerhaltend):
+
+| Tabelle | Spalte | Default |
+|---------|--------|---------|
+| `users` | `remote_flag_enabled` | `0` |
+| `time_entries` | `is_remote` | `0` |
+
+Der Default erhält das Bestandsverhalten: Alle vorhandenen Buchungen gelten als
+vor Ort, und das Feld erscheint erst nach bewusster Freischaltung.
+
+## [0.9.20] – 2026-07-27
+
+### Added – Stempelzeiten im PDF der Benutzerauswertung
+
+- **Optionale Einzelbuchungen im Administrations-Export**: Die
+  Benutzerauswertung (`/admin/reports/users`) lieferte im PDF bisher nur die
+  Summen je Benutzer. Neben dem PDF-Export gibt es jetzt die Option
+  **„Stempelzeiten"**; ist sie gesetzt, enthält das PDF zusätzlich je Benutzer
+  eine Tabelle mit allen freigegebenen Einzelbuchungen des Zeitraums –
+  Datum, Firma, Start, Ende, Arbeitszeit, Status und Kommentar samt Summenzeile.
+  Damit steht Administratoren dieselbe Detailtiefe zur Verfügung, die Benutzer
+  aus ihrer eigenen Arbeitszeitübersicht (`/records`) kennen.
+- **Gleiches Layout wie die persönliche Übersicht**: Die Tabelle nutzt das
+  gemeinsame Stilsystem (`_entry_table`), sodass persönliche Übersicht und
+  Administrations-Export identisch aussehen.
+- **Dateiname erkennbar**: Der Export heißt mit Stempelzeiten
+  `benutzer_zeit_<von>_<bis>_stempelzeiten.pdf`.
+
+### Notes
+
+- Der Geltungsbereich von „Zeitübersichten einsehen" gilt unverändert: Ein
+  Abteilungsadministrator erhält ausschließlich Buchungen des eigenen Teams.
+- Der Excel-Export der Benutzerauswertung bleibt unverändert die reine
+  Summenauswertung.
+- Keine Datenbankänderung.
+
 ## [0.9.19] – 2026-07-24
 
 ### Added – Abteilungsadministration (Gruppenadmins)
