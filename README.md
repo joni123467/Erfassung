@@ -2,7 +2,7 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.10.0`
+**Version:** `0.10.1`
 
 > Seit 0.10.0: **Rollenbasierte Rechteverwaltung (RBAC)** – Berechtigungen
 > kommen ausschließlich über **Rollen**; Gruppen sind reine Organisation, und
@@ -12,7 +12,7 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 
 > Seit 0.9.21: **Einsatzort je Buchung (Remote / vor Ort)** – wird der
 > Einsatzort für einen Benutzer freigeschaltet, erscheint beim Stempeln und bei
-> manuellen Buchungen ein Umschalter **Vor Ort ⇄ Remote** (seit 0.10.0 als
+> manuellen Buchungen ein Umschalter **Vor Ort ⇄ Remote** (seit 0.9.22 als
 > farbige Schaltfläche statt kleiner Checkbox). Details unter
 > [„Einsatzort (Remote / vor Ort)"](#einsatzort-remote--vor-ort).
 
@@ -107,13 +107,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.10.0 .
+docker build -t erfassung:0.10.1 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.10.0
+  erfassung:0.10.1
 ```
 
 ## GHCR & GitHub Actions
@@ -123,20 +123,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.10.0`)
+- Push von Tags `v*` (z. B. `v0.10.1`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.10.0`)
+- Versions-Tag aus `VERSION` (hier `0.10.1`)
 - `latest` auf `main`
-- Git-Tag (`v0.10.0`)
+- Git-Tag (`v0.10.1`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.10.0`
+`ghcr.io/OWNER/erfassung:0.10.1`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -149,7 +149,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.0
+    image: ghcr.io/OWNER/erfassung:0.10.1
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -251,7 +251,7 @@ Anmeldung verlangt (`--no-force-change` deaktiviert das).
 
 ## Rollen & Berechtigungen
 
-Seit 0.10.0 gilt ein rollenbasiertes Modell (RBAC):
+Seit 0.10.1 gilt ein rollenbasiertes Modell (RBAC):
 
 ```
 Benutzer ──< Gruppen        (Organisation: Abteilung, Team, Standort)
@@ -475,7 +475,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.0
+    image: ghcr.io/OWNER/erfassung:0.10.1
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -510,7 +510,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.0
+    image: ghcr.io/OWNER/erfassung:0.10.1
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -546,7 +546,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.0
+    image: ghcr.io/OWNER/erfassung:0.10.1
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -582,7 +582,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.0
+    image: ghcr.io/OWNER/erfassung:0.10.1
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -666,8 +666,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.10.0`)
-- optional Image-Name/Tag (`erfassung`, `0.10.0`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.10.1`)
+- optional Image-Name/Tag (`erfassung`, `0.10.1`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

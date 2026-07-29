@@ -151,6 +151,8 @@
               <input type="hidden" name="action" value="end_break">
               <button type="submit" class="mobile-button ghost" data-toggle-disabled="true">Pause beenden</button>
             </form>
+            <!-- Auch bei laufender Arbeitszeit erreichbar: startet bzw. wechselt einen Auftrag. -->
+            <button type="button" class="mobile-button" data-open="mobile-order-modal">Auftrag starten</button>
             <form method="post" action="/punch" data-offline="punch" data-state="company-active" hidden>
               <input type="hidden" name="csrf_token" value="">
               <input type="hidden" name="next_url" value="/mobile">

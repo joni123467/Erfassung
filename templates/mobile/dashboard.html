@@ -147,6 +147,11 @@
                         <input type="hidden" name="action" value="end_break">
                         <button type="submit" class="mobile-button ghost" data-toggle-disabled="true" {% if not (active_entry and active_entry.break_started_at) %}disabled{% endif %}>Pause beenden</button>
                     </form>
+                    {% if companies or can_create_companies %}
+                        {# Auch bei laufender Arbeitszeit erreichbar: startet einen
+                           Auftrag bzw. wechselt zu einem anderen. #}
+                        <button type="button" class="mobile-button" data-open="mobile-order-modal">Auftrag starten</button>
+                    {% endif %}
                     <form method="post" action="/punch" data-offline="punch" data-state="company-active" {% if not (active_entry and active_entry.company_id is not none) %}hidden{% endif %}>
                         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
