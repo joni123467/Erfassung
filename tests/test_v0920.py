@@ -123,8 +123,8 @@ def _report_data(params: dict, allowed=None):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.21"
-    assert client.get("/health").json()["version"] == "0.9.21"
+    assert client.main.APP_VERSION == "0.10.0"
+    assert client.get("/health").json()["version"] == "0.10.0"
 
 
 # --- report data ----------------------------------------------------------------
@@ -223,26 +223,21 @@ def test_export_route_with_and_without_entries(client):
 
 
 def test_entries_respect_permission_scope(client):
-    """Ein Abteilungsadministrator (Bereich 'Eigenes Team') bekommt nur die
-    Stempelzeiten seiner Gruppe."""
+    """Eine Abteilungsleitung (Rolle mit Geltungsbereich „Eigene Gruppen")
+    bekommt nur die Stempelzeiten ihrer Gruppen."""
     from app import crud, database, schemas, security
-    from app import permissions as group_permissions
 
     db = database.SessionLocal()
     try:
-        group = crud.create_group(
-            db,
-            schemas.GroupCreate(
-                name="Abteilung",
-                can_view_time_reports=True,
-                can_view_time_reports_scope=group_permissions.SCOPE_GROUP,
-            ),
+        group = crud.create_group(db, schemas.GroupCreate(name="Abteilung"))
+        role = crud.create_role(
+            db, name="Abteilungsleitung", permissions={"Time.View": "groups"}
         )
         lead = crud.create_user(
             db,
             schemas.UserCreate(
                 username="lead", full_name="Lead", email="lead@example.com",
-                password="Lead!00000", group_id=group.id,
+                password="Lead!00000", group_ids=[group.id], role_ids=[role.id],
             ),
         )
         lead.must_change_password = False
@@ -271,7 +266,7 @@ def test_entries_respect_permission_scope(client):
         data = _build_user_report_data(
             QueryParams(urlencode({**PERIOD, "entries": "1"})),
             db,
-            _scoped_user_ids(db, lead_user, "can_view_time_reports"),
+            _scoped_user_ids(db, lead_user, "Time.View"),
         )
         assert data["include_entries"] is True
         assert [row["user"].id for row in data["report_rows"]] == [lead_id]

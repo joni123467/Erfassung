@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_components.html" import location_toggle %}
 {% block title %}Dashboard – Erfassung{% endblock %}
 {% block content %}
 {% set vacation_minutes = metrics.vacation_minutes %}
@@ -99,10 +100,7 @@
                             <input type="hidden" name="next_url" value="/dashboard">
                             <input type="hidden" name="action" value="start_work">
                             {% if can_flag_remote %}
-                                <label class="checkbox punch-remote-toggle">
-                                    <input type="checkbox" name="is_remote" value="1">
-                                    Remote (z. B. Telefon)
-                                </label>
+                                <div class="punch-remote-toggle">{{ location_toggle() }}</div>
                             {% endif %}
                             <button type="submit" class="button primary">Arbeitszeit starten</button>
                         </form>
@@ -154,10 +152,7 @@
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
                             {% if can_flag_remote %}
-                                <label class="checkbox">
-                                    <input type="checkbox" name="is_remote" value="1">
-                                    Remote (z. B. Telefon) – nicht vor Ort
-                                </label>
+                                {{ location_toggle(block=True) }}
                             {% endif %}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
@@ -446,10 +441,7 @@
             <textarea name="notes" rows="2" placeholder="z. B. Projekt oder Kunde"></textarea>
         </label>
         {% if can_flag_remote %}
-            <label class="checkbox full-width">
-                <input type="checkbox" name="is_remote" value="1">
-                Remote (z. B. Telefon) – nicht vor Ort
-            </label>
+            <div class="full-width">{{ location_toggle() }}</div>
         {% endif %}
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>

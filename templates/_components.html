@@ -1,0 +1,17 @@
+{# Einsatzort einer Buchung: Umschalter statt kleiner Checkbox.
+   Die Checkbox bleibt das Formularfeld (offline-fähig, ohne JavaScript) –
+   sichtbar ist eine Schaltfläche, die Farbe und Beschriftung wechselt. #}
+{% macro location_toggle(checked=False, block=False) -%}
+<label class="location-toggle{% if block %} location-toggle--block{% endif %}">
+    <input type="checkbox" name="is_remote" value="1"{% if checked %} checked{% endif %}>
+    <span class="visually-hidden">Remote (z. B. Telefon)</span>
+    <span class="location-toggle__face" aria-hidden="true">
+        <span class="location-toggle__dot"></span>
+        <span class="location-toggle__caption">Einsatzort</span>
+        <span class="location-toggle__value">
+            <span class="location-toggle__text location-toggle__text--off">Vor Ort</span>
+            <span class="location-toggle__text location-toggle__text--on">Remote</span>
+        </span>
+    </span>
+</label>
+{%- endmacro %}

@@ -5,16 +5,21 @@
 {% include "admin/_nav.html" %}
 <section class="card">
     <div class="card-header">
-        <h1>Gruppenverwaltung</h1>
+        <h1>Gruppen</h1>
         <a href="/admin/groups/new" class="button">Neue Gruppe anlegen</a>
     </div>
+    <p class="form-hint">
+        Gruppen bilden die Organisation ab (Abteilung, Team, Standort) und tragen keine
+        Berechtigungen. Rechte werden über <a href="/admin/roles">Rollen</a> vergeben; der
+        Geltungsbereich „Eigene Gruppen“ bezieht sich auf diese Zuordnung.
+    </p>
     <div class="table-scroll">
-        <table class="striped-table permission-overview">
+        <table class="striped-table">
             <thead>
             <tr>
                 <th>Name</th>
-                <th>Berechtigungen</th>
-                <th>Benutzer</th>
+                <th>Beschreibung</th>
+                <th>Mitglieder</th>
                 <th>Aktionen</th>
             </tr>
             </thead>
@@ -22,37 +27,13 @@
             {% for group in groups %}
                 <tr>
                     <td>{{ group.name }}</td>
+                    <td>{{ group.description or '–' }}</td>
                     <td>
-                        {% if group.is_admin %}
-                            <span class="permission-badge permission-badge--admin">Administrator – alle Rechte</span>
-                        {% else %}
-                            {% set found = namespace(any=false) %}
-                            <div class="permission-badges">
-                                {% for category in permission_categories %}
-                                    {% set granted = [] %}
-                                    {% for permission in category.permissions %}
-                                        {% if group|attr(permission.key) %}
-                                            {% if permission.scoped and (group|attr(permission.scope_key)) == 'group' %}
-                                                {% set _ = granted.append(permission.label ~ ' (eigenes Team)') %}
-                                            {% else %}
-                                                {% set _ = granted.append(permission.label) %}
-                                            {% endif %}
-                                        {% endif %}
-                                    {% endfor %}
-                                    {% if granted %}
-                                        {% set found.any = true %}
-                                        <span class="permission-badge" title="{{ granted|join(', ') }}">
-                                            {{ category.label }}: {{ granted|length }}/{{ category.permissions|length }}
-                                        </span>
-                                    {% endif %}
-                                {% endfor %}
-                            </div>
-                            {% if not found.any %}
-                                <span class="permission-badge permission-badge--none">Keine Berechtigungen</span>
-                            {% endif %}
+                        {{ group.users|length }}
+                        {% if group.users %}
+                            <span class="form-hint">{{ group.users | map(attribute='full_name') | join(', ') }}</span>
                         {% endif %}
                     </td>
-                    <td>{{ group.users|length }}</td>
                     <td>
                         <a class="button small" href="/admin/groups/{{ group.id }}">Bearbeiten</a>
                     </td>
@@ -63,6 +44,5 @@
             </tbody>
         </table>
     </div>
-    <p class="form-hint">Die Zahl je Kategorie zeigt vergebene/verfügbare Rechte; Details per Mouseover oder über „Bearbeiten".</p>
 </section>
 {% endblock %}

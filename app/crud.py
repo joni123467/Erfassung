@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from . import models, schemas
+from . import permissions as group_permissions
 from . import security
 
 
@@ -19,11 +20,133 @@ def get_groups(db: Session) -> List[models.Group]:
 
 
 def create_group(db: Session, group: schemas.GroupCreate) -> models.Group:
-    db_group = models.Group(**group.model_dump())
+    db_group = models.Group(name=group.name, description=group.description or "")
     db.add(db_group)
     db.commit()
     db.refresh(db_group)
     return db_group
+
+
+def get_group_by_name(db: Session, name: str) -> Optional[models.Group]:
+    return db.query(models.Group).filter(models.Group.name == name).first()
+
+
+def set_group_members(db: Session, group: models.Group, user_ids: Iterable[int]) -> models.Group:
+    """Mitglieder einer Gruppe vollständig setzen."""
+    wanted = {int(value) for value in user_ids}
+    group.users = db.query(models.User).filter(models.User.id.in_(wanted)).all() if wanted else []
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+# --- Rollen (RBAC) -------------------------------------------------------------
+
+def get_role(db: Session, role_id: int) -> Optional[models.Role]:
+    return db.query(models.Role).filter(models.Role.id == role_id).first()
+
+
+def get_role_by_name(db: Session, name: str) -> Optional[models.Role]:
+    return db.query(models.Role).filter(models.Role.name == name).first()
+
+
+def get_roles(db: Session) -> List[models.Role]:
+    return db.query(models.Role).order_by(models.Role.name).all()
+
+
+def create_role(
+    db: Session,
+    *,
+    name: str,
+    description: str = "",
+    is_system: bool = False,
+    is_active: bool = True,
+    permissions: Optional[dict[str, str]] = None,
+) -> models.Role:
+    role = models.Role(
+        name=name, description=description or "", is_system=is_system, is_active=is_active
+    )
+    db.add(role)
+    db.flush()
+    _apply_role_permissions(db, role, permissions or {})
+    db.commit()
+    db.refresh(role)
+    return role
+
+
+def _apply_role_permissions(
+    db: Session, role: models.Role, permissions: dict[str, str]
+) -> None:
+    """Berechtigungen einer Rolle vollständig ersetzen (nur bekannte Keys).
+
+    Die Altbestände werden bewusst gelöscht **und geflusht**, bevor die neuen
+    Zeilen entstehen – sonst kollidiert der Insert mit dem Unique-Index aus
+    (Rolle, Recht).
+    """
+    for item in list(role.permissions):
+        db.delete(item)
+    db.flush()
+    for key, scope in permissions.items():
+        permission = group_permissions.PERMISSIONS_BY_KEY.get(key)
+        if permission is None or scope == group_permissions.SCOPE_NONE:
+            continue
+        db.add(
+            models.RolePermission(role_id=role.id, permission_key=key, scope=scope)
+        )
+    db.flush()
+
+
+def update_role(
+    db: Session,
+    role_id: int,
+    *,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    permissions: Optional[dict[str, str]] = None,
+) -> Optional[models.Role]:
+    """Rolle ändern. Systemrollen sind unveränderlich und werden abgelehnt."""
+    role = get_role(db, role_id)
+    if not role:
+        return None
+    if role.is_system:
+        raise ValueError("SYSTEM_ROLE_IMMUTABLE")
+    if name is not None:
+        role.name = name
+    if description is not None:
+        role.description = description
+    if is_active is not None:
+        role.is_active = bool(is_active)
+    if permissions is not None:
+        _apply_role_permissions(db, role, permissions)
+    db.commit()
+    db.refresh(role)
+    return role
+
+
+def delete_role(db: Session, role_id: int) -> bool:
+    role = get_role(db, role_id)
+    if not role or role.is_system:
+        return False
+    db.delete(role)
+    db.commit()
+    return True
+
+
+def set_user_groups(db: Session, user: models.User, group_ids: Iterable[int]) -> models.User:
+    wanted = {int(value) for value in group_ids}
+    user.groups = db.query(models.Group).filter(models.Group.id.in_(wanted)).all() if wanted else []
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def set_user_roles(db: Session, user: models.User, role_ids: Iterable[int]) -> models.User:
+    wanted = {int(value) for value in role_ids}
+    user.roles = db.query(models.Role).filter(models.Role.id.in_(wanted)).all() if wanted else []
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def get_user(db: Session, user_id: int) -> Optional[models.User]:
@@ -47,8 +170,26 @@ def _allocate_internal_pin(db: Session) -> str:
     raise ValueError("Keine interne PIN mehr verfügbar")
 
 
+def _pop_membership(payload: dict) -> tuple[Optional[set[int]], Optional[set[int]]]:
+    """Gruppen-/Rollenzuordnung aus dem Schema lösen.
+
+    ``None`` bedeutet „nicht angegeben“ – die vorhandene Zuordnung bleibt dann
+    unverändert. ``group_id`` bleibt aus Kompatibilität erhalten und zählt als
+    einzelne Mitgliedschaft, wenn keine ``group_ids`` übergeben wurden.
+    """
+    raw_groups = payload.pop("group_ids", None)
+    raw_roles = payload.pop("role_ids", None)
+    group_ids = {int(value) for value in raw_groups} if raw_groups is not None else None
+    role_ids = {int(value) for value in raw_roles} if raw_roles is not None else None
+    legacy_group = payload.pop("group_id", None)
+    if group_ids is None and legacy_group:
+        group_ids = {int(legacy_group)}
+    return group_ids, role_ids
+
+
 def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     payload = user.model_dump()
+    group_ids, role_ids = _pop_membership(payload)
     raw_password = payload.pop("password")
     security.validate_password_strength(raw_password)
     weekly_hours = float(payload.get("standard_weekly_hours", 0) or 0)
@@ -69,6 +210,10 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    if group_ids is not None:
+        set_user_groups(db, db_user, group_ids)
+    if role_ids is not None:
+        set_user_roles(db, db_user, role_ids)
     return db_user
 
 
@@ -77,6 +222,7 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
     if not db_user:
         return None
     payload = user.model_dump()
+    group_ids, role_ids = _pop_membership(payload)
     if "standard_weekly_hours" in payload:
         weekly_hours = float(payload["standard_weekly_hours"] or 0)
         db_user.standard_weekly_hours = weekly_hours
@@ -101,6 +247,10 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
         setattr(db_user, key, value)
     db.commit()
     db.refresh(db_user)
+    if group_ids is not None:
+        set_user_groups(db, db_user, group_ids)
+    if role_ids is not None:
+        set_user_roles(db, db_user, role_ids)
     return db_user
 
 
@@ -117,8 +267,8 @@ def update_group(db: Session, group_id: int, group: schemas.GroupCreate) -> Opti
     db_group = get_group(db, group_id)
     if not db_group:
         return None
-    for key, value in group.model_dump().items():
-        setattr(db_group, key, value)
+    db_group.name = group.name
+    db_group.description = group.description or ""
     db.commit()
     db.refresh(db_group)
     return db_group

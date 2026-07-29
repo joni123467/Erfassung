@@ -9,10 +9,12 @@
 #}
 {% set nav_groups = [
     {
-        'id': 'users', 'label': 'Benutzer', 'show': admin_permissions.users or admin_permissions.groups or admin_permissions.companies,
+        'id': 'users', 'label': 'Benutzer', 'show': admin_permissions.users or admin_permissions.groups or admin_permissions.roles or admin_permissions.companies,
         'items': [
             {'href': '/admin/users', 'label': 'Benutzer', 'key': 'users', 'show': admin_permissions.users},
-            {'href': '/admin/groups', 'label': 'Rollen & Berechtigungen', 'key': 'groups', 'show': admin_permissions.groups},
+            {'href': '/admin/groups', 'label': 'Gruppen', 'key': 'groups', 'show': admin_permissions.groups},
+            {'href': '/admin/roles', 'label': 'Rollen', 'key': 'roles', 'show': admin_permissions.roles},
+            {'href': '/admin/permissions', 'label': 'Berechtigungen', 'key': 'permissions', 'show': admin_permissions.roles},
             {'href': '/admin/companies', 'label': 'Firmen', 'key': 'companies', 'show': admin_permissions.companies},
         ],
     },
@@ -27,12 +29,12 @@
         ],
     },
     {
-        'id': 'backup', 'label': 'Sicherung', 'show': admin_permissions.system,
+        'id': 'backup', 'label': 'Sicherung', 'show': admin_permissions.backup,
         'items': [
-            {'href': '/admin/system/backups', 'label': 'Backup-Jobs', 'key': 'system_backups', 'show': admin_permissions.system},
-            {'href': '/admin/system/backups/history', 'label': 'Backup-Historie', 'key': 'system_backups_history', 'show': admin_permissions.system},
-            {'href': '/admin/system/restore', 'label': 'Wiederherstellung', 'key': 'system_restore', 'show': admin_permissions.system},
-            {'href': '/admin/system/restore/history', 'label': 'Restore-Historie', 'key': 'system_restore_history', 'show': admin_permissions.system},
+            {'href': '/admin/system/backups', 'label': 'Backup-Jobs', 'key': 'system_backups', 'show': admin_permissions.backup},
+            {'href': '/admin/system/backups/history', 'label': 'Backup-Historie', 'key': 'system_backups_history', 'show': admin_permissions.backup},
+            {'href': '/admin/system/restore', 'label': 'Wiederherstellung', 'key': 'system_restore', 'show': admin_permissions.backup},
+            {'href': '/admin/system/restore/history', 'label': 'Restore-Historie', 'key': 'system_restore_history', 'show': admin_permissions.backup},
         ],
     },
     {

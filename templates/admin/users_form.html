@@ -52,14 +52,33 @@
                             </label>
                         {% endif %}
                         <label>
-                            Gruppe
-                            <select name="group_id">
-                                <option value="">ohne Gruppe</option>
+                            Gruppen
+                            <select name="group_ids" multiple size="5">
                                 {% for group in groups %}
-                                    <option value="{{ group.id }}" {% if is_edit and form_user.group and form_user.group.id == group.id %}selected{% endif %}>{{ group.name }}</option>
+                                    <option value="{{ group.id }}" {% if is_edit and group.id in form_user.group_ids %}selected{% endif %}>{{ group.name }}</option>
                                 {% endfor %}
                             </select>
+                            <span class="form-hint">Mehrfachauswahl mit Strg/Cmd. Gruppen dienen nur der Organisation.</span>
                         </label>
+                        {% if roles %}
+                            <label>
+                                Rollen
+                                <select name="role_ids" multiple size="5">
+                                    {% for role in roles %}
+                                        <option value="{{ role.id }}" {% if is_edit and role in form_user.roles %}selected{% endif %}>
+                                            {{ role.name }}{% if role.is_system %} (Systemrolle){% endif %}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                                <span class="form-hint">Berechtigungen kommen ausschließlich über Rollen.</span>
+                            </label>
+                        {% elif is_edit and form_user.roles %}
+                            <label>
+                                Rollen
+                                <input type="text" value="{{ form_user.role_names | join(', ') }}" disabled>
+                                <span class="form-hint">Zum Ändern wird das Recht „Rollen verwalten“ benötigt.</span>
+                            </label>
+                        {% endif %}
                         <label>
                             RFID-Tag
                             <input type="text" name="rfid_tag" value="{{ form_user.rfid_tag if is_edit and form_user.rfid_tag else '' }}" placeholder="Optional">

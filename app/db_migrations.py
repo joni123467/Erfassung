@@ -33,7 +33,19 @@ def _baseline(_engine: Engine) -> None:
     return None
 
 
+def _legacy_groups_present(engine: Engine) -> bool:
+    """Trägt die Datenbank noch die alten Gruppenrechte?
+
+    Auf neuen Installationen (und nach Migration 14) gibt es die Spalte
+    ``groups.is_admin`` nicht mehr – die historischen Rechte-Migrationen
+    werden dann übersprungen, statt Spalten neu anzulegen.
+    """
+    return db_schema.has_column(engine, "groups", "is_admin")
+
+
 def _add_group_time_report_permission(engine: Engine) -> None:
+    if not _legacy_groups_present(engine):
+        return
     if db_schema.add_column(
         engine, "groups", "can_view_time_reports", "INTEGER", default="0"
     ):
@@ -211,6 +223,8 @@ def _add_group_permission_overhaul(engine: Engine) -> None:
     wird für Administratorgruppen auf 1 gesetzt (Bestandsverhalten: Firmen-
     verwaltung war Admin-only).
     """
+    if not _legacy_groups_present(engine):
+        return
 
     if db_schema.add_column(
         engine, "groups", "can_manage_companies", "BOOLEAN", default="0", backfill_null_to="0"
@@ -234,6 +248,8 @@ def _add_group_permission_scopes(engine: Engine) -> None:
     ``'all'`` gilt für alle Benutzer. Default 'all' erhält das
     Bestandsverhalten (Rechte galten bisher immer für alle Benutzer).
     """
+    if not _legacy_groups_present(engine):
+        return
 
     for column_name in (
         "can_manage_vacations_scope",
@@ -252,6 +268,8 @@ def _add_manage_users_scope(engine: Engine) -> None:
     Ermöglicht Abteilungsadministratoren, die Benutzer der eigenen Gruppe zu
     verwalten. Default 'all' erhält das Bestandsverhalten.
     """
+    if not _legacy_groups_present(engine):
+        return
 
     db_schema.add_column(
         engine, "groups", "can_manage_users_scope", "VARCHAR(10)",
@@ -276,6 +294,239 @@ def _add_remote_location_flags(engine: Engine) -> None:
     )
 
 
+#: Abbildung der alten Gruppenrechte auf die neuen Berechtigungs-Keys.
+#: ``can_manage_users`` deckte früher alle Benutzeroperationen ab.
+_LEGACY_PERMISSION_MAP: dict[str, tuple[str, ...]] = {
+    "can_manual_time_entries": ("Own.Time.Edit",),
+    "can_edit_own_notes": ("Own.Comment.Edit",),
+    "can_request_vacations": ("Own.Vacation.Request",),
+    "can_create_companies": ("Company.Create",),
+    "can_manage_companies": ("Company.Manage",),
+    "can_approve_manual_entries": ("Time.Approve",),
+    "can_edit_time_entries": ("Time.Edit",),
+    "can_view_time_reports": ("Time.View",),
+    "can_manage_vacations": ("Vacation.Manage",),
+    "can_manage_users": ("User.View", "User.Create", "User.Edit", "User.Delete"),
+}
+
+
+def _ensure_system_roles(connection) -> dict[str, int]:
+    """Systemrollen anlegen bzw. auf den aktuellen Rechtestand bringen."""
+    from sqlalchemy import text
+
+    from . import permissions as registry
+
+    role_ids: dict[str, int] = {}
+    for name in registry.SYSTEM_ROLE_NAMES:
+        row = connection.execute(
+            text("SELECT id FROM roles WHERE name = :name"), {"name": name}
+        ).first()
+        if row:
+            role_id = int(row[0])
+        else:
+            description = (
+                "Uneingeschränkter Zugriff inklusive Rollen, Systemeinstellungen "
+                "und Sicherungen."
+                if name == registry.ROLE_SUPERADMINISTRATOR
+                else "Vollständige Administration ohne Rollen-, System- und Sicherungsverwaltung."
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO roles (name, description, is_system, is_active) "
+                    "VALUES (:name, :description, 1, 1)"
+                ),
+                {"name": name, "description": description},
+            )
+            role_id = int(
+                connection.execute(
+                    text("SELECT id FROM roles WHERE name = :name"), {"name": name}
+                ).scalar()
+            )
+        role_ids[name] = role_id
+        # Rechte der Systemrollen sind fest vorgegeben und werden bei jedem
+        # Lauf neu gesetzt, damit neue Rechte automatisch enthalten sind.
+        connection.execute(
+            text("DELETE FROM role_permissions WHERE role_id = :role_id"),
+            {"role_id": role_id},
+        )
+        for key, scope in registry.system_role_grants(name).items():
+            connection.execute(
+                text(
+                    "INSERT INTO role_permissions (role_id, permission_key, scope) "
+                    "VALUES (:role_id, :key, :scope)"
+                ),
+                {"role_id": role_id, "key": key, "scope": scope},
+            )
+    return role_ids
+
+
+def _migrate_groups_to_roles(engine: Engine) -> None:
+    """Rollenmodell einführen und den Bestand übernehmen (§0.10.0).
+
+    1. Neue Tabellen anlegen (idempotent).
+    2. Bisherige Gruppenzugehörigkeit nach ``user_groups`` übernehmen.
+    3. Systemrollen anlegen; Mitglieder von Administratorgruppen erhalten
+       „Superadministrator“ (sie durften bisher alles).
+    4. Jede Gruppe mit Rechten wird zur Rolle „Migration – <Name>“; ihre
+       Mitglieder erhalten diese Rolle.
+    5. Anschließend werden die Rechte-Spalten der Gruppen geleert.
+
+    Bestehende Installationen behalten dadurch exakt ihre bisherigen Rechte.
+    """
+    from sqlalchemy import text
+
+    from . import models
+    from . import permissions as registry
+
+    # 1. Tabellen des Rollenmodells sicherstellen (auch bei Restore alter Backups).
+    models.Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            models.Role.__table__,
+            models.RolePermission.__table__,
+            models.user_roles,
+            models.user_groups,
+        ],
+    )
+    db_schema.add_column(engine, "groups", "description", "TEXT")
+
+    with engine.begin() as connection:
+        # 2. Zugehörigkeit übernehmen (nur, was noch nicht vorhanden ist).
+        if db_schema.has_column(engine, "users", "group_id"):
+            rows = connection.execute(
+                text("SELECT id, group_id FROM users WHERE group_id IS NOT NULL")
+            ).all()
+            existing = {
+                (int(r[0]), int(r[1]))
+                for r in connection.execute(
+                    text("SELECT user_id, group_id FROM user_groups")
+                ).all()
+            }
+            for user_id, group_id in rows:
+                if (int(user_id), int(group_id)) in existing:
+                    continue
+                connection.execute(
+                    text(
+                        "INSERT INTO user_groups (user_id, group_id) "
+                        "VALUES (:user_id, :group_id)"
+                    ),
+                    {"user_id": int(user_id), "group_id": int(group_id)},
+                )
+
+        # 3. Systemrollen.
+        system_roles = _ensure_system_roles(connection)
+
+        legacy_columns = [
+            column
+            for column in _LEGACY_PERMISSION_MAP
+            if db_schema.has_column(engine, "groups", column)
+        ]
+        has_is_admin = db_schema.has_column(engine, "groups", "is_admin")
+        if not legacy_columns and not has_is_admin:
+            return
+
+        selected = ["id", "name"] + legacy_columns
+        if has_is_admin:
+            selected.append("is_admin")
+        for column in legacy_columns:
+            scope_column = f"{column}_scope"
+            if db_schema.has_column(engine, "groups", scope_column):
+                selected.append(scope_column)
+        groups = connection.execute(
+            text(f"SELECT {', '.join(selected)} FROM groups")
+        ).mappings().all()
+
+        def _members(group_id: int) -> list[int]:
+            rows = connection.execute(
+                text("SELECT user_id FROM user_groups WHERE group_id = :group_id"),
+                {"group_id": group_id},
+            ).all()
+            return [int(row[0]) for row in rows]
+
+        def _assign(user_id: int, role_id: int) -> None:
+            exists = connection.execute(
+                text(
+                    "SELECT 1 FROM user_roles WHERE user_id = :user_id AND role_id = :role_id"
+                ),
+                {"user_id": user_id, "role_id": role_id},
+            ).first()
+            if exists:
+                return
+            connection.execute(
+                text("INSERT INTO user_roles (user_id, role_id) VALUES (:user_id, :role_id)"),
+                {"user_id": user_id, "role_id": role_id},
+            )
+
+        for group in groups:
+            group_id = int(group["id"])
+            members = _members(group_id)
+
+            # 3b. Administratorgruppen → Superadministrator (bisher alles erlaubt).
+            if has_is_admin and group.get("is_admin"):
+                for user_id in members:
+                    _assign(user_id, system_roles[registry.ROLE_SUPERADMINISTRATOR])
+                continue
+
+            # 4. Rechte der Gruppe in eine Rolle überführen.
+            grants: dict[str, str] = {}
+            for column in legacy_columns:
+                if not group.get(column):
+                    continue
+                legacy_scope = group.get(f"{column}_scope") or registry.SCOPE_ALL
+                scope = (
+                    registry.SCOPE_GROUPS
+                    if str(legacy_scope) == "group"
+                    else registry.SCOPE_ALL
+                )
+                for key in _LEGACY_PERMISSION_MAP[column]:
+                    permission = registry.PERMISSIONS_BY_KEY[key]
+                    grants[key] = scope if permission.scoped else registry.default_scope(permission)
+            if not grants:
+                continue
+
+            role_name = f"Migration – {group['name']}"
+            row = connection.execute(
+                text("SELECT id FROM roles WHERE name = :name"), {"name": role_name}
+            ).first()
+            if row:
+                role_id = int(row[0])
+            else:
+                connection.execute(
+                    text(
+                        "INSERT INTO roles (name, description, is_system, is_active) "
+                        "VALUES (:name, :description, 0, 1)"
+                    ),
+                    {
+                        "name": role_name,
+                        "description": (
+                            f"Automatisch aus den Berechtigungen der Gruppe "
+                            f"„{group['name']}“ erzeugt (Umstellung auf Rollen)."
+                        ),
+                    },
+                )
+                role_id = int(
+                    connection.execute(
+                        text("SELECT id FROM roles WHERE name = :name"), {"name": role_name}
+                    ).scalar()
+                )
+                for key, scope in grants.items():
+                    connection.execute(
+                        text(
+                            "INSERT INTO role_permissions (role_id, permission_key, scope) "
+                            "VALUES (:role_id, :key, :scope)"
+                        ),
+                        {"role_id": role_id, "key": key, "scope": scope},
+                    )
+            for user_id in members:
+                _assign(user_id, role_id)
+
+        # 5. Rechte aus den Gruppen entfernen.
+        for column in legacy_columns:
+            connection.execute(text(f"UPDATE groups SET {column} = 0"))
+        if has_is_admin:
+            connection.execute(text("UPDATE groups SET is_admin = 0"))
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -290,6 +541,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (11, _add_group_permission_scopes),
     (12, _add_manage_users_scope),
     (13, _add_remote_location_flags),
+    (14, _migrate_groups_to_roles),
 ]
 
 

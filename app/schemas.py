@@ -27,23 +27,14 @@ class Company(CompanyBase):
 
 
 class GroupBase(BaseModel):
+    """Organisationsgruppe – ohne Berechtigungen (RBAC).
+
+    Rechte-Felder älterer Clients werden von Pydantic ignoriert, damit
+    bestehende API-Aufrufe weiterhin funktionieren.
+    """
+
     name: str
-    is_admin: bool = False
-    can_manage_users: bool = False
-    can_manage_vacations: bool = False
-    can_approve_manual_entries: bool = False
-    can_create_companies: bool = False
-    can_view_time_reports: bool = False
-    can_edit_time_entries: bool = False
-    can_manage_companies: bool = False
-    can_manual_time_entries: bool = True
-    can_edit_own_notes: bool = True
-    can_request_vacations: bool = True
-    can_manage_vacations_scope: str = "all"
-    can_approve_manual_entries_scope: str = "all"
-    can_view_time_reports_scope: str = "all"
-    can_edit_time_entries_scope: str = "all"
-    can_manage_users_scope: str = "all"
+    description: str = ""
 
 
 class GroupCreate(GroupBase):
@@ -52,6 +43,37 @@ class GroupCreate(GroupBase):
 
 class Group(GroupBase):
     id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RolePermissionEntry(BaseModel):
+    permission_key: str
+    scope: str = "all"
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoleBase(BaseModel):
+    name: str
+    description: str = ""
+    is_active: bool = True
+
+
+class RoleCreate(RoleBase):
+    #: Berechtigungen als ``{key: scope}``.
+    permissions: dict[str, str] = {}
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    permissions: Optional[dict[str, str]] = None
+
+
+class Role(RoleBase):
+    id: int
+    is_system: bool = False
+    permissions: List[RolePermissionEntry] = []
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -70,6 +92,10 @@ class UserBase(BaseModel):
     monthly_overtime_limit_minutes: Optional[int] = None
     auto_break_deduction: bool = True
     remote_flag_enabled: bool = False
+    #: Mehrfachzugehörigkeit (RBAC). ``group_id`` bleibt aus Kompatibilität
+    #: erhalten und wird beim Anlegen als einzelne Mitgliedschaft übernommen.
+    group_ids: Optional[List[int]] = None
+    role_ids: Optional[List[int]] = None
 
     @field_validator("standard_weekly_hours")
     @classmethod
@@ -121,7 +147,8 @@ class UserUpdate(UserBase):
 
 class User(UserBase):
     id: int
-    group: Optional[Group]
+    groups: List[Group] = []
+    roles: List[Role] = []
     model_config = ConfigDict(from_attributes=True)
     standard_daily_minutes: int = 0
 

@@ -5,7 +5,8 @@ Ausführen (Container):   docker exec -it erfassung python -m app.manage <befehl
 
 Befehle:
   list-users                Alle Benutzer auflisten
-  list-groups               Alle Gruppen (inkl. Admin-Kennzeichen) auflisten
+  list-groups               Alle Gruppen (Organisation) auflisten
+  list-roles                Alle Rollen (Berechtigungen) auflisten
   create-user               Neuen Benutzer anlegen
   reset-password            Passwort eines Benutzers zurücksetzen
 
@@ -110,6 +111,37 @@ def _resolve_group_id(db, group_ref: Optional[str]) -> Optional[int]:
     return group.id
 
 
+def _resolve_role_id(db, role_ref: Optional[str]) -> Optional[int]:
+    """Rolle über ID oder Name auflösen (Rechte kommen ausschließlich über Rollen)."""
+    if not role_ref:
+        return None
+    role = (
+        crud.get_role(db, int(role_ref))
+        if role_ref.isdigit()
+        else crud.get_role_by_name(db, role_ref)
+    )
+    if not role:
+        _fail(
+            f"Rolle '{role_ref}' nicht gefunden. "
+            "Verfügbare Rollen via 'list-roles' anzeigen."
+        )
+    return role.id
+
+
+def cmd_list_roles(args) -> None:
+    db = _session()
+    try:
+        roles = crud.get_roles(db)
+        if not roles:
+            print("Keine Rollen vorhanden.")
+            return
+        for role in roles:
+            marker = "SYSTEM" if role.is_system else "Standard"
+            print(f"[{role.id}] {role.name}  ({marker}, {len(role.permissions)} Rechte)")
+    finally:
+        db.close()
+
+
 # ── Befehle ──────────────────────────────────────────────────────────────────
 def cmd_list_users(args) -> None:
     db = _session()
@@ -120,11 +152,11 @@ def cmd_list_users(args) -> None:
             return
         rows = []
         for u in users:
-            group = u.group.name if u.group else "-"
-            is_admin = "ja" if (u.group and u.group.is_admin) else "nein"
+            groups = ", ".join(u.group_names) or "-"
+            roles = ", ".join(u.role_names) or "-"
             pw_change = "ja" if u.must_change_password else "nein"
-            rows.append((str(u.id), u.username, u.full_name, u.email, group, is_admin, pw_change))
-        headers = ("ID", "Benutzername", "Name", "E-Mail", "Gruppe", "Admin", "PW-Wechsel")
+            rows.append((str(u.id), u.username, u.full_name, u.email, groups, roles, pw_change))
+        headers = ("ID", "Benutzername", "Name", "E-Mail", "Gruppen", "Rollen", "PW-Wechsel")
         widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
         line = "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
         print(line)
@@ -144,8 +176,7 @@ def cmd_list_groups(args) -> None:
             print("Keine Gruppen vorhanden.")
             return
         for g in groups:
-            flags = "ADMIN" if g.is_admin else "Standard"
-            print(f"[{g.id}] {g.name}  ({flags})")
+            print(f"[{g.id}] {g.name}  ({len(g.users)} Mitglieder)")
     finally:
         db.close()
 
@@ -154,6 +185,7 @@ def cmd_create_user(args) -> None:
     db = _session()
     try:
         group_id = _resolve_group_id(db, args.group)
+        role_id = _resolve_role_id(db, getattr(args, "role", None))
         password = _obtain_password(args, confirm=True)
         try:
             user = crud.create_user(
@@ -162,7 +194,8 @@ def cmd_create_user(args) -> None:
                     username=args.username.strip(),
                     full_name=args.full_name.strip(),
                     email=args.email.strip(),
-                    group_id=group_id,
+                    group_ids=[group_id] if group_id else [],
+                    role_ids=[role_id] if role_id else [],
                     standard_weekly_hours=args.weekly_hours,
                     password=password,
                 ),
@@ -186,7 +219,8 @@ def cmd_create_user(args) -> None:
         print(f"  Name:             {user.full_name}")
         print(f"  E-Mail:           {user.email}")
         print(f"  PIN:              {user.pin_code}")
-        print(f"  Gruppe:           {user.group.name if user.group else '-'}")
+        print(f"  Gruppen:          {', '.join(user.group_names) or '-'}")
+        print(f"  Rollen:           {', '.join(user.role_names) or '-'}")
         print(f"  Passwortwechsel:  {'erforderlich' if user.must_change_password else 'nein'}")
     finally:
         db.close()
@@ -229,11 +263,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_groups = sub.add_parser("list-groups", help="Alle Gruppen auflisten")
     p_groups.set_defaults(func=cmd_list_groups)
 
+    p_roles = sub.add_parser("list-roles", help="Alle Rollen auflisten")
+    p_roles.set_defaults(func=cmd_list_roles)
+
     p_create = sub.add_parser("create-user", help="Neuen Benutzer anlegen")
     p_create.add_argument("--username", required=True, help="Anmeldename (eindeutig)")
     p_create.add_argument("--full-name", required=True, dest="full_name", help="Voller Name")
     p_create.add_argument("--email", required=True, help="E-Mail (eindeutig)")
-    p_create.add_argument("--group", help="Gruppen-ID oder -Name (für Admin-Rechte)")
+    p_create.add_argument("--group", help="Gruppen-ID oder -Name (Organisation)")
+    p_create.add_argument("--role", help="Rollen-ID oder -Name (Berechtigungen)")
     p_create.add_argument(
         "--weekly-hours", type=float, default=40.0, dest="weekly_hours",
         help="Wochenarbeitszeit in Stunden (Standard: 40)",
