@@ -1507,6 +1507,53 @@ body.modal-open {
     color: var(--danger);
 }
 
+.alert-warning {
+    background: var(--warning-soft);
+    color: var(--warning);
+}
+
+/* Lizenzhinweis über der Administrationsnavigation (ab 0.11.0). */
+.license-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.license-banner__text {
+    flex: 1 1 20rem;
+    font-weight: 500;
+}
+
+.license-banner__link {
+    color: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+}
+
+/* Zustandsabzeichen auf der Lizenzseite. */
+.license-state {
+    display: inline-block;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    background: var(--warning-soft);
+    color: var(--warning);
+}
+
+.license-state--valid {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.license-state--expired,
+.license-state--invalid {
+    background: var(--danger-soft);
+    color: var(--danger);
+}
+
 .card {
     display: flex;
     flex-direction: column;

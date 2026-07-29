@@ -106,7 +106,20 @@ def _restore_config(archive_path: Path) -> int:
             if member.startswith("config/") and not member.endswith("/"):
                 if _safe_extract_member(archive, member, paths.CONFIG_DIR):
                     restored += 1
+    _harden_restored_secrets()
     return restored
+
+
+def _harden_restored_secrets() -> None:
+    """Dateirechte der Lizenzdatei nach dem Auspacken wieder verengen.
+
+    ``license.json`` enthält den Aktivierungsschlüssel und wird von
+    :func:`app.licensing.save_config` mit 0600 geschrieben. Beim Auspacken
+    eines Archivs gehen diese Rechte verloren (ab 0.11.0).
+    """
+    from . import licensing
+
+    licensing.harden_config_permissions()
 
 
 def validate_restore(archive_path: Path) -> tuple[bool, str, dict]:
