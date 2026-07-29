@@ -5,6 +5,72 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.10.0] – 2026-07-29
+
+### Changed – Rollenbasierte Rechteverwaltung (RBAC)
+
+Berechtigungen kommen ab sofort **ausschließlich über Rollen**. Gruppen sind
+reine Organisationseinheiten. Ein Benutzer kann in **mehreren** Gruppen und
+**mehreren** Rollen sein.
+
+- **Neues Datenmodell**: `roles`, `role_permissions`, `user_roles`,
+  `user_groups`. Die Rechte-Spalten und `is_admin` entfallen aus `groups`.
+- **Berechtigungen im Code** (`app/permissions.py`) mit Key, Kategorie,
+  Anzeigename und Beschreibung – neue Rechte brauchen keine Migration mehr:
+  `Own.Time.Edit`, `Own.Comment.Edit`, `Own.Vacation.Request`, `Company.Create`,
+  `Company.Manage`, `Time.Approve`, `Time.Edit`, `Time.View`, `Vacation.Manage`,
+  `User.View`, `User.Create`, `User.Edit`, `User.Delete`, `System.Groups`,
+  `System.Terminals`, `System.Roles`, `System.Settings`, `System.Backup`.
+- **Geltungsbereiche** je Recht: *Nicht erlaubt / Nur eigene / Eigene Gruppen /
+  Alle Benutzer*. „Eigene Gruppen“ prüft jetzt die **Schnittmenge der Gruppen**
+  statt einer einzelnen Gruppen-ID; bei mehreren Rollen gilt der weiteste
+  Bereich.
+- **Zentrale Prüfung** in `app/permission_service.py` (`has`, `scope`,
+  `allowed_user_ids`, `can_access_user`, `area_permissions`). Keine Route greift
+  mehr auf Gruppenrechte zu.
+- **Systemrollen**: **Superadministrator** (alles) und **Administrator** (alles
+  außer `System.Roles`, `System.Settings`, `System.Backup`). Beide sind nicht
+  änderbar und werden bei Updates automatisch um neue Rechte ergänzt.
+- **Schutz vor Rechteausweitung**: Rollen zuweisen erfordert `System.Roles`;
+  Systemrollen darf nur ein Superadministrator vergeben, und die
+  Superadministrator-Vorbehalte lassen sich nicht über eine selbst angelegte
+  Rolle weitergeben. Gruppen sind nur im eigenen Geltungsbereich zuweisbar.
+- **Oberfläche**: neue Bereiche **Rollen** (Berechtigungsmatrix mit
+  Bereichsauswahl) und **Berechtigungen** (nur lesend); der Gruppeneditor führt
+  nur noch Name, Beschreibung und Mitglieder; das Benutzerformular bietet
+  Mehrfachauswahl für Gruppen und Rollen.
+- **API**: neu `/api/roles` (Liste, Anlegen, Ändern). `/api/groups` bleibt
+  bestehen und ignoriert mitgesendete Rechte-Felder; `/api/users` akzeptiert
+  weiterhin `group_id` und zusätzlich `group_ids` / `role_ids`.
+- **CLI**: neuer Befehl `list-roles`, `create-user --role`, und `list-users`
+  zeigt Gruppen und Rollen.
+- **Systembereich getrennt**: Feiertage/Terminals hängen an `System.Terminals`,
+  Sicherung/Wiederherstellung an `System.Backup`, der restliche Systembereich an
+  `System.Settings`.
+
+### Migration
+
+Migration 14 läuft beim ersten Start automatisch und ist datenerhaltend:
+
+1. Bisherige Gruppenzugehörigkeit → `user_groups`.
+2. Mitglieder von Administratorgruppen → Systemrolle **Superadministrator**
+   (sie durften bisher alles und verlieren dadurch nichts).
+3. Jede Gruppe mit Rechten → Rolle **„Migration – &lt;Gruppenname&gt;“** mit
+   identischem Rechteumfang; Mitglieder erhalten sie zugewiesen.
+4. Rechte-Spalten der Gruppen werden geleert.
+
+Migrationen laufen jetzt **vor** dem Seeding der Stammdaten, damit das Rollen-
+modell steht, bevor Systemrollen ergänzt werden. Details:
+[`docs/RBAC_MIGRATIONSPLAN.md`](docs/RBAC_MIGRATIONSPLAN.md).
+
+### Notes
+
+- Benutzer **ohne Rolle** behalten die `Own.*`-Rechte (Bestandsverhalten); neue
+  Rollen bringen sie voreingestellt mit.
+- Die Regressionssuiten zu den alten Gruppenberechtigungen (0.9.11/0.9.12)
+  wurden durch `tests/test_rbac.py` ersetzt; die Suiten 0.9.19/0.9.20 nutzen
+  jetzt Rollen.
+
 ## [0.9.22] – 2026-07-29
 
 ### Changed – Einsatzort als Umschalter statt Checkbox

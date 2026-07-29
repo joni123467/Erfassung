@@ -2,11 +2,17 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.22`
+**Version:** `0.10.0`
+
+> Seit 0.10.0: **Rollenbasierte Rechteverwaltung (RBAC)** – Berechtigungen
+> kommen ausschließlich über **Rollen**; Gruppen sind reine Organisation, und
+> ein Benutzer kann in mehreren Gruppen und Rollen sein. Bestehende
+> Gruppenrechte werden beim ersten Start automatisch in Rollen überführt.
+> Details unter [„Rollen & Berechtigungen"](#rollen--berechtigungen).
 
 > Seit 0.9.21: **Einsatzort je Buchung (Remote / vor Ort)** – wird der
 > Einsatzort für einen Benutzer freigeschaltet, erscheint beim Stempeln und bei
-> manuellen Buchungen ein Umschalter **Vor Ort ⇄ Remote** (seit 0.9.22 als
+> manuellen Buchungen ein Umschalter **Vor Ort ⇄ Remote** (seit 0.10.0 als
 > farbige Schaltfläche statt kleiner Checkbox). Details unter
 > [„Einsatzort (Remote / vor Ort)"](#einsatzort-remote--vor-ort).
 
@@ -19,7 +25,7 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 > Gruppen mit Team-Rechten erreichen jetzt den Administrationsbereich und
 > verwalten ihre eigene Abteilung; kollidierende Buchungen lassen sich nach
 > Rückfrage gezielt überschreiben. Details unter
-> [„Gruppen & Berechtigungen"](#gruppen--berechtigungen).
+> [„Rollen & Berechtigungen"](#rollen--berechtigungen).
 
 > Seit 0.9.18: **Minutengenaue Überschneidungsprüfung** – direkt
 > aneinandergrenzende Buchungen (Terminal-Importe speichern Sekunden) lösen
@@ -50,13 +56,13 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 > Seit 0.9.12: **Geltungsbereich für Team-Rechte** – Freigaben, Berichte und
 > Buchungsbearbeitung lassen sich je Gruppe auf das **eigene Team (Gruppe)**
 > oder **alle Benutzer** eingrenzen. Details unter
-> [„Gruppen & Berechtigungen"](#gruppen--berechtigungen).
+> [„Rollen & Berechtigungen"](#rollen--berechtigungen).
 
 > Seit 0.9.11: **Überarbeitete Gruppenberechtigungen** – kategorisierte
 > Berechtigungsmatrix in der Gruppenverwaltung mit neuen Rechten für
 > Selbstbedienung (manuelle Buchungen, Kommentare nachträglich bearbeiten,
 > Urlaubsanträge stellen) und Firmenverwaltung. Details unter
-> [„Gruppen & Berechtigungen"](#gruppen--berechtigungen).
+> [„Rollen & Berechtigungen"](#rollen--berechtigungen).
 
 > Seit 0.9.10: **Mobile Stempel-Fixes & Kommentar-Nachbearbeitung** – die
 > Firmensuche der mobilen App übernimmt gewählte Vorschläge zuverlässig in die
@@ -101,13 +107,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.22 .
+docker build -t erfassung:0.10.0 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.22
+  erfassung:0.10.0
 ```
 
 ## GHCR & GitHub Actions
@@ -117,20 +123,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.22`)
+- Push von Tags `v*` (z. B. `v0.10.0`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.22`)
+- Versions-Tag aus `VERSION` (hier `0.10.0`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.22`)
+- Git-Tag (`v0.10.0`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.22`
+`ghcr.io/OWNER/erfassung:0.10.0`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -143,7 +149,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.22
+    image: ghcr.io/OWNER/erfassung:0.10.0
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -243,64 +249,92 @@ Anmeldung verlangt (`--no-force-change` deaktiviert das).
 - Alle Befehle geben bei Fehlern (unbekannter Benutzer, doppelter Benutzername/E-Mail,
   zu schwaches Passwort) eine verständliche Meldung und den Exit-Code `1` zurück.
 
-## Gruppen & Berechtigungen
+## Rollen & Berechtigungen
 
-Berechtigungen werden über Gruppen vergeben (**Administration → Benutzer →
-Gruppen**). Seit 0.9.11 sind sie – wie in bekannten Rollen-/Rechteverwaltungen –
-in Kategorien gegliedert und im Gruppenformular als Berechtigungsmatrix mit
-Beschreibung je Recht dargestellt:
+Seit 0.10.0 gilt ein rollenbasiertes Modell (RBAC):
 
-| Kategorie | Berechtigung | Standard |
-|-----------|--------------|----------|
-| Eigene Zeiterfassung | Manuelle Zeitbuchungen nachtragen | ✅ erlaubt |
-| Eigene Zeiterfassung | Eigene Kommentare nachträglich bearbeiten | ✅ erlaubt |
-| Eigene Zeiterfassung | Urlaubsanträge stellen | ✅ erlaubt |
-| Aufträge & Firmen | Firmen beim Stempeln anlegen | ❌ |
-| Aufträge & Firmen | Firmen verwalten (Administration) | ❌ |
-| Team & Freigaben | Manuelle Buchungen freigeben | ❌ (Bereich wählbar) |
-| Team & Freigaben | Urlaubsanträge verwalten | ❌ (Bereich wählbar) |
-| Team & Freigaben | Zeitübersichten einsehen | ❌ (Bereich wählbar) |
-| Team & Freigaben | Zeitbuchungen bearbeiten | ❌ (Bereich wählbar) |
-| Verwaltung | Benutzer verwalten | ❌ (Bereich wählbar) |
+```
+Benutzer ──< Gruppen        (Organisation: Abteilung, Team, Standort)
+Benutzer ──< Rollen ──< Berechtigung + Geltungsbereich
+```
 
-- **Geltungsbereich (seit 0.9.12, „Benutzer verwalten" seit 0.9.19)**: Jedes
-  Recht unter „Team & Freigaben" sowie „Benutzer verwalten" wird dreistufig
-  vergeben – **Nicht erlaubt**, **Eigenes Team (Gruppe)** oder
-  **Alle Benutzer**. „Eigenes Team" beschränkt
-  Freigabelisten, Berichte/Exporte und die Buchungsbearbeitung auf Benutzer
-  derselben Gruppe; der Server prüft das zusätzlich bei jeder Aktion.
-  Bestandsgruppen behalten beim Update automatisch „Alle Benutzer".
-- **Administratorrechte** umfassen automatisch alle Berechtigungen (inklusive
-  System, Backups, Terminals und Gruppenverwaltung) mit Geltungsbereich
-  „Alle Benutzer"; die Einzelrechte sind im Formular dann gesperrt sichtbar.
-- **Selbstbedienungsrechte** (Kategorie „Eigene Zeiterfassung") sind
-  standardmäßig aktiv; Benutzer ohne Gruppe behalten sie. Entzogene Rechte
-  blenden die zugehörigen Funktionen in Web und mobiler App aus und werden
-  serverseitig durchgesetzt (auch für Offline-Aktionen).
-- Die Gruppenübersicht zeigt vergebene Rechte kompakt je Kategorie
-  (z. B. „Team & Freigaben: 2/4", Zusatz „(eigenes Team)" bei Team-Bereich).
+- **Gruppen** tragen **keine** Rechte. Sie bilden die Organisation ab und
+  bestimmen, für wen ein Recht mit dem Bereich „Eigene Gruppen" gilt.
+  Ein Benutzer kann in **mehreren** Gruppen sein.
+- **Rollen** bündeln Berechtigungen und werden Benutzern direkt zugewiesen –
+  ebenfalls mehrere gleichzeitig. Bei mehreren Rollen gilt jeweils der
+  **weiteste** Geltungsbereich.
 
-### Abteilungsadministratoren (seit 0.9.19)
+Verwaltung unter **Administration → Benutzer → Gruppen / Rollen /
+Berechtigungen**.
 
-Eine Gruppe mit mindestens einer Administrationsberechtigung erhält Zugang zum
-Administrationsbereich – volle Adminrechte sind dafür **nicht** nötig. Typische
-Abteilungsleitung:
+### Berechtigungen
+
+| Kategorie | Key | Bereich wählbar |
+|-----------|-----|-----------------|
+| Eigene Zeiterfassung | `Own.Time.Edit`, `Own.Comment.Edit`, `Own.Vacation.Request` | – |
+| Aufträge & Firmen | `Company.Create`, `Company.Manage` | – |
+| Zeiten & Freigaben | `Time.Approve`, `Time.Edit`, `Time.View` | ✔ |
+| Urlaub | `Vacation.Manage` | ✔ |
+| Benutzerverwaltung | `User.View`, `User.Create`, `User.Edit`, `User.Delete` | ✔ |
+| System | `System.Groups`, `System.Terminals`, `System.Roles`, `System.Settings`, `System.Backup` | – |
+
+### Geltungsbereiche
+
+| Bereich | Wirkung |
+|---------|---------|
+| Nicht erlaubt | Recht nicht vergeben |
+| Nur eigene | ausschließlich die eigenen Daten |
+| Eigene Gruppen | alle Benutzer, die mindestens eine Gruppe mit dem Handelnden teilen |
+| Alle Benutzer | keine Einschränkung |
+
+Der Server prüft den Bereich bei **jeder** Aktion – nicht nur beim Anzeigen.
+
+### Systemrollen
+
+| Rolle | Umfang |
+|-------|--------|
+| **Superadministrator** | alle Berechtigungen inkl. Rollen, Systemeinstellungen und Sicherung |
+| **Administrator** | alle Berechtigungen **außer** `System.Roles`, `System.Settings`, `System.Backup` |
+
+Beide sind nicht änderbar und erhalten bei Updates automatisch neu
+hinzugekommene Rechte. Wer Rollen zuweisen möchte, braucht `System.Roles`;
+Systemrollen darf ausschließlich ein Superadministrator vergeben. Damit lässt
+sich über eine selbst angelegte Rolle niemand mehr Rechte verschaffen, als er
+selbst besitzt.
+
+### Beispiel: Abteilungsleitung
+
+Eine Rolle „Teamleiter“ mit
 
 | Recht | Bereich |
 |-------|---------|
-| Benutzer verwalten | Eigenes Team |
-| Manuelle Buchungen freigeben | Eigenes Team |
-| Urlaubsanträge verwalten | Eigenes Team |
-| Zeitbuchungen bearbeiten | Eigenes Team |
-| Zeitübersichten einsehen | Eigenes Team |
+| `User.View`, `User.Edit` | Eigene Gruppen |
+| `Time.View`, `Time.Edit`, `Time.Approve` | Eigene Gruppen |
+| `Vacation.Manage` | Eigene Gruppen |
 
-- Der Aufruf von `/admin` landet auf der ersten erlaubten Seite; die
-  Navigation zeigt nur freigegebene Bereiche (kein System, keine Sicherung).
-- Bei „Eigenes Team" umfassen Benutzerliste, Detailseite und
-  Anlegen/Ändern/Löschen ausschließlich Benutzer der eigenen Gruppe.
-- **Keine Rechteausweitung**: Zuweisbar ist nur die eigene Gruppe –
-  Administratorgruppen stehen nicht zur Auswahl und werden serverseitig
-  abgelehnt.
+gibt Zugriff auf genau die Benutzer der eigenen Gruppen – unabhängig davon, wie
+viele Gruppen das sind.
+
+### Selbstbedienungsrechte
+
+`Own.*` betrifft nur die eigenen Buchungen und Anträge. Benutzer **ohne Rolle**
+behalten diese Rechte (Bestandsverhalten); neue Rollen bringen sie voreingestellt
+mit. Entzogene Rechte blenden die Funktionen in Web und mobiler App aus und
+werden serverseitig durchgesetzt – auch für Offline-Aktionen.
+
+### Umstellung bestehender Installationen
+
+Beim ersten Start nach dem Update (Migration 14, datenerhaltend):
+
+1. Die bisherige Gruppenzugehörigkeit wandert nach `user_groups`.
+2. Mitglieder von Administratorgruppen erhalten **Superadministrator**.
+3. Jede Gruppe mit Rechten wird zur Rolle **„Migration – &lt;Gruppenname&gt;“**
+   mit denselben Rechten und Bereichen; ihre Mitglieder bekommen sie zugewiesen.
+4. Die Rechte-Spalten der Gruppen werden geleert.
+
+Niemand verliert dadurch Rechte. Details siehe
+[`docs/RBAC_MIGRATIONSPLAN.md`](docs/RBAC_MIGRATIONSPLAN.md).
 
 ## Einsatzort (Remote / vor Ort)
 
@@ -441,7 +475,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.22
+    image: ghcr.io/OWNER/erfassung:0.10.0
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -476,7 +510,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.22
+    image: ghcr.io/OWNER/erfassung:0.10.0
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -512,7 +546,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.22
+    image: ghcr.io/OWNER/erfassung:0.10.0
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -548,7 +582,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.22
+    image: ghcr.io/OWNER/erfassung:0.10.0
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -632,8 +666,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.22`)
-- optional Image-Name/Tag (`erfassung`, `0.9.22`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.10.0`)
+- optional Image-Name/Tag (`erfassung`, `0.10.0`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

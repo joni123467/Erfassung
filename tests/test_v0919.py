@@ -77,19 +77,28 @@ def login(client, username: str = "admin", password: str = "Admin!0000"):
     )
 
 
-def _create_group(**overrides):
+def _create_group(name="Gruppe"):
     from app import crud, database, schemas
 
     db = database.SessionLocal()
     try:
-        payload = {"name": overrides.pop("name", "Gruppe")}
-        payload.update(overrides)
-        return crud.create_group(db, schemas.GroupCreate(**payload)).id
+        return crud.create_group(db, schemas.GroupCreate(name=name)).id
     finally:
         db.close()
 
 
-def _create_member(group_id, username):
+def _create_role(name, permissions):
+    """Rolle mit Berechtigungen ``{key: scope}`` (RBAC ab 0.10.0)."""
+    from app import crud, database
+
+    db = database.SessionLocal()
+    try:
+        return crud.create_role(db, name=name, permissions=permissions).id
+    finally:
+        db.close()
+
+
+def _create_member(group_id, username, *, roles=()):
     from app import crud, database, schemas, security
 
     db = database.SessionLocal()
@@ -99,7 +108,8 @@ def _create_member(group_id, username):
             schemas.UserCreate(
                 username=username, full_name=f"User {username}",
                 email=f"{username}@example.com", password="Worker!0000",
-                group_id=group_id,
+                group_ids=[group_id] if group_id else [],
+                role_ids=list(roles),
             ),
         )
         u.must_change_password = False
@@ -158,19 +168,25 @@ def _get(entry_id):
 
 @pytest.fixture()
 def dept(client):
-    """Abteilungsadmin (eigene Gruppe) + Kollege + fremder Benutzer."""
-    lead_group = _create_group(
-        name="Abteilung A",
-        can_manage_users=True, can_manage_users_scope="group",
-        can_approve_manual_entries=True, can_approve_manual_entries_scope="group",
-        can_edit_time_entries=True, can_edit_time_entries_scope="group",
-        can_view_time_reports=True, can_view_time_reports_scope="group",
+    """Abteilungsleitung (Rolle mit Gruppen-Scope) + Kollege + Fremder.
+
+    Seit 0.10.0 kommen die Rechte aus einer Rolle; die Gruppe legt nur noch
+    fest, für wen der Geltungsbereich „Eigene Gruppen" gilt.
+    """
+    lead_group = _create_group("Abteilung A")
+    other_group = _create_group("Abteilung B")
+    lead_role = _create_role(
+        "Abteilungsleitung",
+        {
+            "User.View": "groups", "User.Create": "groups", "User.Edit": "groups",
+            "Time.Approve": "groups", "Time.Edit": "groups", "Time.View": "groups",
+        },
     )
-    other_group = _create_group(name="Abteilung B")
     return {
         "lead_group": lead_group,
         "other_group": other_group,
-        "lead": _create_member(lead_group, "deptlead"),
+        "lead_role": lead_role,
+        "lead": _create_member(lead_group, "deptlead", roles=[lead_role]),
         "mate": _create_member(lead_group, "deptmate"),
         "outsider": _create_member(other_group, "outsider"),
     }
@@ -179,8 +195,8 @@ def dept(client):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.22"
-    assert client.get("/health").json()["version"] == "0.9.22"
+    assert client.main.APP_VERSION == "0.10.0"
+    assert client.get("/health").json()["version"] == "0.10.0"
 
 
 # --- Teil 1: Administrationszugang für Abteilungsadmins --------------------------
@@ -192,7 +208,7 @@ def test_admin_link_visible_for_department_admin(client, dept):
 
 
 def test_admin_link_hidden_without_any_admin_permission(client):
-    group = _create_group(name="Nur Mitarbeiter")
+    group = _create_group("Nur Mitarbeiter")
     _create_member(group, "plain")
     login(client, "plain", "Worker!0000")
     html = client.get("/dashboard").text
@@ -206,18 +222,16 @@ def test_admin_portal_lands_on_permitted_page(client, dept):
     assert response.headers["location"] == "/admin/users"
 
     # Ohne Benutzerverwaltung: erste erlaubte Seite ist Freigaben
-    group = _create_group(
-        name="Nur Freigaben",
-        can_approve_manual_entries=True, can_approve_manual_entries_scope="group",
-    )
-    _create_member(group, "approver")
+    group = _create_group("Nur Freigaben")
+    role = _create_role("Freigeber", {"Time.Approve": "groups"})
+    _create_member(group, "approver", roles=[role])
     login(client, "approver", "Worker!0000")
     response = client.get("/admin", follow_redirects=False)
     assert response.headers["location"] == "/admin/approvals"
 
 
 def test_admin_portal_denied_without_permissions(client):
-    group = _create_group(name="Ohne Rechte")
+    group = _create_group("Ohne Rechte")
     _create_member(group, "nobody")
     login(client, "nobody", "Worker!0000")
     response = client.get("/admin", follow_redirects=False)
@@ -238,7 +252,7 @@ def test_department_admin_can_open_own_member(client, dept):
     assert client.get(f"/admin/users/{dept['mate']}", follow_redirects=False).status_code == 200
     response = client.get(f"/admin/users/{dept['outsider']}", follow_redirects=False)
     assert response.status_code == 303
-    assert "Team" in response.headers["location"]
+    assert "Gruppen" in response.headers["location"]
 
 
 def test_department_admin_cannot_edit_foreign_user(client, dept):
@@ -249,46 +263,40 @@ def test_department_admin_cannot_edit_foreign_user(client, dept):
         data={
             "csrf_token": token, "username": "outsider", "full_name": "Gekapert",
             "email": "outsider@example.com", "standard_weekly_hours": "40",
-            "group_id": str(dept["other_group"]), "annual_vacation_days": "30",
+            "group_ids": [str(dept["other_group"])], "annual_vacation_days": "30",
         },
         follow_redirects=False,
     )
-    assert "Team" in response.headers["location"]
+    assert "Gruppen" in response.headers["location"]
 
 
-def test_department_admin_cannot_assign_admin_group(client, dept):
-    """Rechteausweitung verhindern: fremde/Admin-Gruppe ist nicht zuweisbar."""
+def test_department_admin_cannot_assign_foreign_group(client, dept):
+    """Rechteausweitung verhindern: fremde Gruppen sind nicht zuweisbar."""
     from app import crud, database
 
     login(client, "deptlead", "Worker!0000")
-    db = database.SessionLocal()
-    try:
-        admin_group = next(g for g in crud.get_groups(db) if g.is_admin)
-        admin_group_id = admin_group.id
-    finally:
-        db.close()
-
     token = _csrf(client, f"/admin/users/{dept['mate']}")
     response = client.post(
         f"/admin/users/{dept['mate']}/update",
         data={
             "csrf_token": token, "username": "deptmate", "full_name": "User deptmate",
             "email": "deptmate@example.com", "standard_weekly_hours": "40",
-            "group_id": str(admin_group_id), "annual_vacation_days": "30",
+            "group_ids": [str(dept["other_group"])], "annual_vacation_days": "30",
         },
         follow_redirects=False,
     )
     assert "Gruppe+darf+nicht+zugewiesen+werden" in response.headers["location"]
     db = database.SessionLocal()
     try:
-        assert crud.get_user(db, dept["mate"]).group_id == dept["lead_group"]
+        assert crud.get_user(db, dept["mate"]).group_ids == {dept["lead_group"]}
     finally:
         db.close()
 
-    # Formular bietet nur die eigene Gruppe an
+    # Formular bietet nur die eigene Gruppe an, und keine Rollen
     html = client.get(f"/admin/users/{dept['mate']}").text
     assert "Abteilung A" in html
     assert "Abteilung B" not in html
+    assert 'name="role_ids"' not in html
 
 
 def test_full_admin_still_sees_everyone(client, dept):
