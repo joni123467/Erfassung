@@ -5,6 +5,21 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.10.1] – 2026-07-29
+
+### Fixed
+
+- **Mobil ließ sich kein Auftrag mehr starten, sobald die Arbeitszeit lief.**
+  Die Schaltfläche „Auftrag starten“ stand in der mobilen App ausschließlich im
+  Start-Block. Bis 0.9.21 blieb dieser Block trotz `hidden` sichtbar, weil
+  `display: grid` das Attribut überstimmte – der Knopf war dadurch zufällig auch
+  bei laufender Arbeitszeit erreichbar. Mit der korrekten Ausblendung in 0.9.22
+  verschwand er, und es ließ sich nur noch Arbeitszeit stempeln.
+  „Auftrag starten“ steht jetzt **in beiden Zuständen** zur Verfügung (mobile
+  App und Offline-Shell) – wie auf dem Desktop, wo der Knopf schon immer in
+  beiden Zuständen vorhanden war. Fachlich unverändert: Bei laufender
+  Arbeitszeit wird diese beendet und der Auftrag läuft weiter.
+
 ## [0.10.0] – 2026-07-29
 
 ### Changed – Rollenbasierte Rechteverwaltung (RBAC)
