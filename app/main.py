@@ -9,7 +9,7 @@ from calendar import monthrange
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import secrets
@@ -42,6 +42,7 @@ from . import (
     logging_setup,
     models,
     paths,
+    permission_service,
     permissions as group_permissions,
     restore_jobs,
     restore_manager,
@@ -440,7 +441,13 @@ def ensure_schema() -> None:
                         "WHERE monthly_overtime_limit_minutes IS NULL"
                     )
                 )
-        if "groups" in table_names:
+        # Alt-Gruppenspalten (Berechtigungen) werden nur noch für Bestands-
+        # datenbanken gepflegt, bis Migration 14 sie nach „roles" überführt hat.
+        # Auf neuen Installationen existiert `is_admin` nicht mehr – dort wird
+        # hier nichts angelegt.
+        if "groups" in table_names and "is_admin" in {
+            column["name"] for column in inspector.get_columns("groups")
+        }:
             columns = {column["name"] for column in inspector.get_columns("groups")}
             if "can_manage_users" not in columns:
                 connection.execute(text("ALTER TABLE groups ADD COLUMN can_manage_users BOOLEAN DEFAULT 0"))
@@ -969,28 +976,49 @@ def _build_time_report_data(
         "export_query": export_query,
         "status_labels": TIME_ENTRY_STATUS_LABELS,
     }
+def _sync_system_roles(db: Session) -> models.Role:
+    """Systemrollen anlegen bzw. auf den aktuellen Rechtestand bringen.
+
+    Läuft bei jedem Start: Kommen in einer neuen Version Berechtigungen hinzu,
+    besitzen Administrator und Superadministrator sie automatisch.
+    """
+    superadmin: Optional[models.Role] = None
+    for name in group_permissions.SYSTEM_ROLE_NAMES:
+        role = crud.get_role_by_name(db, name)
+        grants = group_permissions.system_role_grants(name)
+        if not role:
+            description = (
+                "Uneingeschränkter Zugriff inklusive Rollen, Systemeinstellungen "
+                "und Sicherungen."
+                if name == group_permissions.ROLE_SUPERADMINISTRATOR
+                else "Vollständige Administration ohne Rollen-, System- und "
+                "Sicherungsverwaltung."
+            )
+            role = crud.create_role(
+                db, name=name, description=description, is_system=True, permissions=grants
+            )
+        elif role.permission_map != grants:
+            crud._apply_role_permissions(db, role, grants)
+            role.is_system = True
+            db.commit()
+            db.refresh(role)
+        if name == group_permissions.ROLE_SUPERADMINISTRATOR:
+            superadmin = role
+    return superadmin  # type: ignore[return-value]
+
+
 def _seed_default_records() -> None:
     db = database.SessionLocal()
     try:
+        superadmin_role = _sync_system_roles(db)
         if not crud.get_groups(db):
-            admin_group = crud.create_group(
+            crud.create_group(
                 db,
                 schemas.GroupCreate(
                     name="Administration",
-                    is_admin=True,
-                    **group_permissions.grant_all(),
+                    description="Standardgruppe der Erstinstallation.",
                 ),
             )
-        else:
-            admin_group = (
-                db.query(models.Group)
-                .filter(models.Group.is_admin == True)  # noqa: E712
-                .first()
-            )
-            if admin_group:
-                for permission_key in group_permissions.PERMISSION_KEYS:
-                    setattr(admin_group, permission_key, True)
-                db.commit()
         companies = crud.get_companies(db)
         if not companies:
             crud.create_company(db, schemas.CompanyCreate(name="Firma"))
@@ -1004,13 +1032,15 @@ def _seed_default_records() -> None:
                 legacy_default.name = "Firma"
                 db.commit()
         if not crud.get_users(db):
+            default_group = crud.get_groups(db)
             crud.create_user(
                 db,
                 schemas.UserCreate(
                     username="admin",
                     full_name="Administrator",
                     email="admin@example.com",
-                    group_id=admin_group.id if admin_group else None,
+                    group_ids=[default_group[0].id] if default_group else [],
+                    role_ids=[superadmin_role.id] if superadmin_role else [],
                     standard_weekly_hours=40.0,
                     password="Admin!0000",
                 ),
@@ -1020,6 +1050,17 @@ def _seed_default_records() -> None:
                 admin_user.password_hash = security.hash_password("0000")
                 admin_user.must_change_password = True
                 db.commit()
+        # Notausgang: Ohne Superadministrator ließe sich die Anwendung nicht
+        # mehr verwalten (z. B. nach einem Restore ohne Rollenzuordnung).
+        if superadmin_role and not superadmin_role.users:
+            fallback = crud.get_user_by_username(db, "admin") or (crud.get_users(db) or [None])[0]
+            if fallback:
+                fallback.roles.append(superadmin_role)
+                db.commit()
+                logger.warning(
+                    "Kein Superadministrator vorhanden – Rolle an '%s' vergeben",
+                    fallback.username,
+                )
         existing_users = crud.get_users(db)
         for item in existing_users:
             if not item.password_hash:
@@ -1089,6 +1130,9 @@ def initialize_runtime():
 def ensure_seed_data():
     _log_env_initialization()
     ensure_schema()
+    # Erst migrieren, dann Stammdaten: Migration 14 überführt die alten
+    # Gruppenberechtigungen in Rollen, bevor das Seeding darauf aufsetzt.
+    _apply_versioned_migrations()
     try:
         _seed_default_records()
     except OperationalError as exc:
@@ -1105,7 +1149,6 @@ def ensure_seed_data():
                 exc_info=True,
             )
             raise
-    _apply_versioned_migrations()
     _ensure_holiday_data()
     _migrate_legacy_backup_config()
     if os.environ.get("ERFASSUNG_DISABLE_SCHEDULER", "").lower() not in {"1", "true", "yes"}:
@@ -1801,7 +1844,7 @@ def mobile_sync_data(
         "user": {
             "id": user.id,
             "full_name": user.full_name,
-            "group": user.group.name if user.group else "",
+            "group": ", ".join(user.group_names),
             "daily_target_minutes": int(round(user.daily_target_minutes or 0)),
             "weekly_target_minutes": int(round(user.weekly_target_minutes or 0)),
         },
@@ -2479,210 +2522,147 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
     )
 
 
-def _ensure_admin(user: models.User) -> bool:
-    return bool(user.group and user.group.is_admin)
+def _ensure_admin(user: Optional[models.User]) -> bool:
+    """Uneingeschränkte Administration (Systemrolle Superadministrator).
+
+    Bleibt als Name erhalten, prüft aber ausschließlich Rollen.
+    """
+    return permission_service.is_superadmin(user)
 
 
-def _has_group_permission(user: models.User, attribute: str) -> bool:
-    if _ensure_admin(user):
-        return True
-    if not user.group:
-        return False
-    return bool(getattr(user.group, attribute, False))
+def _has_permission(user: Optional[models.User], key: str) -> bool:
+    return permission_service.has(user, key)
 
 
 def _can_manage_users(user: models.User) -> bool:
-    return _has_group_permission(user, "can_manage_users")
+    return permission_service.has_any(
+        user, ("User.View", "User.Create", "User.Edit", "User.Delete")
+    )
 
 
 def _can_manage_vacations(user: models.User) -> bool:
-    return _has_group_permission(user, "can_manage_vacations")
+    return permission_service.has(user, "Vacation.Manage")
 
 
 def _can_approve_manual_entries(user: models.User) -> bool:
-    return _has_group_permission(user, "can_approve_manual_entries")
+    return permission_service.has(user, "Time.Approve")
 
 
 def _can_create_companies(user: models.User) -> bool:
-    return _has_group_permission(user, "can_create_companies")
+    return permission_service.has(user, "Company.Create")
 
 
 def _can_view_time_reports(user: models.User) -> bool:
-    if _ensure_admin(user):
-        return True
-    return _has_group_permission(user, "can_view_time_reports")
+    return permission_service.has(user, "Time.View")
 
 
 def _can_edit_time_entries(user: models.User) -> bool:
-    return _has_group_permission(user, "can_edit_time_entries")
+    return permission_service.has(user, "Time.Edit")
 
 
 def _can_manage_companies(user: models.User) -> bool:
-    return _has_group_permission(user, "can_manage_companies")
+    return permission_service.has(user, "Company.Manage")
 
 
-def _permission_scope(user: models.User, attribute: str) -> str:
-    """Geltungsbereich eines Team-Rechts: 'none' | 'group' | 'all'.
-
-    Administratoren wirken immer auf alle Benutzer. 'group' beschränkt das
-    Recht auf Benutzer der eigenen Gruppe (Team).
-    """
-    if _ensure_admin(user):
-        return group_permissions.SCOPE_ALL
-    if not user.group or not getattr(user.group, attribute, False):
-        return "none"
-    scope = getattr(user.group, group_permissions.scope_column(attribute), None) or group_permissions.SCOPE_ALL
-    if scope not in (group_permissions.SCOPE_GROUP, group_permissions.SCOPE_ALL):
-        scope = group_permissions.SCOPE_ALL
-    return scope
+def _can_manage_groups(user: models.User) -> bool:
+    return permission_service.has(user, "System.Groups")
 
 
-def _scoped_user_ids(db: Session, user: models.User, attribute: str) -> Optional[set[int]]:
-    """Benutzer, auf die ein Team-Recht wirkt.
-
-    ``None`` = keine Einschränkung (alle Benutzer), sonst die Menge erlaubter
-    Benutzer-IDs (bei Scope 'group' die Mitglieder der eigenen Gruppe, bei
-    'none' die leere Menge).
-    """
-    scope = _permission_scope(user, attribute)
-    if scope == group_permissions.SCOPE_ALL:
-        return None
-    if scope == "none":
-        return set()
-    rows = (
-        db.query(models.User.id)
-        .filter(models.User.group_id == user.group_id)
-        .all()
-    )
-    ids = {row[0] for row in rows}
-    ids.add(user.id)
-    return ids
+def _can_manage_roles(user: models.User) -> bool:
+    return permission_service.has(user, "System.Roles")
 
 
-def _user_in_permission_scope(db: Session, user: models.User, attribute: str, target_user_id: Optional[int]) -> bool:
-    allowed = _scoped_user_ids(db, user, attribute)
-    if allowed is None:
-        return True
-    return target_user_id is not None and target_user_id in allowed
+def _can_manage_terminals(user: models.User) -> bool:
+    return permission_service.has(user, "System.Terminals")
+
+
+def _can_manage_system(user: models.User) -> bool:
+    return permission_service.has(user, "System.Settings")
+
+
+def _can_manage_backups(user: models.User) -> bool:
+    return permission_service.has(user, "System.Backup")
+
+
+def _permission_scope(user: models.User, key: str) -> str:
+    return permission_service.scope(user, key)
+
+
+def _scoped_user_ids(db: Session, user: models.User, key: str) -> Optional[set[int]]:
+    return permission_service.allowed_user_ids(db, user, key)
+
+
+def _user_in_permission_scope(
+    db: Session, user: models.User, key: str, target_user_id: Optional[int]
+) -> bool:
+    return permission_service.can_access_user(db, user, key, target_user_id)
 
 
 def _manageable_groups(db: Session, user: models.User) -> list[models.Group]:
-    """Gruppen, die der Benutzer bei der Benutzerverwaltung zuweisen darf.
+    """Gruppen, die der Benutzer bei der Benutzerverwaltung vergeben darf."""
+    return permission_service.assignable_groups(db, user)
 
-    Abteilungsadministratoren (Geltungsbereich „Eigenes Team“) dürfen nur die
-    eigene Gruppe vergeben – insbesondere keine Administratorgruppe, sonst
-    ließen sich die eigenen Rechte ausweiten.
+
+def _manageable_roles(db: Session, user: models.User) -> list[models.Role]:
+    """Rollen, die der Benutzer vergeben darf (nur mit ``System.Roles``)."""
+    return permission_service.assignable_roles(db, user)
+
+
+def _group_assignment_allowed(db: Session, user: models.User, group_ids: Iterable[int]) -> bool:
+    """Darf der Benutzer genau diese Gruppen zuweisen?"""
+    allowed = {group.id for group in permission_service.assignable_groups(db, user)}
+    return set(int(value) for value in group_ids) <= allowed
+
+
+def _role_assignment_allowed(db: Session, user: models.User, role_ids: Iterable[int]) -> bool:
+    """Darf der Benutzer genau diese Rollen zuweisen?
+
+    Verhindert Rechteausweitung: Ohne ``System.Roles`` gar keine Zuweisung,
+    Systemrollen nur durch Superadministratoren.
     """
-    if _permission_scope(user, "can_manage_users") == group_permissions.SCOPE_ALL:
-        return crud.get_groups(db)
-    if not user.group_id:
-        return []
-    group = crud.get_group(db, user.group_id)
-    return [group] if group else []
-
-
-def _group_assignment_allowed(db: Session, user: models.User, group_id: Optional[int]) -> bool:
-    """Darf der Benutzer einem Konto diese Gruppe zuweisen?"""
-    if _permission_scope(user, "can_manage_users") == group_permissions.SCOPE_ALL:
+    wanted = {int(value) for value in role_ids}
+    if not wanted:
         return True
-    # Eingeschränkter Bereich: nur die eigene Gruppe, keine "ohne Gruppe".
-    return group_id is not None and group_id == user.group_id
-
-
-def _has_self_service_permission(user: models.User, attribute: str) -> bool:
-    """Selbstbedienungsrechte (eigene Buchungen/Anträge): Standard erlaubt.
-
-    Benutzer ohne Gruppe behalten diese Rechte – so bleibt das Verhalten
-    bestehender Installationen erhalten; entzogen wird ein Recht nur explizit
-    über die Gruppe.
-    """
-    if _ensure_admin(user):
-        return True
-    if not user.group:
-        return True
-    return bool(getattr(user.group, attribute, True))
+    allowed = {role.id for role in permission_service.assignable_roles(db, user)}
+    return wanted <= allowed
 
 
 def _can_submit_manual_entries(user: models.User) -> bool:
-    return _has_self_service_permission(user, "can_manual_time_entries")
+    return permission_service.has(user, "Own.Time.Edit")
 
 
 def _can_edit_own_notes(user: models.User) -> bool:
-    return _has_self_service_permission(user, "can_edit_own_notes")
+    return permission_service.has(user, "Own.Comment.Edit")
 
 
 def _can_request_vacations(user: models.User) -> bool:
-    return _has_self_service_permission(user, "can_request_vacations")
+    return permission_service.has(user, "Own.Vacation.Request")
 
 
 def _can_flag_remote(user: Optional[models.User]) -> bool:
     """Einsatzort-Kennzeichen (Remote/vor Ort) für diesen Benutzer aktiv?
 
     Wird – wie das Zeitkonto – je Benutzer in der Benutzerverwaltung
-    freigeschaltet. Ohne Freischaltung erscheint das Feld nicht und alle
-    Buchungen gelten als vor Ort.
+    freigeschaltet und ist kein Recht im Sinne des Rollenmodells.
     """
     return bool(getattr(user, "remote_flag_enabled", False))
 
 
 def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
-    permissions = {
-        "users": _can_manage_users(user),
-        "groups": _ensure_admin(user),
-        "companies": _can_manage_companies(user),
-        "holidays": _ensure_admin(user),
-        "approvals_manual": _can_approve_manual_entries(user),
-        "approvals_vacations": _can_manage_vacations(user),
-        "reports": _can_view_time_reports(user),
-        "edit_time_entries": _can_edit_time_entries(user),
-        "integrations": _ensure_admin(user),
-        "system": _ensure_admin(user),
-    }
-    permissions["approvals"] = permissions["approvals_manual"] or permissions["approvals_vacations"]
-    permissions["create_companies"] = _can_create_companies(user)
-    # "any" steuert, ob der Administrationsbereich überhaupt erreichbar ist –
-    # auch für Abteilungsadministratoren ohne volle Adminrechte.
-    permissions["any"] = any(
-        permissions[key]
-        for key in (
-            "users", "groups", "companies", "holidays", "approvals",
-            "reports", "edit_time_entries", "integrations", "system",
-        )
-    )
-    return permissions
-
-
-# Reihenfolge der Startseiten des Administrationsbereichs: die erste Seite, für
-# die der Benutzer berechtigt ist, wird beim Aufruf von /admin angesteuert.
-_ADMIN_ENTRY_PAGES: tuple[tuple[str, str], ...] = (
-    ("users", "/admin/users"),
-    ("approvals", "/admin/approvals"),
-    ("reports", "/admin/reports/time"),
-    ("groups", "/admin/groups"),
-    ("companies", "/admin/companies"),
-    ("holidays", "/admin/holidays"),
-    ("integrations", "/admin/terminals"),
-    ("system", "/admin/system/status"),
-)
+    return permission_service.area_permissions(user)
 
 
 def _admin_landing_page(user: models.User) -> Optional[str]:
-    permissions = _resolve_admin_permissions(user)
-    for key, url in _ADMIN_ENTRY_PAGES:
-        if permissions.get(key):
-            return url
-    return None
+    return permission_service.landing_page(user)
 
 
 def has_admin_access(user: Optional[models.User]) -> bool:
     """Für Templates: Ist der Administrationsbereich für den Benutzer sichtbar?"""
-    if not user:
-        return False
-    return _resolve_admin_permissions(user)["any"]
+    return permission_service.has_admin_access(user)
 
 
-# In base.html wird der Administrations-Link damit auch für
-# Abteilungsadministratoren (ohne volle Adminrechte) eingeblendet.
+# In base.html wird der Administrations-Link damit für jeden Benutzer mit
+# mindestens einer Administrationsberechtigung eingeblendet.
 templates.env.globals["has_admin_access"] = has_admin_access
 
 
@@ -2722,13 +2702,13 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_manage_users(user):
+    if not permission_service.has(user, "User.View"):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     users = crud.get_users(db)
     # Abteilungsadministratoren sehen nur Benutzer der eigenen Gruppe.
-    user_scope_ids = _scoped_user_ids(db, user, "can_manage_users")
+    user_scope_ids = _scoped_user_ids(db, user, "User.Edit")
     if user_scope_ids is not None:
         users = [item for item in users if item.id in user_scope_ids]
     mobile_install_url = str(request.url_for("mobile_dashboard"))
@@ -2753,9 +2733,8 @@ def admin_users_new(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_manage_users(user):
+    if not permission_service.has(user, "User.Create"):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    groups = _manageable_groups(db, user)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     return _admin_template(
@@ -2764,7 +2743,8 @@ def admin_users_new(request: Request, db: Session = Depends(database.get_db)):
         user,
         message=message,
         error=error,
-        groups=groups,
+        groups=_manageable_groups(db, user),
+        roles=_manageable_roles(db, user),
         form_user=None,
     )
 
@@ -2774,7 +2754,7 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_manage_users(user):
+    if not permission_service.has(user, "User.View"):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     target = crud.get_user(db, user_id)
     if not target:
@@ -2782,12 +2762,11 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
             url="/admin/users?error=Benutzer+nicht+gefunden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    if not _user_in_permission_scope(db, user, "can_manage_users", target.id):
+    if not _user_in_permission_scope(db, user, "User.View", target.id):
         return RedirectResponse(
-            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinem+Team",
+            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinen+Gruppen",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    groups = _manageable_groups(db, user)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     quick_login_url = (
@@ -2799,7 +2778,8 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
         user,
         message=message,
         error=error,
-        groups=groups,
+        groups=_manageable_groups(db, user),
+        roles=_manageable_roles(db, user),
         form_user=target,
         mobile_quick_login_url=quick_login_url,
     )
@@ -2810,19 +2790,17 @@ def admin_groups_list(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_groups(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
-    groups = crud.get_groups(db)
     return _admin_template(
         "admin/groups_list.html",
         request,
         user,
         message=message,
         error=error,
-        groups=groups,
-        permission_categories=group_permissions.CATEGORIES,
+        groups=crud.get_groups(db),
     )
 
 
@@ -2831,7 +2809,7 @@ def admin_groups_new(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_groups(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
@@ -2842,8 +2820,7 @@ def admin_groups_new(request: Request, db: Session = Depends(database.get_db)):
         message=message,
         error=error,
         group=None,
-        permission_categories=group_permissions.CATEGORIES,
-        scope_choices=group_permissions.SCOPE_CHOICES,
+        all_users=crud.get_users(db),
     )
 
 
@@ -2852,7 +2829,7 @@ def admin_groups_edit(request: Request, group_id: int, db: Session = Depends(dat
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_groups(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     group = crud.get_group(db, group_id)
     if not group:
@@ -2869,9 +2846,206 @@ def admin_groups_edit(request: Request, group_id: int, db: Session = Depends(dat
         message=message,
         error=error,
         group=group,
-        permission_categories=group_permissions.CATEGORIES,
-        scope_choices=group_permissions.SCOPE_CHOICES,
+        all_users=crud.get_users(db),
     )
+
+
+def _sanitize_role_permissions(
+    values: dict[str, str], actor: models.User
+) -> dict[str, str]:
+    """Rechte einer Rolle bereinigen.
+
+    Unbekannte Keys und ungültige Geltungsbereiche fallen weg. Die
+    Superadministrator-Vorbehalte (Rollen, Systemeinstellungen, Sicherung)
+    darf nur ein Superadministrator vergeben – sonst ließen sich über eine
+    selbst angelegte Rolle die eigenen Rechte ausweiten.
+    """
+    is_super = permission_service.is_superadmin(actor)
+    cleaned: dict[str, str] = {}
+    for key, raw_scope in (values or {}).items():
+        permission = group_permissions.PERMISSIONS_BY_KEY.get(key)
+        if permission is None:
+            continue
+        if permission.superadmin_only and not is_super:
+            continue
+        scope = group_permissions.normalize_scope(permission, raw_scope)
+        if scope != group_permissions.SCOPE_NONE:
+            cleaned[key] = scope
+    return cleaned
+
+
+def _role_context(db: Session, user: models.User, role: Optional[models.Role]) -> dict:
+    return {
+        "role": role,
+        "permission_categories": group_permissions.CATEGORIES,
+        "scope_choices": group_permissions.SCOPE_CHOICES,
+        "current_permissions": role.permission_map if role else {},
+        "can_grant_superadmin": permission_service.is_superadmin(user),
+        "role_users": role.users if role else [],
+    }
+
+
+@app.get("/admin/roles", response_class=HTMLResponse)
+def admin_roles_list(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_roles(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    return _admin_template(
+        "admin/roles_list.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        roles=crud.get_roles(db),
+        permissions_by_key=group_permissions.PERMISSIONS_BY_KEY,
+        scope_labels=group_permissions.SCOPE_LABELS,
+    )
+
+
+@app.get("/admin/roles/new", response_class=HTMLResponse)
+def admin_roles_new(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_roles(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    return _admin_template(
+        "admin/role_form.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        **_role_context(db, user, None),
+    )
+
+
+@app.get("/admin/roles/{role_id}", response_class=HTMLResponse)
+def admin_roles_edit(request: Request, role_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_roles(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    role = crud.get_role(db, role_id)
+    if not role:
+        return RedirectResponse(
+            url="/admin/roles?error=Rolle+nicht+gefunden", status_code=status.HTTP_303_SEE_OTHER
+        )
+    return _admin_template(
+        "admin/role_form.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        **_role_context(db, user, role),
+    )
+
+
+@app.get("/admin/permissions", response_class=HTMLResponse)
+def admin_permissions_page(request: Request, db: Session = Depends(database.get_db)):
+    """Nur lesende Übersicht aller Berechtigungen."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_roles(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    return _admin_template(
+        "admin/permissions_list.html",
+        request,
+        user,
+        permission_categories=group_permissions.CATEGORIES,
+        scope_labels=group_permissions.SCOPE_LABELS,
+        roles=crud.get_roles(db),
+    )
+
+
+async def _read_role_form(request: Request, user: models.User) -> tuple[str, str, bool, dict[str, str]]:
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    description = str(form.get("description") or "").strip()
+    is_active = form.get("is_active") in ("on", "1", "true")
+    permissions = _sanitize_role_permissions(group_permissions.parse_form_values(form), user)
+    return name, description, is_active, permissions
+
+
+@app.post("/admin/roles/create")
+async def create_role_html(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user or not _can_manage_roles(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    name, description, is_active, permissions = await _read_role_form(request, user)
+    if not name:
+        return RedirectResponse(
+            url="/admin/roles/new?error=Bitte+einen+Rollennamen+angeben",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        crud.create_role(
+            db, name=name, description=description, is_active=is_active, permissions=permissions
+        )
+    except IntegrityError:
+        db.rollback()
+        return RedirectResponse(
+            url="/admin/roles/new?error=Rolle+existiert+bereits",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit("Rolle angelegt", user=user, detail=name)
+    return RedirectResponse(url="/admin/roles?msg=Rolle+angelegt", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/roles/{role_id}/update")
+async def update_role_html(request: Request, role_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user or not _can_manage_roles(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    name, description, is_active, permissions = await _read_role_form(request, user)
+    if not name:
+        return RedirectResponse(
+            url=f"/admin/roles/{role_id}?error=Bitte+einen+Rollennamen+angeben",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        updated = crud.update_role(
+            db,
+            role_id,
+            name=name,
+            description=description,
+            is_active=is_active,
+            permissions=permissions,
+        )
+    except ValueError:
+        return RedirectResponse(
+            url=f"/admin/roles/{role_id}?error=Systemrollen+sind+nicht+%C3%A4nderbar",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    except IntegrityError:
+        db.rollback()
+        return RedirectResponse(
+            url=f"/admin/roles/{role_id}?error=Rollenname+bereits+vergeben",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if not updated:
+        return RedirectResponse(
+            url="/admin/roles?error=Rolle+nicht+gefunden", status_code=status.HTTP_303_SEE_OTHER
+        )
+    logging_setup.log_audit("Rolle geändert", user=user, detail=name)
+    return RedirectResponse(url="/admin/roles?msg=Rolle+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/roles/{role_id}/delete")
+def delete_role_html(request: Request, role_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user or not _can_manage_roles(user):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not crud.delete_role(db, role_id):
+        return RedirectResponse(
+            url="/admin/roles?error=Rolle+konnte+nicht+gel%C3%B6scht+werden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit("Rolle gelöscht", user=user, detail=f"id={role_id}")
+    return RedirectResponse(url="/admin/roles?msg=Rolle+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/admin/companies", response_class=HTMLResponse)
@@ -2952,7 +3126,7 @@ def admin_holidays_page(request: Request, db: Session = Depends(database.get_db)
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not _can_manage_terminals(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
@@ -2983,7 +3157,7 @@ def admin_holidays_apply(
     Bundesland übernehmen. Eigene (benutzerdefinierte) Feiertage bleiben
     erhalten, es entstehen keine Duplikate."""
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not _can_manage_terminals(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     selected_state = state.upper() if state and state.upper() in HOLIDAY_STATE_CODES else "DE"
     current_year = date.today().year
@@ -3023,7 +3197,7 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         if can_manual
         else []
     )
-    manual_scope_ids = _scoped_user_ids(db, user, "can_approve_manual_entries")
+    manual_scope_ids = _scoped_user_ids(db, user, "Time.Approve")
     if manual_scope_ids is not None:
         pending_entries = [entry for entry in pending_entries if entry.user_id in manual_scope_ids]
     pending_vacations: list[models.VacationRequest] = []
@@ -3035,7 +3209,7 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         withdrawal_requests = crud.get_vacation_requests(
             db, statuses=[models.VacationStatus.WITHDRAW_REQUESTED]
         )
-        vacation_scope_ids = _scoped_user_ids(db, user, "can_manage_vacations")
+        vacation_scope_ids = _scoped_user_ids(db, user, "Vacation.Manage")
         if vacation_scope_ids is not None:
             pending_vacations = [item for item in pending_vacations if item.user_id in vacation_scope_ids]
             withdrawal_requests = [item for item in withdrawal_requests if item.user_id in vacation_scope_ids]
@@ -3063,7 +3237,7 @@ def admin_time_reports_page(request: Request, db: Session = Depends(database.get
     message = request.query_params.get("msg")
     error = request.query_params.get("error")
     report_data = _build_time_report_data(
-        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+        request.query_params, db, _scoped_user_ids(db, user, "Time.View")
     )
     return _admin_template(
         "admin/time_reports.html",
@@ -3187,7 +3361,7 @@ def admin_user_reports_page(request: Request, db: Session = Depends(database.get
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_user_report_data(
-        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+        request.query_params, db, _scoped_user_ids(db, user, "Time.View")
     )
     return _admin_template(
         "admin/user_reports.html",
@@ -3207,7 +3381,7 @@ def admin_user_reports_pdf(request: Request, db: Session = Depends(database.get_
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_user_report_data(
-        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+        request.query_params, db, _scoped_user_ids(db, user, "Time.View")
     )
     try:
         buffer = export_user_summary_pdf(
@@ -3240,7 +3414,7 @@ def admin_user_reports_excel(request: Request, db: Session = Depends(database.ge
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_user_report_data(
-        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+        request.query_params, db, _scoped_user_ids(db, user, "Time.View")
     )
     buffer = export_user_summary_excel(
         rows=report_data["report_rows"],
@@ -3263,7 +3437,7 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_time_report_data(
-        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+        request.query_params, db, _scoped_user_ids(db, user, "Time.View")
     )
     # report_data["vacations"] only contains approved requests (KPI basis);
     # the PDF vacation overview lists every request in the period with status.
@@ -3272,7 +3446,7 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
         report_data["start_date"],
         report_data["end_date"],
     )
-    report_scope_ids = _scoped_user_ids(db, user, "can_view_time_reports")
+    report_scope_ids = _scoped_user_ids(db, user, "Time.View")
     if report_scope_ids is not None:
         period_vacations = [item for item in period_vacations if item.user_id in report_scope_ids]
     try:
@@ -3316,7 +3490,7 @@ def admin_time_reports_excel(request: Request, db: Session = Depends(database.ge
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     report_data = _build_time_report_data(
-        request.query_params, db, _scoped_user_ids(db, user, "can_view_time_reports")
+        request.query_params, db, _scoped_user_ids(db, user, "Time.View")
     )
     buffer = export_time_entries(
         report_data["entries_sorted"],
@@ -3332,20 +3506,18 @@ def admin_time_reports_excel(request: Request, db: Session = Depends(database.ge
     )
 
 
-async def _read_group_form(request: Request) -> tuple[str, schemas.GroupCreate]:
-    """Liest Gruppenname + alle Berechtigungen aus dem Formular.
-
-    Die Berechtigungen kommen zentral aus ``permissions.CATEGORIES`` – neue
-    Rechte brauchen hier keine Code-Änderung. Administratorgruppen erhalten
-    automatisch alle Rechte.
-    """
+async def _read_group_form(request: Request) -> tuple[str, schemas.GroupCreate, list[int]]:
+    """Liest die organisatorischen Angaben einer Gruppe (keine Rechte mehr)."""
     form = await request.form()
     name = str(form.get("name") or "").strip()
-    is_admin_value = form.get("is_admin") == "on"
-    values = group_permissions.parse_form_values(form)
-    if is_admin_value:
-        values = group_permissions.grant_all()
-    return name, schemas.GroupCreate(name=name, is_admin=is_admin_value, **values)
+    description = str(form.get("description") or "").strip()
+    member_ids: list[int] = []
+    for raw in form.getlist("member_ids"):
+        try:
+            member_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return name, schemas.GroupCreate(name=name, description=description), member_ids
 
 
 @app.post("/admin/groups/create")
@@ -3354,23 +3526,24 @@ async def create_group_html(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not _can_manage_groups(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    name, payload = await _read_group_form(request)
+    name, payload, member_ids = await _read_group_form(request)
     if not name:
         return RedirectResponse(
             url="/admin/groups/new?error=Bitte+einen+Gruppennamen+angeben",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     try:
-        crud.create_group(db, payload)
+        created = crud.create_group(db, payload)
+        crud.set_group_members(db, created, member_ids)
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
             url="/admin/groups/new?error=Gruppe+existiert+bereits",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    logging_setup.log_audit("Gruppe/Rolle angelegt", user=user, detail=name)
+    logging_setup.log_audit("Gruppe angelegt", user=user, detail=name)
     return RedirectResponse(url="/admin/groups?msg=Gruppe+angelegt", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -3381,9 +3554,9 @@ async def update_group_html(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not _can_manage_groups(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    name, payload = await _read_group_form(request)
+    name, payload, member_ids = await _read_group_form(request)
     if not name:
         return RedirectResponse(
             url=f"/admin/groups/{group_id}?error=Bitte+einen+Gruppennamen+angeben",
@@ -3391,6 +3564,8 @@ async def update_group_html(
         )
     try:
         updated = crud.update_group(db, group_id, payload)
+        if updated:
+            crud.set_group_members(db, updated, member_ids)
     except IntegrityError:
         db.rollback()
         return RedirectResponse(
@@ -3402,14 +3577,14 @@ async def update_group_html(
             url="/admin/groups?error=Gruppe+nicht+gefunden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    logging_setup.log_audit("Gruppe/Rolle geändert", user=user, detail=name)
+    logging_setup.log_audit("Gruppe geändert", user=user, detail=name)
     return RedirectResponse(url="/admin/groups?msg=Gruppe+aktualisiert", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/groups/{group_id}/delete")
 def delete_group_html(request: Request, group_id: int, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not _can_manage_groups(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     deleted = crud.delete_group(db, group_id)
     if not deleted:
@@ -3417,8 +3592,31 @@ def delete_group_html(request: Request, group_id: int, db: Session = Depends(dat
             url="/admin/groups?error=Gruppe+konnte+nicht+gelöscht+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    logging_setup.log_audit("Gruppe/Rolle gelöscht", user=user, detail=f"id={group_id}")
+    logging_setup.log_audit("Gruppe gelöscht", user=user, detail=f"id={group_id}")
     return RedirectResponse(url="/admin/groups?msg=Gruppe+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _parse_id_list(values: Iterable[str], fallback: Optional[str] = None) -> list[int]:
+    """Mehrfachauswahl aus dem Formular in IDs übersetzen.
+
+    ``fallback`` bildet das alte Einzelfeld ``group_id`` ab, damit ältere
+    Formulare weiterhin funktionieren.
+    """
+    result: list[int] = []
+    for raw in values or []:
+        text_value = str(raw).strip()
+        if not text_value:
+            continue
+        try:
+            result.append(int(text_value))
+        except ValueError:
+            continue
+    if not result and fallback:
+        try:
+            result.append(int(fallback))
+        except ValueError:
+            pass
+    return result
 
 
 @app.post("/admin/users/create")
@@ -3432,6 +3630,8 @@ def create_user_html(
     standard_weekly_hours: float = Form(40.0),
     monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
+    group_ids: List[str] = Form([]),
+    role_ids: List[str] = Form([]),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
     annual_vacation_days: int = Form(30),
@@ -3445,12 +3645,18 @@ def create_user_html(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_manage_users(user):
+    if not permission_service.has(user, "User.Create"):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    group_value = int(group_id) if group_id else None
-    if not _group_assignment_allowed(db, user, group_value):
+    group_values = _parse_id_list(group_ids, group_id)
+    role_values = _parse_id_list(role_ids)
+    if not _group_assignment_allowed(db, user, group_values):
         return RedirectResponse(
             url="/admin/users/new?error=Gruppe+darf+nicht+zugewiesen+werden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if not _role_assignment_allowed(db, user, role_values):
+        return RedirectResponse(
+            url="/admin/users/new?error=Rolle+darf+nicht+zugewiesen+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     time_account_value = time_account_enabled == "on"
@@ -3479,7 +3685,8 @@ def create_user_html(
                 email=email,
                 password=password,
                 standard_weekly_hours=standard_weekly_hours,
-                group_id=group_value,
+                group_ids=group_values,
+                role_ids=role_values,
                 time_account_enabled=time_account_value,
                 overtime_vacation_enabled=overtime_vacation_value,
                 annual_vacation_days=annual_vacation_days,
@@ -3519,6 +3726,8 @@ def update_user_html(
     standard_weekly_hours: float = Form(40.0),
     monthly_overtime_limit_hours: Optional[str] = Form(None),
     group_id: Optional[str] = Form(None),
+    group_ids: List[str] = Form([]),
+    role_ids: List[str] = Form([]),
     time_account_enabled: Optional[str] = Form(None),
     overtime_vacation_enabled: Optional[str] = Form(None),
     annual_vacation_days: int = Form(30),
@@ -3532,17 +3741,23 @@ def update_user_html(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_manage_users(user):
+    if not permission_service.has(user, "User.Edit"):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    if not _user_in_permission_scope(db, user, "can_manage_users", user_id):
+    if not _user_in_permission_scope(db, user, "User.Edit", user_id):
         return RedirectResponse(
-            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinem+Team",
+            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinen+Gruppen",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    group_value = int(group_id) if group_id else None
-    if not _group_assignment_allowed(db, user, group_value):
+    group_values = _parse_id_list(group_ids, group_id)
+    role_values = _parse_id_list(role_ids)
+    if not _group_assignment_allowed(db, user, group_values):
         return RedirectResponse(
             url=f"/admin/users/{user_id}?error=Gruppe+darf+nicht+zugewiesen+werden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if not _role_assignment_allowed(db, user, role_values):
+        return RedirectResponse(
+            url=f"/admin/users/{user_id}?error=Rolle+darf+nicht+zugewiesen+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     time_account_value = time_account_enabled == "on"
@@ -3574,7 +3789,8 @@ def update_user_html(
                 email=email,
                 password=reset_password_value or None,
                 standard_weekly_hours=standard_weekly_hours,
-                group_id=group_value,
+                group_ids=group_values,
+                role_ids=role_values if _can_manage_roles(user) else None,
                 time_account_enabled=time_account_value,
                 overtime_vacation_enabled=overtime_vacation_value,
                 annual_vacation_days=annual_vacation_days,
@@ -3612,11 +3828,11 @@ def delete_user_html(request: Request, user_id: int, db: Session = Depends(datab
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_manage_users(user):
+    if not permission_service.has(user, "User.Delete"):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    if not _user_in_permission_scope(db, user, "can_manage_users", user_id):
+    if not _user_in_permission_scope(db, user, "User.Delete", user_id):
         return RedirectResponse(
-            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinem+Team",
+            url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinen+Gruppen",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     if not crud.delete_user(db, user_id):
@@ -3707,7 +3923,7 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not (_ensure_admin(user) or _can_edit_time_entries(user)):
+    if not _can_edit_time_entries(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     entry = crud.get_time_entry(db, entry_id)
     next_param = request.query_params.get("next")
@@ -3722,7 +3938,7 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
             "/admin/users", next_param, error="Buchung nicht gefunden"
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    if not _user_in_permission_scope(db, user, "can_edit_time_entries", entry.user_id):
+    if not _user_in_permission_scope(db, user, "Time.Edit", entry.user_id):
         redirect = _build_redirect_with_next(
             "/admin/users", next_param, error="Buchung gehört nicht zu deinem Team"
         )
@@ -3767,12 +3983,12 @@ def update_time_entry_html(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not (_ensure_admin(user) or _can_edit_time_entries(user)):
+    if not user or not _can_edit_time_entries(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     existing_entry = crud.get_time_entry(db, entry_id)
-    if not _user_in_permission_scope(db, user, "can_edit_time_entries", user_id) or (
+    if not _user_in_permission_scope(db, user, "Time.Edit", user_id) or (
         existing_entry
-        and not _user_in_permission_scope(db, user, "can_edit_time_entries", existing_entry.user_id)
+        and not _user_in_permission_scope(db, user, "Time.Edit", existing_entry.user_id)
     ):
         redirect = _build_redirect_with_next(
             "/admin/users",
@@ -3878,7 +4094,7 @@ def delete_time_entry_html(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not (_ensure_admin(user) or _can_edit_time_entries(user)):
+    if not user or not _can_edit_time_entries(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     existing_entry = crud.get_time_entry(db, entry_id)
     if existing_entry and not _user_in_permission_scope(
@@ -3997,7 +4213,7 @@ def create_holiday_admin(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not _can_manage_terminals(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     state = state.upper()
     selected_state = state if state in HOLIDAY_STATE_CODES else "DE"
@@ -4044,7 +4260,7 @@ def delete_holiday_admin(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
+    if not user or not _can_manage_terminals(user):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     state = state.upper()
     if not crud.delete_holiday(db, holiday_id):
@@ -4320,8 +4536,8 @@ def api_terminal_sync(
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
-    if not user or not _ensure_admin(user):
-        raise HTTPException(status_code=403, detail="Nur Administratoren dürfen synchronisieren.")
+    if not user or not _can_manage_terminals(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung für Terminals.")
     terminal = crud.get_terminal(db, terminal_id)
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal nicht gefunden.")
@@ -4345,6 +4561,62 @@ def create_group(group: schemas.GroupCreate, db: Session = Depends(database.get_
 @app.get("/api/groups", response_model=List[schemas.Group])
 def list_groups(db: Session = Depends(database.get_db)):
     return crud.get_groups(db)
+
+
+@app.get("/api/roles", response_model=List[schemas.Role])
+def list_roles(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user or not _can_manage_roles(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung für Rollen.")
+    return crud.get_roles(db)
+
+
+@app.post("/api/roles", response_model=schemas.Role)
+def create_role_api(
+    role: schemas.RoleCreate, request: Request, db: Session = Depends(database.get_db)
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _can_manage_roles(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung für Rollen.")
+    if crud.get_role_by_name(db, role.name):
+        raise HTTPException(status_code=400, detail="Rollenname bereits vergeben")
+    return crud.create_role(
+        db,
+        name=role.name,
+        description=role.description,
+        is_active=role.is_active,
+        permissions=_sanitize_role_permissions(role.permissions, user),
+    )
+
+
+@app.post("/api/roles/{role_id}", response_model=schemas.Role)
+def update_role_api(
+    role_id: int,
+    payload: schemas.RoleUpdate,
+    request: Request,
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or not _can_manage_roles(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung für Rollen.")
+    try:
+        updated = crud.update_role(
+            db,
+            role_id,
+            name=payload.name,
+            description=payload.description,
+            is_active=payload.is_active,
+            permissions=(
+                _sanitize_role_permissions(payload.permissions, user)
+                if payload.permissions is not None
+                else None
+            ),
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Systemrollen sind nicht änderbar.")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Rolle nicht gefunden")
+    return updated
 
 
 @app.post("/api/users", response_model=schemas.User)
@@ -4450,11 +4722,15 @@ def health_check(db: Session = Depends(database.get_db)):
 LOG_LEVEL_CHOICES = list(app_config.VALID_LEVELS)
 
 
-def _require_system_admin(request: Request, db: Session):
+def _require_system_admin(request: Request, db: Session, *, permission: str = "System.Settings"):
+    """Zugang zum Systembereich – standardmäßig „Systemeinstellungen“.
+
+    Sicherung/Wiederherstellung verlangen zusätzlich ``System.Backup``.
+    """
     user = get_logged_in_user(request, db)
     if not user:
         return None, RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _ensure_admin(user):
+    if not permission_service.has(user, permission):
         return None, RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     return user, None
 
@@ -4739,7 +5015,7 @@ BACKUP_CONTENTS = ("database", "config", "logs")
 
 @app.get("/admin/system/backups", response_class=HTMLResponse)
 def admin_system_backups(request: Request, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     return _admin_template(
@@ -4759,7 +5035,7 @@ def admin_system_backups(request: Request, db: Session = Depends(database.get_db
 
 @app.get("/admin/system/backups/history", response_class=HTMLResponse)
 def admin_system_backups_history(request: Request, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     return _admin_template(
@@ -4819,7 +5095,7 @@ def _safe_int(value, fallback: int) -> int:
 
 @app.post("/admin/system/backups/jobs")
 async def admin_backup_job_save(request: Request, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     form = await request.form()
@@ -4847,7 +5123,7 @@ async def admin_backup_job_save(request: Request, db: Session = Depends(database
 
 @app.post("/admin/system/backups/jobs/{job_id}/run")
 def admin_backup_job_run(request: Request, job_id: int, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     job = crud.get_backup_job(db, job_id)
@@ -4867,7 +5143,7 @@ def admin_backup_job_run(request: Request, job_id: int, db: Session = Depends(da
 
 @app.post("/admin/system/backups/jobs/{job_id}/toggle")
 def admin_backup_job_toggle(request: Request, job_id: int, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     job = crud.get_backup_job(db, job_id)
@@ -4884,7 +5160,7 @@ def admin_backup_job_toggle(request: Request, job_id: int, db: Session = Depends
 
 @app.post("/admin/system/backups/jobs/{job_id}/delete")
 def admin_backup_job_delete(request: Request, job_id: int, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     job = crud.get_backup_job(db, job_id)
@@ -4900,7 +5176,7 @@ def admin_backup_job_delete(request: Request, job_id: int, db: Session = Depends
 @app.post("/admin/system/backups/test")
 async def admin_backup_job_test(request: Request, db: Session = Depends(database.get_db)):
     """Connection test for the values currently entered in the modal (JSON)."""
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
     form = await request.form()
@@ -4917,7 +5193,7 @@ async def admin_backup_job_test(request: Request, db: Session = Depends(database
 
 @app.get("/admin/system/backups/runs/{run_id}/download")
 def admin_backup_run_download(request: Request, run_id: int, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     run = crud.get_backup_run(db, run_id)
@@ -4945,7 +5221,7 @@ _UPLOAD_CHUNK = 1024 * 1024  # 1 MiB streaming chunks (never load file into RAM)
 
 @app.get("/admin/system/restore", response_class=HTMLResponse)
 def admin_restore_page(request: Request, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     return _admin_template(
@@ -4961,7 +5237,7 @@ def admin_restore_page(request: Request, db: Session = Depends(database.get_db))
 
 @app.get("/admin/system/restore/history", response_class=HTMLResponse)
 def admin_restore_history(request: Request, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     return _admin_template(
@@ -4975,7 +5251,7 @@ def admin_restore_history(request: Request, db: Session = Depends(database.get_d
 
 @app.get("/admin/system/restore/download")
 def admin_restore_download(request: Request, file: str = "", db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     path = backup_manager.resolve_backup_path(file)
@@ -4995,7 +5271,7 @@ def admin_restore_download(request: Request, file: str = "", db: Session = Depen
 
 @app.post("/admin/system/restore/verify")
 def admin_restore_verify(request: Request, file: str = Form(...), db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
     path = backup_manager.resolve_backup_path(file)
@@ -5008,7 +5284,7 @@ def admin_restore_verify(request: Request, file: str = Form(...), db: Session = 
 @app.post("/admin/system/restore/preview")
 def admin_restore_preview(request: Request, file: str = Form(...), db: Session = Depends(database.get_db)):
     """Restore preview (§11): backup info + current system + the import notice."""
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
     path = backup_manager.resolve_backup_path(file)
@@ -5021,7 +5297,7 @@ def admin_restore_preview(request: Request, file: str = Form(...), db: Session =
 
 @app.post("/admin/system/restore/upload")
 async def admin_restore_upload(request: Request, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     form = await request.form()
@@ -5099,7 +5375,7 @@ def admin_restore_run(
     """Validate and *queue* a restore. The actual restore runs asynchronously
     in a background worker so the database swap never tears down this request
     (§0.9.5 – no more "Internal Server Error")."""
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     # Schritt 2: validate permissions (above), confirmation, file, integrity & compatibility.
@@ -5135,7 +5411,7 @@ def admin_restore_run(
 
 @app.get("/admin/system/restore/progress", response_class=HTMLResponse)
 def admin_restore_progress(request: Request, db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     return _admin_template(
@@ -5162,7 +5438,7 @@ def api_restore_status(request: Request):
 
 @app.post("/admin/system/restore/delete")
 def admin_restore_delete(request: Request, file: str = Form(...), db: Session = Depends(database.get_db)):
-    user, redirect = _require_system_admin(request, db)
+    user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
     path = backup_manager.resolve_backup_path(file)
