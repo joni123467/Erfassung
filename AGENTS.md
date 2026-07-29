@@ -402,6 +402,13 @@ Bei **jeder** Versionsänderung automatisch prüfen und pflegen:
   Konfigurations-, Datenbank-, Backup-/Restore- und Terminalfunktionen)?
 - Stimmen die Versionsnummern in `VERSION`, `README.md`, `CHANGELOG.md`,
   Anwendung, API, Footer, Build- und Releaseinformationen überein?
+- Wurden die **festverdrahteten Versionszusicherungen in den Tests**
+  mitgezogen? Mehrere Testdateien prüfen die laufende Version wörtlich
+  (`assert client.main.APP_VERSION == "<version>"`, `/health`, der
+  Versionsstempel in `/sw.js`, die Systemeinstellungsseite und
+  `backup_meta.json`). Aufspüren mit
+  `grep -rn '"<alte version>"' tests/*.py` – sonst schlagen rund zwei Dutzend
+  Tests allein wegen der Versionsnummer fehl.
 - Existiert ein `CHANGELOG.md`-Eintrag für die neue Version mit mindestens:
   neue Funktionen, Änderungen, Fehlerbehebungen, Datenbankänderungen,
   Migrationshinweise?
