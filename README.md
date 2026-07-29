@@ -2,11 +2,12 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.9.21`
+**Version:** `0.9.22`
 
 > Seit 0.9.21: **Einsatzort je Buchung (Remote / vor Ort)** – wird der
 > Einsatzort für einen Benutzer freigeschaltet, erscheint beim Stempeln und bei
-> manuellen Buchungen ein Haken „Remote" (z. B. Telefon). Details unter
+> manuellen Buchungen ein Umschalter **Vor Ort ⇄ Remote** (seit 0.9.22 als
+> farbige Schaltfläche statt kleiner Checkbox). Details unter
 > [„Einsatzort (Remote / vor Ort)"](#einsatzort-remote--vor-ort).
 
 > Seit 0.9.20: **Stempelzeiten im PDF der Benutzerauswertung** – der
@@ -100,13 +101,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.9.21 .
+docker build -t erfassung:0.9.22 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.9.21
+  erfassung:0.9.22
 ```
 
 ## GHCR & GitHub Actions
@@ -116,20 +117,20 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.9.21`)
+- Push von Tags `v*` (z. B. `v0.9.22`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.9.21`)
+- Versions-Tag aus `VERSION` (hier `0.9.22`)
 - `latest` auf `main`
-- Git-Tag (`v0.9.21`)
+- Git-Tag (`v0.9.22`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.9.21`
+`ghcr.io/OWNER/erfassung:0.9.22`
 
 `OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
 
@@ -142,7 +143,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.21
+    image: ghcr.io/OWNER/erfassung:0.9.22
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -313,7 +314,15 @@ Benutzerverwaltung freigeschaltet:
 Ist die Option aus, erscheint das Feld nirgends und alle Buchungen gelten als
 vor Ort – der bisherige Zustand bleibt unverändert.
 
-Ist sie an, steht ein Haken **„Remote"** an diesen Stellen:
+Ist sie an, steht ein **Umschalter** an den unten genannten Stellen. Er
+wechselt Farbe und Beschriftung (seit 0.9.22, davor eine Checkbox):
+
+| Zustand | Darstellung |
+|---------|-------------|
+| Nicht gesetzt | grau – „Einsatzort · **Vor Ort**" |
+| Gesetzt | blau – „Einsatzort · **Remote**" |
+
+Stellen:
 
 | Stelle | Wirkung |
 |--------|---------|
@@ -325,8 +334,10 @@ Ist sie an, steht ein Haken **„Remote"** an diesen Stellen:
 
 Weitere Eigenschaften:
 
-- **Offline-fähig**: Der Haken wird in der mobilen App mit der Stempelung in
-  die Offline-Warteschlange gelegt und beim Synchronisieren übertragen.
+- **Offline-fähig**: Der Wert wird in der mobilen App mit der Stempelung in
+  die Offline-Warteschlange gelegt und beim Synchronisieren übertragen. Der
+  Umschalter ist eine per CSS gestaltete Checkbox und funktioniert deshalb auch
+  in der Offline-Shell ohne JavaScript.
 - **Teilen bleibt konsistent**: Wird eine Buchung durch einen Nachtrag geteilt,
   übernehmen beide Abschnitte den Einsatzort der Ursprungsbuchung.
 - **Anzeige**: Remote-Buchungen tragen in den Buchungslisten, den
@@ -430,7 +441,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.21
+    image: ghcr.io/OWNER/erfassung:0.9.22
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -465,7 +476,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.21
+    image: ghcr.io/OWNER/erfassung:0.9.22
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -501,7 +512,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.21
+    image: ghcr.io/OWNER/erfassung:0.9.22
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -537,7 +548,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.9.21
+    image: ghcr.io/OWNER/erfassung:0.9.22
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -621,8 +632,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.21`)
-- optional Image-Name/Tag (`erfassung`, `0.9.21`, `latest`)
+- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.9.22`)
+- optional Image-Name/Tag (`erfassung`, `0.9.22`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

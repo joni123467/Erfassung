@@ -144,8 +144,8 @@ def _closed_entry(user_id, start, end, *, is_remote=False, notes="Büro", day=DA
 # --- version & schema ------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.9.21"
-    assert client.get("/health").json()["version"] == "0.9.21"
+    assert client.main.APP_VERSION == "0.9.22"
+    assert client.get("/health").json()["version"] == "0.9.22"
 
 
 def test_columns_exist(client):
@@ -293,20 +293,24 @@ def test_split_of_closed_entry_keeps_location(client):
 
 
 def test_split_of_running_entry_keeps_location(client):
+    """Eine laufende Buchung reicht bis „jetzt"; der Nachtrag liegt deshalb
+    bewusst am Tagesanfang, damit der Test unabhängig von der Uhrzeit läuft."""
     from datetime import datetime
 
     from app import crud, database, models, schemas
 
+    today = date.today()
     uid = _admin_id()
     db = database.SessionLocal()
     try:
-        start = datetime.combine(date.today(), time(6, 0))
-        crud.start_running_entry(db, user_id=uid, started_at=start, is_remote=True)
+        crud.start_running_entry(
+            db, user_id=uid, started_at=datetime.combine(today, time(0, 0)), is_remote=True
+        )
         crud.create_manual_time_entry(
             db,
             schemas.TimeEntryCreate(
-                user_id=uid, company_id=None, work_date=date.today(),
-                start_time=time(7, 0), end_time=time(7, 15), break_minutes=0,
+                user_id=uid, company_id=None, work_date=today,
+                start_time=time(0, 1), end_time=time(0, 2), break_minutes=0,
                 break_started_at=None, is_open=False, notes="Telefonat",
                 status=models.TimeEntryStatus.PENDING, is_manual=True, is_remote=True,
             ),

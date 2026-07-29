@@ -5,6 +5,38 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.9.22] – 2026-07-29
+
+### Changed – Einsatzort als Umschalter statt Checkbox
+
+- Der Einsatzort aus 0.9.21 wurde als kleine Checkbox angeboten – auf dem
+  Handy zu klein zum Treffen. Jetzt ist es eine **Schaltfläche, die Farbe und
+  Beschriftung wechselt**: grau **„Einsatzort · Vor Ort"** ⇄ blau
+  **„Einsatzort · Remote"**. In der mobilen App füllt sie die volle Breite und
+  hat dieselbe Höhe wie die Stempel-Schaltflächen.
+- Der Umschalter wird an allen Stellen verwendet: mobile App, Offline-Shell,
+  Dashboard (Schnell stempeln, Auftrags-Dialog, manuelle Buchung) und die
+  Buchungsbearbeitung in der Administration.
+- **Technisch unverändert**: Das Formularfeld bleibt eine Checkbox
+  (`is_remote`), die Umschaltung passiert per CSS. Damit funktionieren
+  Offline-Warteschlange, Synchronisation und das Absenden ohne JavaScript wie
+  bisher – auch in der statischen Offline-Shell.
+- **Barrierefrei**: Die Schaltfläche ist per Tastatur bedienbar (Leertaste),
+  hat einen Fokusrahmen und einen eigenen Screenreader-Namen; die farbige
+  Darstellung ist `aria-hidden`.
+- Neu: gemeinsames Makro `templates/_components.html` (`location_toggle`),
+  damit alle Stellen identisch aussehen.
+
+### Fixed
+
+- **Mobile App zeigte Start- und Aktiv-Bereich gleichzeitig**: Ausgeblendete
+  Bereiche (`hidden`) blieben sichtbar, weil die Komponentenregeln
+  (`display: flex` / `display: grid`) die Browser-Standardregel für das
+  `hidden`-Attribut überstimmten. Bei laufender Arbeitszeit standen dadurch
+  „Beginne deine Arbeitszeit …" samt (deaktiviertem) Start-Knopf neben den
+  aktiven Aktionen. Jetzt gilt `[hidden] { display: none !important; }`
+  global.
+
 ## [0.9.21] – 2026-07-28
 
 ### Added – Einsatzort einer Buchung (Remote / vor Ort)

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_components.html" import location_toggle %}
 {% block title %}Mobile Erfassung – Erfassung{% endblock %}
 {% block content %}
 <section
@@ -125,10 +126,7 @@
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="start_work">
                         {% if can_flag_remote %}
-                            <label class="mobile-checkbox">
-                                <input type="checkbox" name="is_remote" value="1">
-                                Remote (z. B. Telefon)
-                            </label>
+                            {{ location_toggle(block=True) }}
                         {% endif %}
                         <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
                     </form>
@@ -220,10 +218,7 @@
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
                             {% if can_flag_remote %}
-                                <label class="mobile-checkbox">
-                                    <input type="checkbox" name="is_remote" value="1">
-                                    Remote (z. B. Telefon) – nicht vor Ort
-                                </label>
+                                {{ location_toggle(block=True) }}
                             {% endif %}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
@@ -257,10 +252,7 @@
                             <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
                         </label>
                         {% if can_flag_remote %}
-                            <label class="mobile-checkbox">
-                                <input type="checkbox" name="is_remote" value="1">
-                                Remote (z. B. Telefon) – nicht vor Ort
-                            </label>
+                            {{ location_toggle(block=True) }}
                         {% endif %}
                         <div class="modal__actions modal-action-bar">
                             <button type="button" class="button ghost modal-action" data-close>

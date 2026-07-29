@@ -60,6 +60,13 @@
     box-sizing: border-box;
 }
 
+/* `display` aus Komponentenregeln (flex/grid) sticht die UA-Regel für das
+   hidden-Attribut aus – dadurch blieben ausgeblendete Bereiche sichtbar
+   (z. B. der Start-Block der mobilen App bei laufender Arbeitszeit). */
+[hidden] {
+    display: none !important;
+}
+
 body {
     font-family: "Inter", "Segoe UI", Arial, sans-serif;
     margin: 0;
@@ -1232,6 +1239,18 @@ body.modal-open {
     gap: 0.4rem;
 }
 
+/* Feld ohne Formularelement (z. B. Umschalter) – gleiche Optik wie ein Label. */
+.form-grid .field {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+}
+
+.field__label {
+    font-weight: 600;
+}
+
 .form-grid input,
 .form-grid select,
 .form-grid textarea {
@@ -1917,6 +1936,119 @@ body.modal-open {
 .status-badge.break {
     background: var(--warning-soft);
     color: var(--warning);
+}
+
+/* Nur für Screenreader – der sichtbare Teil des Umschalters ist aria-hidden. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Einsatzort-Umschalter: Checkbox als Schaltfläche, die Farbe und Text
+   wechselt (Vor Ort ⇄ Remote). Kommt ohne JavaScript aus, damit sie auch in
+   der Offline-Shell funktioniert. */
+.location-toggle {
+    display: inline-flex;
+    position: relative;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.location-toggle input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+}
+
+.location-toggle__face {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: var(--control-h);
+    padding: 0.45rem 0.95rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.location-toggle__dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.55;
+    flex: none;
+}
+
+.location-toggle__caption {
+    font-size: 0.78rem;
+    font-weight: 500;
+    opacity: 0.75;
+}
+
+.location-toggle__value {
+    font-weight: 700;
+}
+
+.location-toggle__text--on {
+    display: none;
+}
+
+.location-toggle input:checked + .visually-hidden + .location-toggle__face {
+    background: var(--info-soft);
+    border-color: transparent;
+    color: var(--info);
+}
+
+.location-toggle input:checked + .visually-hidden + .location-toggle__face .location-toggle__dot {
+    opacity: 1;
+}
+
+.location-toggle input:checked + .visually-hidden + .location-toggle__face .location-toggle__text--off {
+    display: none;
+}
+
+.location-toggle input:checked + .visually-hidden + .location-toggle__face .location-toggle__text--on {
+    display: inline;
+}
+
+.location-toggle:hover .location-toggle__face {
+    border-color: var(--brand);
+}
+
+.location-toggle input:focus-visible + .visually-hidden + .location-toggle__face {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
+.location-toggle--block,
+.location-toggle--block .location-toggle__face {
+    width: 100%;
+}
+
+/* Der Umschalter ersetzt in der mobilen App die kleine Checkbox – dort mit
+   etwas mehr Fläche, damit er sich wie die übrigen Schaltflächen bedienen
+   lässt. */
+.location-toggle--block .location-toggle__face {
+    min-height: 2.75rem;
+    font-size: 0.95rem;
 }
 
 .status-badge.remote {

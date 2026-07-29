@@ -120,9 +120,17 @@
               <input type="hidden" name="csrf_token" value="">
               <input type="hidden" name="next_url" value="/mobile">
               <input type="hidden" name="action" value="start_work">
-              <label class="mobile-checkbox">
+              <label class="location-toggle location-toggle--block">
                 <input type="checkbox" name="is_remote" value="1">
-                Remote (z. B. Telefon)
+                <span class="visually-hidden">Remote (z. B. Telefon)</span>
+                <span class="location-toggle__face" aria-hidden="true">
+                  <span class="location-toggle__dot"></span>
+                  <span class="location-toggle__caption">Einsatzort</span>
+                  <span class="location-toggle__value">
+                    <span class="location-toggle__text location-toggle__text--off">Vor Ort</span>
+                    <span class="location-toggle__text location-toggle__text--on">Remote</span>
+                  </span>
+                </span>
               </label>
               <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
             </form>
@@ -202,9 +210,17 @@
                 Kommentar (optional)
                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
               </label>
-              <label class="mobile-checkbox">
+              <label class="location-toggle location-toggle--block">
                 <input type="checkbox" name="is_remote" value="1">
-                Remote (z. B. Telefon) – nicht vor Ort
+                <span class="visually-hidden">Remote (z. B. Telefon)</span>
+                <span class="location-toggle__face" aria-hidden="true">
+                  <span class="location-toggle__dot"></span>
+                  <span class="location-toggle__caption">Einsatzort</span>
+                  <span class="location-toggle__value">
+                    <span class="location-toggle__text location-toggle__text--off">Vor Ort</span>
+                    <span class="location-toggle__text location-toggle__text--on">Remote</span>
+                  </span>
+                </span>
               </label>
               <div class="modal__actions modal-action-bar">
                 <button type="button" class="button ghost modal-action" data-close>
@@ -236,9 +252,17 @@
                 Kommentar
                 <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
               </label>
-              <label class="mobile-checkbox">
+              <label class="location-toggle location-toggle--block">
                 <input type="checkbox" name="is_remote" value="1">
-                Remote (z. B. Telefon) – nicht vor Ort
+                <span class="visually-hidden">Remote (z. B. Telefon)</span>
+                <span class="location-toggle__face" aria-hidden="true">
+                  <span class="location-toggle__dot"></span>
+                  <span class="location-toggle__caption">Einsatzort</span>
+                  <span class="location-toggle__value">
+                    <span class="location-toggle__text location-toggle__text--off">Vor Ort</span>
+                    <span class="location-toggle__text location-toggle__text--on">Remote</span>
+                  </span>
+                </span>
               </label>
               <div class="modal__actions modal-action-bar">
                 <button type="button" class="button ghost modal-action" data-close>
