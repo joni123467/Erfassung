@@ -105,7 +105,8 @@ Benutzer aktualisieren von **beliebigen** älteren Versionen
 Seit 0.9.0 existiert ein dateibasiertes Logging-System
 (`app/logging_setup.py`) mit rotierenden Kanälen im `logs`-Volume:
 `application`, `api`, `sync`, `security`, `error`, `audit`, `backup`
-(ab 0.9.4), `database` (ab 0.9.7) und `terminal` (ab 0.9.8).
+(ab 0.9.4), `database` (ab 0.9.7), `terminal` (ab 0.9.8) und `license`
+(ab 0.11.0).
 
 - **Neue Logs registrieren**: zusätzliche Kanäle ausschließlich über
   `logging_setup.CHANNELS` einführen; keine eigenen Dateipfade hartkodieren.
@@ -125,6 +126,10 @@ Persistente Einstellungen liegen als JSON im `config`-Volume
 - **Einstellungen persistent**: neue konfigurierbare Werte über `app_config`
   (Dataclass + `from_dict`/`to_dict`) ergänzen, nie nur im Speicher halten.
 - Validierung für Importe in `app_config.validate_import` ergänzen.
+- **Ausnahme `config/license.json`** (ab 0.11.0): Die Lizenzdatei wird von
+  `app/licensing.py` selbst verwaltet (Dateirechte 0600) und gehört **nicht**
+  in `app_config.export_all`/`import_all` – sie enthält den Aktivierungs-
+  schlüssel und ist installationsspezifisch.
 
 ## Volumes prüfen (verpflichtend)
 

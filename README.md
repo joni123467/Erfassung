@@ -2,7 +2,14 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.10.1`
+**Version:** `0.11.0`
+
+> Seit 0.11.0: **Lizenzierung** – eine Installation lässt sich einmalig gegen
+> den [Erfassung-Lizenzserver](https://github.com/joni123467/Erfassung_Lizenzserver)
+> aktivieren und prüft ihre Lizenz danach **offline**. Durchgesetzt werden die
+> lizenzierte Benutzerzahl und das Ablaufdatum; ohne Lizenz läuft die Anwendung
+> unverändert weiter und zeigt nur einen Hinweis. Details unter
+> [„Lizenzierung"](#lizenzierung).
 
 > Seit 0.10.0: **Rollenbasierte Rechteverwaltung (RBAC)** – Berechtigungen
 > kommen ausschließlich über **Rollen**; Gruppen sind reine Organisation, und
@@ -335,6 +342,93 @@ Beim ersten Start nach dem Update (Migration 14, datenerhaltend):
 
 Niemand verliert dadurch Rechte. Details siehe
 [`docs/RBAC_MIGRATIONSPLAN.md`](docs/RBAC_MIGRATIONSPLAN.md).
+
+## Lizenzierung
+
+Die Anwendung kann sich gegen den **Erfassung-Lizenzserver** aktivieren
+(eigenes Repository
+[`joni123467/Erfassung_Lizenzserver`](https://github.com/joni123467/Erfassung_Lizenzserver)).
+Die Aktivierung ist einmalig, die Prüfung läuft danach **offline**.
+
+> Administration → System → **Lizenz**
+
+### Ablauf
+
+1. **Deployment-ID** – beim ersten Start erzeugt die Anwendung eine dauerhafte
+   Zufallskennung (`erfassung-<32 Hexzeichen>`) in `config/license.json`. Sie
+   enthält **keine** Hardwaremerkmale, **keine** personenbezogenen Daten und
+   nicht den Hostnamen. Solange das `config`-Volume mitwandert, überlebt sie
+   einen Serverumzug – die Lizenz muss dann nicht erneut aktiviert werden.
+2. **Aktivieren** – Adresse des Lizenzservers und Aktivierungsschlüssel
+   eintragen. Die Anwendung ruft `POST /v1/activations` auf und erhält ein
+   Ed25519-signiertes Lizenzdokument.
+3. **Offline prüfen** – bei jedem Start und jeder Statusabfrage werden
+   Schemaversion, Signatur, Produktkennung, Deployment-ID und Ablaufdatum
+   geprüft. Der Lizenzserver muss dafür nicht erreichbar sein.
+
+„Erneut prüfen“ holt jederzeit ein frisches Dokument – nötig nach einer
+Verlängerung oder Erweiterung. Der Aufruf ist idempotent und verbraucht keinen
+weiteren Aktivierungsplatz. „Lizenz entfernen“ gibt den Platz beim Lizenzserver
+frei, damit eine andere Installation aktiviert werden kann.
+
+### Was durchgesetzt wird
+
+| Zustand | Wirkung |
+|---------|---------|
+| **Nicht lizenziert** | Nur ein Hinweis im Administrationsbereich. Sonst nichts – ein Update darf einen laufenden Betrieb nicht stilllegen. |
+| **Lizenziert** | Neue Benutzer nur bis `max_users` (`0` = unbegrenzt). Ab 30 Tagen vor Ablauf erscheint eine Warnung. |
+| **Abgelaufen / ungültig** | Keine neuen Benutzer. Stempeln, Auswertungen, Urlaub und Sicherungen bleiben uneingeschränkt nutzbar. |
+
+Über die Oberfläche wird die Grenze mit Klartextmeldung abgewiesen, über
+`POST /api/users` mit **HTTP 402**. Bestehende Benutzer werden nie gesperrt
+oder gelöscht. `GET /api/license` liefert den Status als JSON (nur mit
+`System.Settings`, ohne Schlüssel und ohne Signatur).
+
+### Umgang mit dem Aktivierungsschlüssel
+
+Der Schlüssel liegt in `config/license.json`, damit die Lizenz ohne erneute
+Eingabe nachgeprüft werden kann. Abgesichert ist er so:
+
+- Dateirechte **0600**,
+- in der Oberfläche nur maskiert (`••••-1234`),
+- in `license.log` und allen anderen Protokollen ebenfalls nur maskiert,
+- **nicht** im Einstellungsexport (`/admin/system/settings/export`),
+- **nicht** in `GET /api/license`.
+
+Wer ihn gar nicht speichern will, entfernt nach der Aktivierung das Feld
+`activation_key` aus `config/license.json`. Die Lizenz bleibt gültig; nur
+„Erneut prüfen“ verlangt dann wieder eine Eingabe.
+
+### Prüfschlüssel einbetten (für Herausgeber)
+
+Im Lizenzserver-Repository erzeugt `python -m app.cli keygen` ein
+Ed25519-Paar und gibt das **öffentliche** PEM aus; der private Schlüssel
+verlässt den Lizenzserver nie. Das PEM wandert nach `app/licensing_keys.py`:
+
+```python
+EMBEDDED_PUBLIC_KEYS = {
+    "k1": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+}
+```
+
+Die `key_id` steht in jedem Lizenzdokument; bei einer Rotation bleibt der alte
+Eintrag stehen, bis alle Installationen ein neu signiertes Dokument haben. Für
+Entwicklung und Tests lässt sich die Zuordnung über die Umgebungsvariable
+`ERFASSUNG_LICENSE_PUBLIC_KEYS` (JSON `{"key_id": "<PEM>"}`) überschreiben.
+
+Ohne eingebetteten Prüfschlüssel läuft die Anwendung dauerhaft als „nicht
+lizenziert“; die Lizenzseite weist darauf hin.
+
+### Grenze des Kopierschutzes
+
+Die einmalige Aktivierung verhindert weitere **reguläre** Aktivierungen, aber
+**nicht** das vollständige Klonen einer bereits aktivierten Installation: Wer
+`config`- und `data`-Volume kopiert, erhält eine zweite laufende Installation
+mit demselben Lizenzdokument. Das System ist damit **kein** vollständiger
+Kopierschutz. Weitere Restrisiken – Widerruf wirkt erst bei der nächsten
+Prüfung, die Ablaufprüfung nutzt die lokale Uhr, und wer den Quellcode ändert,
+kann die Prüfung entfernen – stehen in
+[`docs/RELEASE_NOTES_0.11.0.md`](docs/RELEASE_NOTES_0.11.0.md).
 
 ## Einsatzort (Remote / vor Ort)
 

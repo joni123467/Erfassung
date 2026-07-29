@@ -5,6 +5,53 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.11.0] – 2026-07-29
+
+### Added – Lizenzierung gegen den Erfassung-Lizenzserver
+
+Eine Installation lässt sich einmalig gegen den **Erfassung-Lizenzserver**
+(eigenes Repository `joni123467/Erfassung_Lizenzserver`) aktivieren, prüft ihre
+Lizenz anschließend **offline** und hält sich an die lizenzierte Benutzerzahl.
+
+- **Neue Seite** Administration → System → **Lizenz**: Status, Lizenz-ID, Kunde,
+  Edition, Merkmale, Benutzerbelegung, Ablaufdatum, Deployment-ID. Dazu
+  Aktivieren, „Erneut prüfen" und „Lizenz entfernen" (gibt den
+  Aktivierungsplatz beim Server wieder frei).
+- **Deployment-ID**: Beim ersten Start wird eine dauerhafte Zufallskennung
+  (`erfassung-<32 Hexzeichen>`) in `config/license.json` erzeugt – **keine**
+  Hardwaremerkmale, **keine** personenbezogenen Daten, kein Hostname. Sie
+  überlebt einen Serverumzug, solange das `config`-Volume mitwandert.
+- **Offline-Prüfung** bei jedem Start und jeder Statusabfrage: Schemaversion,
+  Ed25519-Signatur über die kanonische JSON-Form ohne das Feld `signature`,
+  Produktkennung, Deployment-ID und Ablaufdatum. Der Lizenzserver muss dafür
+  nicht erreichbar sein. Die öffentlichen Prüfschlüssel liegen in
+  `app/licensing_keys.py`, die `key_id` aus dem Dokument erlaubt Rotation.
+- **Durchsetzung**: `max_users` (`0` = unbegrenzt) und Ablaufdatum. Über die
+  Oberfläche mit Klartextmeldung, über `POST /api/users` mit **HTTP 402**.
+  Bestehende Benutzer werden nie gesperrt oder gelöscht.
+- **Neu**: `GET /api/license` liefert den Status als JSON – ohne
+  Aktivierungsschlüssel und ohne Signatur, nur mit `System.Settings`.
+- **Neuer Protokollkanal** `license.log` samt Schalter „Lizenz-Logging" in den
+  Systemeinstellungen. Aktivierungsschlüssel erscheinen dort ausschließlich
+  maskiert (`••••-1234`).
+- **Hinweisbalken** auf jeder Administrationsseite, solange die Lizenz fehlt,
+  ungültig ist oder binnen 30 Tagen abläuft.
+- `cryptography` ist jetzt eine ausdrückliche Abhängigkeit (bisher nur transitiv
+  über `smbprotocol`).
+
+**Bewusst nicht durchgesetzt:** Eine Installation **ohne** Lizenz läuft
+unverändert weiter und zeigt nur einen Hinweis – ein Update darf einen
+laufenden Betrieb nicht stilllegen. Ist die Lizenz abgelaufen oder ungültig,
+entfällt nur das Anlegen neuer Benutzer; Stempeln, Auswertungen, Urlaub und
+Sicherungen bleiben nutzbar.
+
+**Grenze des Kopierschutzes:** Die einmalige Aktivierung verhindert weitere
+reguläre Aktivierungen, aber **nicht** das vollständige Klonen einer bereits
+aktivierten Installation. Das System ist damit kein vollständiger Kopierschutz.
+Weitere Restrisiken stehen in `docs/RELEASE_NOTES_0.11.0.md`.
+
+**Datenbank:** keine Schemaänderung, keine Migration erforderlich.
+
 ## [0.10.1] – 2026-07-29
 
 ### Fixed
