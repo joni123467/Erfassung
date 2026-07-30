@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Lizenz – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'system_license' %}
+{% include "admin/_nav.html" %}
+
+{% set state = license_status %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Lizenz</h1>
+            <p class="card-header__hint">
+                Aktivierung dieser Installation gegen den Lizenzserver. Die Prüfung des
+                hinterlegten Lizenzdokuments läuft offline – der Lizenzserver wird nur
+                bei Aktivierung und erneuter Prüfung kontaktiert.
+            </p>
+        </div>
+        <div class="card-header__actions">
+            <span class="license-state license-state--{{ state.status }}">{{ state.label }}</span>
+        </div>
+    </div>
+
+    {% if state.reason %}
+        <p class="card-header__hint">{{ state.reason }}</p>
+    {% endif %}
+
+    {% if not license_keys_configured %}
+        <div class="alert alert-warning">
+            In dieser Ausgabe ist kein öffentlicher Prüfschlüssel hinterlegt
+            (<code>app/licensing_keys.py</code>). Lizenzdokumente lassen sich deshalb nicht
+            prüfen; die Anwendung läuft unlizenziert weiter.
+        </div>
+    {% endif %}
+
+    <div class="metric-grid">
+        <article class="metric-tile">
+            <span class="metric-tile__label">Benutzer</span>
+            <strong class="metric-tile__value">
+                {% if state.unlimited_users %}{{ state.users_in_use }}{% else %}{{ state.users_in_use }} / {{ state.max_users }}{% endif %}
+            </strong>
+            <span class="metric-tile__sub">
+                {% if state.unlimited_users %}unbegrenzt{% else %}{{ state.users_remaining }} frei{% endif %}
+            </span>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Edition</span>
+            <strong class="metric-tile__value">{{ state.edition or '–' }}</strong>
+            <span class="metric-tile__sub">{{ state.customer_name or 'kein Kunde hinterlegt' }}</span>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Läuft ab</span>
+            <strong class="metric-tile__value">
+                {{ state.expires_at.strftime('%d.%m.%Y') if state.expires_at else 'unbefristet' }}
+            </strong>
+            <span class="metric-tile__sub">
+                {% if state.days_until_expiry is not none %}
+                    noch {{ state.days_until_expiry }} Tag{{ '' if state.days_until_expiry == 1 else 'e' }}
+                {% else %}
+                    kein Ablaufdatum
+                {% endif %}
+            </span>
+        </article>
+        <article class="metric-tile">
+            <span class="metric-tile__label">Merkmale</span>
+            <strong class="metric-tile__value">{{ state.features | length }}</strong>
+            <span class="metric-tile__sub">{{ state.features | join(', ') or 'keine' }}</span>
+        </article>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Details</h2>
+    <div class="table-scroll">
+        <table class="striped-table">
+            <tbody>
+                <tr><th>Lizenz-ID</th><td>{{ state.license_id or '–' }}</td></tr>
+                <tr><th>Kunde</th><td>{{ state.customer_name or '–' }}</td></tr>
+                <tr><th>Produkt</th><td>{{ state.product_id or '–' }}</td></tr>
+                <tr>
+                    <th>Deployment-ID</th>
+                    <td><code>{{ state.deployment_id }}</code></td>
+                </tr>
+                <tr><th>Lizenzserver</th><td>{{ state.server_url or '–' }}</td></tr>
+                <tr><th>Aktivierungsschlüssel</th><td>{{ state.activation_key_masked or '–' }}</td></tr>
+                <tr><th>Signierschlüssel (key_id)</th><td>{{ state.key_id or '–' }}</td></tr>
+                <tr><th>Ausgestellt</th><td>{{ state.issued_at.strftime('%d.%m.%Y %H:%M') if state.issued_at else '–' }}</td></tr>
+                <tr><th>Aktiviert am</th><td>{{ state.activated_at.strftime('%d.%m.%Y %H:%M') if state.activated_at else '–' }}</td></tr>
+                <tr><th>Zuletzt geprüft</th><td>{{ state.last_checked_at.strftime('%d.%m.%Y %H:%M') if state.last_checked_at else '–' }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="card-header__hint">
+        Die Deployment-ID ist eine Zufallszahl ohne Hardware- oder Personenbezug. Sie
+        bleibt bei einem Serverumzug erhalten, solange das <code>config</code>-Volume
+        mitgenommen wird – die Lizenz muss dann nicht erneut aktiviert werden.
+        Protokoll unter <a href="/admin/system/logs?channel=license">license.log</a>.
+    </p>
+</section>
+
+<section class="card">
+    <h2>{{ 'Lizenz ersetzen' if state.is_configured else 'Installation aktivieren' }}</h2>
+    <form method="post" action="/admin/system/license/activate" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label>
+            Adresse des Lizenzservers
+            <input type="url" name="server_url" required
+                   placeholder="https://lizenz.example.org"
+                   value="{{ license_config.server_url }}">
+            <small>HTTPS wird vorausgesetzt; ohne Protokollangabe wird <code>https://</code> ergänzt.</small>
+        </label>
+        <label>
+            Aktivierungsschlüssel
+            <input type="text" name="activation_key" required autocomplete="off"
+                   spellcheck="false" placeholder="ERF-XXXX-XXXX-XXXX">
+            <small>
+                Wird verschlüsselt übertragen und nur lokal im <code>config</code>-Volume
+                abgelegt, damit die Lizenz ohne erneute Eingabe nachgeprüft werden kann.
+                In Oberfläche und Protokoll erscheint er ausschließlich maskiert.
+            </small>
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">
+                {{ 'Lizenz ersetzen' if state.is_configured else 'Aktivieren' }}
+            </button>
+        </div>
+    </form>
+</section>
+
+{% if state.is_configured %}
+<section class="card">
+    <h2>Verwaltung</h2>
+    <div class="card-header__actions">
+        <form method="post" action="/admin/system/license/recheck">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+            <button type="submit" class="button">Erneut prüfen</button>
+        </form>
+        <form method="post" action="/admin/system/license/deactivate"
+              onsubmit="return confirm('Lizenz entfernen und den Aktivierungsplatz freigeben?');">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+            <button type="submit" class="button danger">Lizenz entfernen</button>
+        </form>
+    </div>
+    <p class="card-header__hint">
+        <strong>Erneut prüfen</strong> holt ein frisches Lizenzdokument vom Server –
+        nötig nach einer Verlängerung oder Erweiterung. Der Aufruf ist idempotent und
+        verbraucht keinen weiteren Aktivierungsplatz.
+        <strong>Lizenz entfernen</strong> gibt den Platz beim Lizenzserver frei, damit
+        eine andere Installation aktiviert werden kann.
+    </p>
+    <p class="card-header__hint">
+        Hinweis zur Reichweite: Die Aktivierung verhindert weitere reguläre
+        Aktivierungen, aber nicht das Klonen einer bereits aktivierten Installation.
+        Sie ist damit kein vollständiger Kopierschutz.
+    </p>
+</section>
+{% endif %}
+{% endblock %}

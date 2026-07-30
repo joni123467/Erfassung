@@ -38,6 +38,7 @@ from . import (
     db_migration_jobs,
     db_migrator,
     holiday_calculator,
+    licensing,
     log_tools,
     logging_setup,
     models,
@@ -1151,12 +1152,48 @@ def ensure_seed_data():
             raise
     _ensure_holiday_data()
     _migrate_legacy_backup_config()
+    _check_license_on_startup()
     if os.environ.get("ERFASSUNG_DISABLE_SCHEDULER", "").lower() not in {"1", "true", "yes"}:
         try:
             interval = int(os.environ.get("BACKUP_SCHEDULER_INTERVAL", "60"))
         except ValueError:
             interval = 60
         backup_scheduler.start(interval)
+
+
+def _check_license_on_startup() -> None:
+    """Hinterlegte Lizenz offline prüfen und den Befund protokollieren.
+
+    Rein informativ: Der Start scheitert nie an der Lizenz – eine unerreichbare
+    oder abgelaufene Lizenz darf einen laufenden Betrieb nicht stilllegen.
+    """
+    db = database.SessionLocal()
+    try:
+        state = licensing.current_status(db)
+    except Exception:  # pragma: no cover - Lizenzprüfung darf nie den Start blockieren
+        logging_setup.log_error("Lizenzprüfung beim Start fehlgeschlagen")
+        return
+    finally:
+        db.close()
+
+    detail = f"Lizenzstatus: {state.label}"
+    if state.license_id:
+        detail += f" (Lizenz {state.license_id}"
+        if not state.unlimited_users:
+            detail += f", {state.users_in_use}/{state.max_users} Benutzer"
+        detail += ")"
+    if state.status == licensing.STATUS_VALID:
+        if state.expires_soon:
+            logging_setup.log_license(
+                f"{detail} – läuft in {state.days_until_expiry} Tagen ab.",
+                level=logging.WARNING,
+            )
+        else:
+            logging_setup.log_license(detail)
+    elif state.status == licensing.STATUS_UNLICENSED:
+        logging_setup.log_license(f"{detail} – {state.reason}")
+    else:
+        logging_setup.log_license(f"{detail} – {state.reason}", level=logging.WARNING)
 
 
 @app.on_event("shutdown")
@@ -2681,9 +2718,23 @@ def _admin_template(
         "message": message,
         "error": error,
         "admin_permissions": _resolve_admin_permissions(user),
+        # Hinweisbalken auf jeder Administrationsseite, solange die Lizenz
+        # fehlt, abgelaufen oder ungültig ist.
+        "license_state": _license_banner(),
     }
     payload.update(context)
     return templates.TemplateResponse(template, payload)
+
+
+def _license_banner() -> Optional[licensing.LicenseStatus]:
+    """Lizenzstatus für den Hinweisbalken – ``None``, wenn alles in Ordnung ist."""
+    try:
+        state = licensing.current_status()
+    except Exception:  # pragma: no cover - der Balken darf nie eine Seite kippen
+        return None
+    if state.status == licensing.STATUS_VALID and not state.expires_soon:
+        return None
+    return state
 
 
 @app.get("/admin", include_in_schema=False)
@@ -3659,6 +3710,15 @@ def create_user_html(
             url="/admin/users/new?error=Rolle+darf+nicht+zugewiesen+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    limit_error = licensing.user_limit_error(db)
+    if limit_error:
+        logging_setup.log_license(
+            f"Benutzeranlage abgelehnt: {limit_error}", level=logging.WARNING, user=user
+        )
+        return RedirectResponse(
+            url=_build_redirect("/admin/users/new", error=limit_error),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     time_account_value = time_account_enabled == "on"
     overtime_vacation_value = overtime_vacation_enabled == "on"
     carryover_enabled = vacation_carryover_enabled == "on"
@@ -4623,6 +4683,9 @@ def update_role_api(
 def create_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
     if crud.get_user_by_username(db, user.username):
         raise HTTPException(status_code=400, detail="Benutzername bereits vergeben")
+    limit_error = licensing.user_limit_error(db)
+    if limit_error:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=limit_error)
     return crud.create_user(db, user)
 
 
@@ -4876,6 +4939,106 @@ def admin_system_errors(request: Request, db: Session = Depends(database.get_db)
     )
 
 
+# --- Lizenzierung (ab 0.11.0) ---------------------------------------------
+
+
+@app.get("/admin/system/license", response_class=HTMLResponse)
+def admin_system_license(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    return _admin_template(
+        "admin/system_license.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        admin_active="system_license",
+        license_status=licensing.current_status(db),
+        license_config=licensing.load_config(),
+        license_keys_configured=bool(licensing.public_keys()),
+    )
+
+
+@app.post("/admin/system/license/activate")
+def admin_system_license_activate(
+    request: Request,
+    server_url: str = Form(...),
+    activation_key: str = Form(...),
+    db: Session = Depends(database.get_db),
+):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    try:
+        state = licensing.activate(server_url, activation_key)
+    except licensing.LicenseError as exc:
+        logging_setup.log_license(
+            f"Aktivierung fehlgeschlagen: {exc}", level=logging.WARNING, user=user
+        )
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/license", error=str(exc)),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    # Der Aktivierungsschlüssel taucht in keiner dieser Meldungen auf.
+    logging_setup.log_audit(
+        "Lizenz aktiviert", user=user, detail=state.license_id or "ohne Lizenz-ID"
+    )
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/license", msg="Lizenz aktiviert"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/license/recheck")
+def admin_system_license_recheck(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    try:
+        state = licensing.recheck()
+    except licensing.LicenseError as exc:
+        logging_setup.log_license(
+            f"Erneute Prüfung fehlgeschlagen: {exc}", level=logging.WARNING, user=user
+        )
+        return RedirectResponse(
+            url=_build_redirect("/admin/system/license", error=str(exc)),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit("Lizenz erneut geprüft", user=user, detail=state.label)
+    return RedirectResponse(
+        url=_build_redirect("/admin/system/license", msg=f"Lizenz geprüft: {state.label}"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/system/license/deactivate")
+def admin_system_license_deactivate(request: Request, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    licensing.deactivate()
+    logging_setup.log_audit("Lizenz entfernt", user=user)
+    return RedirectResponse(
+        url=_build_redirect(
+            "/admin/system/license",
+            msg="Lizenz entfernt und Aktivierungsplatz freigegeben",
+        ),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.get("/api/license")
+def api_license_status(request: Request, db: Session = Depends(database.get_db)):
+    """Lizenzstatus als JSON – ohne Aktivierungsschlüssel und ohne Signatur."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
+    if not permission_service.has(user, "System.Settings"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Berechtigung")
+    return JSONResponse(licensing.current_status(db).to_dict())
+
+
 @app.get("/admin/system/settings", response_class=HTMLResponse)
 def admin_system_settings(request: Request, db: Session = Depends(database.get_db)):
     user, redirect = _require_system_admin(request, db)
@@ -4907,6 +5070,7 @@ def admin_system_settings_save(
     restore_logging: Optional[str] = Form(None),
     database_logging: Optional[str] = Form(None),
     terminal_logging: Optional[str] = Form(None),
+    license_logging: Optional[str] = Form(None),
     rotation_max_mb: str = Form("5"),
     rotation_backup_count: str = Form("5"),
     auto_cleanup_enabled: Optional[str] = Form(None),
@@ -4935,6 +5099,7 @@ def admin_system_settings_save(
             "restore_logging": _parse_checkbox(restore_logging),
             "database_logging": _parse_checkbox(database_logging),
             "terminal_logging": _parse_checkbox(terminal_logging),
+            "license_logging": _parse_checkbox(license_logging),
             "rotation_max_bytes": int(max_mb * 1024 * 1024),
             "rotation_backup_count": rotation_backup_count,
             "auto_cleanup_enabled": _parse_checkbox(auto_cleanup_enabled),

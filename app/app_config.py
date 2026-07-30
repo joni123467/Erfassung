@@ -74,6 +74,7 @@ class LoggingConfig:
     restore_logging: bool = True
     database_logging: bool = True
     terminal_logging: bool = True
+    license_logging: bool = True
     rotation_max_bytes: int = 5 * 1024 * 1024
     rotation_backup_count: int = 5
     auto_cleanup_enabled: bool = False
@@ -101,6 +102,9 @@ class LoggingConfig:
         )
         config.terminal_logging = _coerce_bool(
             payload.get("terminal_logging"), config.terminal_logging
+        )
+        config.license_logging = _coerce_bool(
+            payload.get("license_logging"), config.license_logging
         )
         config.rotation_max_bytes = _coerce_int(
             payload.get("rotation_max_bytes"), config.rotation_max_bytes, minimum=1024
