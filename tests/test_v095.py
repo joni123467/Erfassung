@@ -87,7 +87,15 @@ def _make_backup(client) -> str:
     return Path(backup_manager.list_local_backups()[0]["path"]).name
 
 
-def _wait_terminal(timeout=15.0):
+def _wait_terminal(timeout=60.0):
+    """Auf das Ende des asynchronen Restores warten.
+
+    Großzügig bemessen: Der Restore läuft in einem Hintergrund-Thread und
+    tauscht dabei die Datenbank. Auf einer ausgelasteten Maschine – etwa
+    während der vollständigen Testsuite – dauert das deutlich länger als im
+    Einzellauf. Geprüft wird, *dass* er asynchron abläuft und erfolgreich
+    endet, nicht wie schnell.
+    """
     from app import restore_jobs
     deadline = time.time() + timeout
     while time.time() < deadline:
