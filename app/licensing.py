@@ -88,6 +88,26 @@ _LICENSE_PATH = paths.CONFIG_DIR / "license.json"
 #: Zeitlimit für jeden Aufruf des Lizenzservers (Verbindung + Antwort).
 HTTP_TIMEOUT_SECONDS = 15.0
 
+#: Abstand der selbsttätigen Nachfrage beim Lizenzserver.
+CHECK_INTERVAL_HOURS = 24
+
+#: Übergangsfrist nach einer gemeldeten Sperre. Erst danach werden die
+#: lizenzpflichtigen Bereiche geschlossen – Stempeln bleibt immer möglich,
+#: damit keine Arbeitszeit verloren geht.
+GRACE_PERIOD_DAYS = 14
+
+# --- Funktionsbausteine ----------------------------------------------------
+
+#: Zubuchbare Bausteine. Was hier **nicht** steht, gehört zur Basis und ist in
+#: jeder Lizenz enthalten: Stempeln, eigene Zeitübersicht, Benutzer- und
+#: Rollenverwaltung, Sicherungen.
+FEATURES: dict[str, str] = {
+    "orders": "Aufträge & Firmen",
+    "vacation": "Urlaubsplanung",
+    "reports": "Auswertungen & Exporte",
+    "terminals": "RFID-Terminals",
+}
+
 # --- Zustände --------------------------------------------------------------
 
 STATUS_UNLICENSED = "unlicensed"
@@ -232,6 +252,15 @@ class LicenseConfig:
     #: ``{key_id: PEM}`` – bei der ersten Aktivierung vom Lizenzserver
     #: übernommen und danach unveränderlich (siehe :func:`adopt_public_keys`).
     trusted_keys: dict[str, str] = field(default_factory=dict)
+    #: Vom Lizenzserver gemeldete Sperre: ``suspended``, ``revoked`` oder
+    #: ``expired``. Leer, solange die Lizenz gilt.
+    blocked_status: str = ""
+    #: Zeitpunkt der **ersten** Sperrmeldung – Beginn der Übergangsfrist.
+    blocked_since: str = ""
+    #: Klartextbegründung des Servers für die Anzeige.
+    blocked_reason: str = ""
+    #: Letzter erfolgreicher Kontakt zum Lizenzserver (beliebige Antwort).
+    last_contact_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -242,6 +271,10 @@ class LicenseConfig:
             "activated_at": self.activated_at,
             "last_checked_at": self.last_checked_at,
             "trusted_keys": self.trusted_keys,
+            "blocked_status": self.blocked_status,
+            "blocked_since": self.blocked_since,
+            "blocked_reason": self.blocked_reason,
+            "last_contact_at": self.last_contact_at,
         }
 
     @classmethod
@@ -260,6 +293,10 @@ class LicenseConfig:
         config.trusted_keys = (
             {str(k): str(v) for k, v in trusted.items()} if isinstance(trusted, dict) else {}
         )
+        config.blocked_status = str(payload.get("blocked_status") or "")
+        config.blocked_since = str(payload.get("blocked_since") or "")
+        config.blocked_reason = str(payload.get("blocked_reason") or "")
+        config.last_contact_at = str(payload.get("last_contact_at") or "")
         return config
 
 
@@ -366,6 +403,14 @@ class LicenseStatus:
     #: Fingerprint des Schlüssels, mit dem geprüft wurde – zum Abgleich mit
     #: der Instanzseite des Lizenzservers.
     key_fingerprint: str = ""
+    #: Vom Server gemeldete Sperre (``suspended``/``revoked``/``expired``).
+    blocked_status: str = ""
+    #: Beginn der Übergangsfrist.
+    blocked_since: Optional[datetime] = None
+    #: Begründung des Servers.
+    blocked_reason: str = ""
+    #: Letzter erfolgreicher Kontakt zum Lizenzserver.
+    last_contact_at: Optional[datetime] = None
 
     @property
     def label(self) -> str:
@@ -401,6 +446,46 @@ class LicenseStatus:
             return None
         return max(self.max_users - self.users_in_use, 0)
 
+    @property
+    def is_blocked(self) -> bool:
+        """Hat der Lizenzserver diese Installation gesperrt gemeldet?"""
+        return bool(self.blocked_status)
+
+    @property
+    def grace_days_left(self) -> Optional[int]:
+        """Verbleibende Tage der Übergangsfrist; ``None`` ohne Sperre."""
+        if not self.blocked_since:
+            return None
+        used = (_utcnow() - self.blocked_since).total_seconds() / 86400
+        return max(0, int(GRACE_PERIOD_DAYS - used) + (1 if used % 1 else 0))
+
+    @property
+    def grace_expired(self) -> bool:
+        """Ist die Übergangsfrist abgelaufen und greift die Sperre?"""
+        remaining = self.grace_days_left
+        return remaining is not None and remaining <= 0
+
+    @property
+    def features_enforced(self) -> bool:
+        """Werden Funktionsbausteine überhaupt durchgesetzt?
+
+        Nur mit gültiger Lizenz. Eine Installation ohne Lizenz bleibt bewusst
+        offen – ein Update darf einen laufenden Betrieb nicht beschneiden.
+        """
+        return self.status == STATUS_VALID
+
+    def has_feature(self, name: str) -> bool:
+        """Ist dieser Baustein nutzbar?
+
+        Ohne Lizenz ist alles offen; mit gültiger Lizenz entscheidet das
+        Dokument. Nach abgelaufener Übergangsfrist einer Sperre ist alles
+        Zubuchbare zu.
+        """
+        if self.grace_expired:
+            return False
+        if not self.features_enforced:
+            return True
+        return name in self.features
     def to_dict(self) -> dict[str, Any]:
         """Für die API – ohne Aktivierungsschlüssel und ohne Signatur."""
 
@@ -425,6 +510,12 @@ class LicenseStatus:
             "days_until_expiry": self.days_until_expiry,
             "key_id": self.key_id,
             "key_fingerprint": self.key_fingerprint,
+            "blocked_status": self.blocked_status,
+            "blocked_reason": self.blocked_reason,
+            "blocked_since": stamp(self.blocked_since),
+            "grace_days_left": self.grace_days_left,
+            "grace_expired": self.grace_expired,
+            "last_contact_at": stamp(self.last_contact_at),
             "deployment_id": self.deployment_id,
             "server_url": self.server_url,
             "activated_at": stamp(self.activated_at),
@@ -441,6 +532,10 @@ def _status_from_document(
         activated_at=_parse_timestamp(config.activated_at),
         last_checked_at=_parse_timestamp(config.last_checked_at),
         activation_key_masked=masked_activation_key(config.activation_key),
+        blocked_status=config.blocked_status,
+        blocked_since=_parse_timestamp(config.blocked_since),
+        blocked_reason=config.blocked_reason,
+        last_contact_at=_parse_timestamp(config.last_contact_at),
     )
     status.license_id = str(document.get("license_id") or "")
     status.customer_name = str(document.get("customer_name") or "")
@@ -550,9 +645,13 @@ def license_request_url(db: Any = None) -> str:
 
 
 def has_feature(name: str, status: Optional[LicenseStatus] = None) -> bool:
-    """Ist ein optionales Merkmal lizenziert? Ohne gültige Lizenz nie."""
-    state = status or current_status()
-    return state.is_valid and name in state.features
+    """Ist dieser Funktionsbaustein nutzbar?
+
+    Ohne hinterlegte Lizenz ist alles offen – ein Update darf einen laufenden
+    Betrieb nicht beschneiden. Mit gültiger Lizenz entscheidet das Dokument.
+    Nach abgelaufener Übergangsfrist einer Sperre ist alles Zubuchbare zu.
+    """
+    return (status or current_status()).has_feature(name)
 
 
 # --- Durchsetzung ----------------------------------------------------------
@@ -751,6 +850,111 @@ def activate(server_url: str, activation_key: str) -> LicenseStatus:
     return status
 
 
+def refresh_from_server() -> tuple[bool, str]:
+    """Zustand beim Lizenzserver nachfragen. Gibt ``(erreicht, Meldung)``.
+
+    Der Leitgedanke: **Ein unerreichbarer Server darf niemals sperren.** Nur
+    eine ausdrückliche Sperrmeldung startet die Übergangsfrist; jede Störung
+    lässt die gespeicherte Lizenz unverändert weiterlaufen.
+
+    Meldet der Server wieder ``active``, verfällt eine laufende Frist sofort
+    und das frische Dokument ersetzt das alte – so wirken Änderungen an
+    Benutzerzahl und Bausteinen ohne Zutun des Kunden.
+    """
+    config = load_config()
+    if not config.server_url or not config.activation_key or not config.document:
+        return False, "Keine Lizenz hinterlegt."
+
+    url = normalize_server_url(config.server_url)
+    try:
+        response = _post(
+            f"{url}/v1/activations/state",
+            {
+                "activation_key": config.activation_key,
+                "product_id": PRODUCT_ID,
+                "deployment_id": config.deployment_id,
+            },
+        )
+    except LicenseError as exc:
+        # Genau hier endet der Ausfall: nichts ändern, nichts sperren.
+        _log(f"Lizenzserver nicht erreichbar – Lizenz gilt unverändert weiter: {exc}")
+        return False, str(exc)
+
+    if response.status_code == 404:
+        # Älterer Lizenzserver ohne Zustandsendpunkt: kein Grund zur Sorge.
+        _log("Lizenzserver kennt die Zustandsabfrage nicht – Lizenz gilt weiter.")
+        return False, "Der Lizenzserver unterstützt die regelmäßige Prüfung nicht."
+    if response.status_code != 200:
+        _log(
+            f"Zustandsabfrage beantwortet mit HTTP {response.status_code} – "
+            "Lizenz gilt unverändert weiter.",
+            level=logging.WARNING,
+        )
+        return False, f"Unerwartete Antwort des Lizenzservers (HTTP {response.status_code})."
+
+    try:
+        payload = response.json()
+        state = str(payload["status"])
+    except (ValueError, KeyError, TypeError):
+        return False, "Der Lizenzserver hat eine unerwartete Antwort geschickt."
+
+    config = load_config()  # frisch lesen, es könnte sich zwischenzeitlich geändert haben
+    config.last_contact_at = _utcnow().isoformat()
+
+    if state == "active":
+        document = payload.get("license")
+        if isinstance(document, dict):
+            candidate = LicenseConfig(**{**config.to_dict(), "document": document})
+            checked = _status_from_document(
+                document, candidate, expected_deployment=config.deployment_id
+            )
+            if checked.status == STATUS_INVALID:
+                _log(
+                    f"Frisches Lizenzdokument abgelehnt: {checked.reason}",
+                    level=logging.WARNING,
+                )
+                save_config(config)
+                return True, checked.reason
+            config.document = document
+            config.last_checked_at = _utcnow().isoformat()
+        if config.blocked_status:
+            _log("Lizenz ist wieder freigegeben – Übergangsfrist beendet.")
+        config.blocked_status = ""
+        config.blocked_since = ""
+        config.blocked_reason = ""
+        save_config(config)
+        return True, "Lizenz bestätigt."
+
+    if state in ("suspended", "revoked", "expired"):
+        reason = str(payload.get("reason") or "")
+        if not config.blocked_status:
+            # Erste Meldung: ab hier läuft die Übergangsfrist.
+            config.blocked_since = _utcnow().isoformat()
+            _log(
+                f"Lizenz vom Server als „{state}“ gemeldet. Übergangsfrist von "
+                f"{GRACE_PERIOD_DAYS} Tagen beginnt.",
+                level=logging.WARNING,
+            )
+        config.blocked_status = state
+        config.blocked_reason = reason
+        save_config(config)
+        return True, reason or f"Lizenz gesperrt ({state})."
+
+    save_config(config)
+    return True, f"Unbekannte Antwort des Lizenzservers: {state!r}"
+
+
+def due_for_check(status: Optional[LicenseStatus] = None) -> bool:
+    """Ist die nächste selbsttätige Nachfrage fällig?"""
+    state = status or current_status()
+    if not state.is_configured:
+        return False
+    last = state.last_contact_at or state.last_checked_at
+    if last is None:
+        return True
+    return (_utcnow() - last).total_seconds() >= CHECK_INTERVAL_HOURS * 3600
+
+
 def recheck() -> LicenseStatus:
     """Lizenz beim Server nachprüfen – mit den gespeicherten Angaben."""
     config = load_config()
@@ -818,6 +1022,7 @@ __all__ = [
     "count_users",
     "current_status",
     "deactivate",
+    "due_for_check",
     "adopt_public_keys",
     "deployment_id",
     "embedded_public_keys",
@@ -831,6 +1036,7 @@ __all__ = [
     "normalize_server_url",
     "public_keys",
     "recheck",
+    "refresh_from_server",
     "save_config",
     "signing_payload",
     "user_limit_error",

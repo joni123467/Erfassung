@@ -38,6 +38,7 @@ from . import (
     db_migration_jobs,
     db_migrator,
     holiday_calculator,
+    license_scheduler,
     licensing,
     log_tools,
     logging_setup,
@@ -157,6 +158,74 @@ class CSRFMiddleware:
         await self.app(scope, receive, send)
 
 
+class LicenseFeatureMiddleware:
+    """Sperrt Bereiche, für die kein Funktionsbaustein lizenziert ist.
+
+    Bewusst als Middleware und nicht als Abhängigkeit an jeder Route: So kann
+    kein Endpunkt versehentlich ungeschützt bleiben, und neue Unterseiten
+    eines Bereichs sind automatisch mit abgedeckt.
+
+    Ohne hinterlegte Lizenz ist alles offen – ein Update darf einen laufenden
+    Betrieb nicht beschneiden. Erst eine gültige Lizenz entscheidet, und eine
+    gemeldete Sperre wirkt erst nach der Übergangsfrist.
+    """
+
+    #: Pfadpräfix → benötigter Baustein. Alles Übrige gehört zur Basis:
+    #: Stempeln, eigene Zeitübersicht, Benutzer/Rollen, Sicherungen.
+    ROUTES: tuple[tuple[str, str], ...] = (
+        ("/admin/companies", "orders"),
+        ("/admin/reports", "reports"),
+        ("/admin/terminals", "terminals"),
+        ("/records/vacations", "vacation"),
+        ("/vacations", "vacation"),
+        ("/admin/vacations", "vacation"),
+        ("/api/vacations", "vacation"),
+        ("/api/companies", "orders"),
+        ("/api/terminals", "terminals"),
+    )
+
+    def __init__(self, app):
+        self.app = app
+
+    @classmethod
+    def required_feature(cls, path: str) -> Optional[str]:
+        for prefix, feature in cls.ROUTES:
+            if path == prefix or path.startswith(prefix + "/"):
+                return feature
+        return None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        feature = self.required_feature(scope.get("path", ""))
+        if feature is None:
+            await self.app(scope, receive, send)
+            return
+        try:
+            allowed = licensing.has_feature(feature)
+        except Exception:  # pragma: no cover - die Prüfung darf nie sperren
+            allowed = True
+        if allowed:
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+        label = licensing.FEATURES.get(feature, feature)
+        message = f"{label} ist in dieser Lizenz nicht enthalten."
+        if request.url.path.startswith("/api/"):
+            response = JSONResponse(
+                {"detail": message, "feature": feature},
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        else:
+            response = RedirectResponse(
+                url=_build_redirect("/dashboard", error=message),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        await response(scope, receive, send)
+
+
 app = FastAPI(
     title="Erfassung",
     description="Zeiterfassung mit Überstunden & Urlaub",
@@ -169,6 +238,7 @@ app = FastAPI(
 # when the CSRF check reads it — which would reject every POST (incl. /login)
 # with a 403 "Ungültige Sitzung". Therefore register CSRF first, Session last.
 app.add_middleware(CSRFMiddleware)
+app.add_middleware(LicenseFeatureMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=_SESSION_SECRET,
@@ -1174,6 +1244,9 @@ def ensure_seed_data():
         except ValueError:
             interval = 60
         backup_scheduler.start(interval)
+        # Fragt einmal täglich beim Lizenzserver nach. Ein Ausfall dort
+        # sperrt nie – siehe licensing.refresh_from_server.
+        license_scheduler.start()
 
 
 def _check_license_on_startup() -> None:
@@ -1214,6 +1287,7 @@ def _check_license_on_startup() -> None:
 @app.on_event("shutdown")
 def _stop_scheduler():
     backup_scheduler.stop()
+    license_scheduler.stop()
 
 
 def _migrate_legacy_backup_config() -> None:
@@ -2757,9 +2831,19 @@ def _admin_template(
         # Hinweisbalken auf jeder Administrationsseite, solange die Lizenz
         # fehlt, abgelaufen oder ungültig ist.
         "license_state": _license_banner(),
+        "license_features": _license_features(),
     }
     payload.update(context)
     return templates.TemplateResponse(template, payload)
+
+
+def _license_features() -> dict[str, bool]:
+    """Welche Funktionsbausteine sind nutzbar? Für Navigation und Templates."""
+    try:
+        state = licensing.current_status()
+        return {key: state.has_feature(key) for key in licensing.FEATURES}
+    except Exception:  # pragma: no cover - die Oberfläche darf nie daran scheitern
+        return dict.fromkeys(licensing.FEATURES, True)
 
 
 def _license_banner() -> Optional[licensing.LicenseStatus]:
@@ -2768,6 +2852,8 @@ def _license_banner() -> Optional[licensing.LicenseStatus]:
         state = licensing.current_status()
     except Exception:  # pragma: no cover - der Balken darf nie eine Seite kippen
         return None
+    if state.is_blocked:
+        return state
     if state.status == licensing.STATUS_VALID and not state.expires_soon:
         return None
     return state
@@ -4993,6 +5079,8 @@ def admin_system_license(request: Request, db: Session = Depends(database.get_db
         license_status=licensing.current_status(db),
         license_config=licensing.load_config(),
         default_server_url=licensing.DEFAULT_SERVER_URL,
+        feature_labels=licensing.FEATURES,
+        check_interval_hours=licensing.CHECK_INTERVAL_HOURS,
         license_request_url=licensing.license_request_url(db),
     )
 
