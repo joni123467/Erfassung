@@ -98,14 +98,42 @@
 </section>
 
 <section class="card">
+    <h2>Lizenz beantragen oder erweitern</h2>
+    <p class="card-header__hint">
+        {% if state.is_configured and not state.unlimited_users and state.users_remaining == 0 %}
+            Alle {{ state.max_users }} Benutzerplätze sind belegt. Für weitere Benutzer
+            braucht diese Installation eine größere Lizenz.
+        {% elif state.is_configured %}
+            Mehr Benutzer nötig, Verlängerung fällig oder zusätzliche Merkmale gewünscht?
+        {% else %}
+            Diese Installation ist noch nicht lizenziert. Fordere einen
+            Aktivierungsschlüssel an und trage ihn anschließend unten ein.
+        {% endif %}
+    </p>
+    <div class="card-header__actions">
+        <a class="button primary" href="{{ license_request_url }}"
+           target="_blank" rel="noopener noreferrer">
+            {{ 'Lizenz erweitern' if state.is_configured else 'Lizenz beantragen' }}
+        </a>
+    </div>
+    <p class="card-header__hint">
+        Der Link öffnet den Lizenzserver in einem neuen Tab und nimmt
+        Deployment-ID, Version, aktuelle Lizenz und die Zahl der belegten
+        Benutzerplätze mit – damit der Herausgeber nicht nachfragen muss.
+        Personenbezogene Daten und der Aktivierungsschlüssel werden dabei
+        <strong>nicht</strong> übertragen.
+    </p>
+</section>
+
+<section class="card">
     <h2>{{ 'Lizenz ersetzen' if state.is_configured else 'Installation aktivieren' }}</h2>
     <form method="post" action="/admin/system/license/activate" class="form-grid">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <label>
             Adresse des Lizenzservers
             <input type="url" name="server_url" required
-                   placeholder="https://lizenz.example.org"
-                   value="{{ license_config.server_url }}">
+                   placeholder="{{ default_server_url }}"
+                   value="{{ license_config.server_url or default_server_url }}">
             <small>HTTPS wird vorausgesetzt; ohne Protokollangabe wird <code>https://</code> ergänzt.</small>
         </label>
         <label>

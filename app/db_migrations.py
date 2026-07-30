@@ -527,6 +527,22 @@ def _migrate_groups_to_roles(engine: Engine) -> None:
             connection.execute(text("UPDATE groups SET is_admin = 0"))
 
 
+def _add_half_vacation_days(engine: Engine) -> None:
+    """Halbe Urlaubstage (ab 0.11.1).
+
+    Bestandsantraege bleiben ganze Tage: Beide Kennzeichen sind ``False``,
+    die Berechnung verhaelt sich damit exakt wie bisher.
+    """
+    db_schema.add_column(
+        engine, "vacation_requests", "half_day_start", "BOOLEAN",
+        default="0", backfill_null_to="0",
+    )
+    db_schema.add_column(
+        engine, "vacation_requests", "half_day_end", "BOOLEAN",
+        default="0", backfill_null_to="0",
+    )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -542,6 +558,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (12, _add_manage_users_scope),
     (13, _add_remote_location_flags),
     (14, _migrate_groups_to_roles),
+    (15, _add_half_vacation_days),
 ]
 
 

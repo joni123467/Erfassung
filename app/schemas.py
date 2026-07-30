@@ -190,6 +190,10 @@ class VacationRequestBase(BaseModel):
     end_date: date
     comment: str = ""
     use_overtime: bool = False
+    #: Erster bzw. letzter Tag zählt nur halb. Bei einem eintägigen Antrag
+    #: genügt eines der beiden Kennzeichen.
+    half_day_start: bool = False
+    half_day_end: bool = False
 
 
 class VacationRequestCreate(VacationRequestBase):

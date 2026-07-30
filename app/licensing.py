@@ -74,6 +74,10 @@ def _log(message: str, *, level: int = logging.INFO, user: object = None) -> Non
 #: Produktkennung, die der Lizenzserver für diese Anwendung führt.
 PRODUCT_ID = "erfassung"
 
+#: Lizenzserver des Herausgebers – Vorbelegung im Aktivierungsformular.
+#: Wer einen eigenen betreibt, trägt dort einfach seine Adresse ein.
+DEFAULT_SERVER_URL = "https://lic.dh-cloud.de"
+
 #: Vom Lizenzserver unterstützte Dokumentversion.
 SUPPORTED_SCHEMA_VERSION = 1
 
@@ -518,6 +522,33 @@ def count_users(db: Any) -> int:
     return int(db.query(models.User).count() or 0)
 
 
+def license_request_url(db: Any = None) -> str:
+    """Adresse für „Lizenz beantragen oder erweitern".
+
+    Führt auf die Anfrageseite des hinterlegten Lizenzservers und nimmt die
+    Angaben mit, die der Herausgeber ohnehin braucht: Deployment-ID, aktuelle
+    Lizenz und die tatsächlich belegten Benutzerplätze. Es werden **keine**
+    personenbezogenen Daten und **kein** Aktivierungsschlüssel übertragen –
+    die Adresse landet nur im Browser des Administrators.
+    """
+    from urllib.parse import urlencode
+
+    config = load_config()
+    status = current_status(db)
+    base = (config.server_url or DEFAULT_SERVER_URL).rstrip("/")
+    params = {
+        "product_id": PRODUCT_ID,
+        "deployment_id": status.deployment_id,
+        "app_version": __version__,
+        "users_in_use": str(status.users_in_use),
+    }
+    if status.license_id:
+        params["license_id"] = status.license_id
+    if not status.unlimited_users:
+        params["current_max_users"] = str(status.max_users)
+    return f"{base}/request?{urlencode(params)}"
+
+
 def has_feature(name: str, status: Optional[LicenseStatus] = None) -> bool:
     """Ist ein optionales Merkmal lizenziert? Ohne gültige Lizenz nie."""
     state = status or current_status()
@@ -776,6 +807,7 @@ __all__ = [
     "LicenseConfig",
     "LicenseError",
     "LicenseStatus",
+    "DEFAULT_SERVER_URL",
     "PRODUCT_ID",
     "STATUS_EXPIRED",
     "STATUS_INVALID",
@@ -793,6 +825,7 @@ __all__ = [
     "fingerprint",
     "harden_config_permissions",
     "has_feature",
+    "license_request_url",
     "load_config",
     "masked_activation_key",
     "normalize_server_url",

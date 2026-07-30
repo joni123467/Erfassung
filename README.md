@@ -2,7 +2,13 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.11.0`
+**Version:** `0.11.1`
+
+> Seit 0.11.1: **Halbe Urlaubstage** – erster und letzter Tag eines Antrags
+> lassen sich einzeln halbieren (0,5 Urlaubstage, halbe Tagessollzeit). Dazu
+> ein Knopf „Lizenz beantragen/erweitern" auf der Lizenzseite. Behoben: Das
+> Freigeben von Buchungen und Urlaub war seit 0.10.0 vollständig gesperrt –
+> Details in [`docs/RELEASE_NOTES_0.11.1.md`](docs/RELEASE_NOTES_0.11.1.md).
 
 > Seit 0.11.0: **Lizenzierung** – eine Installation lässt sich einmalig gegen
 > den [Erfassung-Lizenzserver](https://github.com/joni123467/Erfassung_Lizenzserver)
@@ -484,6 +490,24 @@ Weitere Eigenschaften:
 - **Bestandsdaten**: Alle vorhandenen Buchungen gelten als vor Ort. Wird die
   Option für einen Benutzer wieder deaktiviert, bleiben bereits erfasste
   Remote-Kennzeichen erhalten (sie werden nur nicht mehr neu vergeben).
+
+## Urlaub
+
+Urlaubsanträge laufen über `/records/vacations`. Zusätzlich zu ganzen Tagen
+lassen sich **erster und letzter Tag halbieren** (seit 0.11.1): Beim Antrag
+stehen unter Start- und Enddatum je ein Häkchen „nur ein halber Tag". Bei einem
+eintägigen Antrag genügt eines davon.
+
+| Antrag | Angerechnete Urlaubstage |
+|--------|--------------------------|
+| Mo–Mi, ganz | 3,0 |
+| Mo–Mi, Anfang und Ende halb | 2,0 |
+| nur Mo, halb | 0,5 |
+| Fr–Mo, Anfang und Ende halb | 1,0 (Wochenenden zählen nie) |
+
+Ein halber Tag bringt die halbe Tagessollzeit – in der Urlaubsübersicht, der
+Tagesgutschrift, den Auswertungen und beim Überstundenurlaub. In den Listen
+erscheint er als „½" hinter dem Datum. Bestandsanträge bleiben ganze Tage.
 
 ## Auswertungen & Exporte
 
