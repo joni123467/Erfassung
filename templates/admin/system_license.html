@@ -24,13 +24,6 @@
         <p class="card-header__hint">{{ state.reason }}</p>
     {% endif %}
 
-    {% if not license_keys_configured %}
-        <div class="alert alert-warning">
-            In dieser Ausgabe ist kein öffentlicher Prüfschlüssel hinterlegt
-            (<code>app/licensing_keys.py</code>). Lizenzdokumente lassen sich deshalb nicht
-            prüfen; die Anwendung läuft unlizenziert weiter.
-        </div>
-    {% endif %}
 
     <div class="metric-grid">
         <article class="metric-tile">
@@ -83,6 +76,10 @@
                 <tr><th>Lizenzserver</th><td>{{ state.server_url or '–' }}</td></tr>
                 <tr><th>Aktivierungsschlüssel</th><td>{{ state.activation_key_masked or '–' }}</td></tr>
                 <tr><th>Signierschlüssel (key_id)</th><td>{{ state.key_id or '–' }}</td></tr>
+                <tr>
+                    <th>Fingerprint</th>
+                    <td class="mono">{{ state.key_fingerprint or '–' }}</td>
+                </tr>
                 <tr><th>Ausgestellt</th><td>{{ state.issued_at.strftime('%d.%m.%Y %H:%M') if state.issued_at else '–' }}</td></tr>
                 <tr><th>Aktiviert am</th><td>{{ state.activated_at.strftime('%d.%m.%Y %H:%M') if state.activated_at else '–' }}</td></tr>
                 <tr><th>Zuletzt geprüft</th><td>{{ state.last_checked_at.strftime('%d.%m.%Y %H:%M') if state.last_checked_at else '–' }}</td></tr>
@@ -93,6 +90,9 @@
         Die Deployment-ID ist eine Zufallszahl ohne Hardware- oder Personenbezug. Sie
         bleibt bei einem Serverumzug erhalten, solange das <code>config</code>-Volume
         mitgenommen wird – die Lizenz muss dann nicht erneut aktiviert werden.
+        Der <strong>Fingerprint</strong> ist derselbe, den der Lizenzserver auf seiner
+        Seite „Instanz“ anzeigt; stimmen beide überein, wurde die Lizenz vom richtigen
+        Server ausgestellt.
         Protokoll unter <a href="/admin/system/logs?channel=license">license.log</a>.
     </p>
 </section>
@@ -116,6 +116,8 @@
                 Wird verschlüsselt übertragen und nur lokal im <code>config</code>-Volume
                 abgelegt, damit die Lizenz ohne erneute Eingabe nachgeprüft werden kann.
                 In Oberfläche und Protokoll erscheint er ausschließlich maskiert.
+                Beim Aktivieren wird der Prüfschlüssel des Servers automatisch übernommen
+                und danach nicht mehr geändert.
             </small>
         </label>
         <div class="form-actions full-width">

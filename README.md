@@ -399,11 +399,23 @@ Wer ihn gar nicht speichern will, entfernt nach der Aktivierung das Feld
 `activation_key` aus `config/license.json`. Die Lizenz bleibt gültig; nur
 „Erneut prüfen“ verlangt dann wieder eine Eingabe.
 
-### Prüfschlüssel einbetten (für Herausgeber)
+### Prüfschlüssel
 
-Im Lizenzserver-Repository erzeugt `python -m app.cli keygen` ein
-Ed25519-Paar und gibt das **öffentliche** PEM aus; der private Schlüssel
-verlässt den Lizenzserver nie. Das PEM wandert nach `app/licensing_keys.py`:
+Der Lizenzserver signiert das Lizenzdokument mit seinem **privaten** Schlüssel,
+Erfassung prüft es mit dem **öffentlichen**. Dieser wird **automatisch bei der
+ersten Aktivierung übernommen** (`GET /v1/instance/public-key`) – zu kopieren
+ist nichts.
+
+Danach ist er je `key_id` unveränderlich: Weist sich derselbe Server später mit
+einem anderen Schlüssel aus, bricht die Aktivierung ab, ohne etwas zu
+überschreiben. Eine echte Rotation läuft über eine neue `key_id` und wird
+ergänzt.
+
+Auf der Lizenzseite steht ein **Fingerprint** (`SHA256:…`), der auch im
+Lizenzserver unter „Instanz" erscheint. Wer möchte, gleicht ihn ab.
+
+Wer den Schlüssel fest verdrahten will – dann ist auch der erste Kontakt
+abgesichert –, trägt das PEM in `app/licensing_keys.py` ein:
 
 ```python
 EMBEDDED_PUBLIC_KEYS = {
@@ -411,13 +423,9 @@ EMBEDDED_PUBLIC_KEYS = {
 }
 ```
 
-Die `key_id` steht in jedem Lizenzdokument; bei einer Rotation bleibt der alte
-Eintrag stehen, bis alle Installationen ein neu signiertes Dokument haben. Für
-Entwicklung und Tests lässt sich die Zuordnung über die Umgebungsvariable
-`ERFASSUNG_LICENSE_PUBLIC_KEYS` (JSON `{"key_id": "<PEM>"}`) überschreiben.
-
-Ohne eingebetteten Prüfschlüssel läuft die Anwendung dauerhaft als „nicht
-lizenziert“; die Lizenzseite weist darauf hin.
+Ein so eingebetteter Schlüssel hat Vorrang. Für Entwicklung und Tests lässt
+sich die Zuordnung über `ERFASSUNG_LICENSE_PUBLIC_KEYS` (JSON
+`{"key_id": "<PEM>"}`) überschreiben.
 
 ### Grenze des Kopierschutzes
 

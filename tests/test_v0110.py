@@ -174,13 +174,29 @@ class _Response:
         return self._payload
 
 
-def _stub_server(licensing, monkeypatch, response: _Response, calls: list | None = None):
+def _stub_server(
+    licensing,
+    monkeypatch,
+    response: _Response,
+    calls: list | None = None,
+    *,
+    public_pem: str | None = None,
+    key_id: str = KEY_ID,
+):
+    """Lizenzserver nachbilden: Prüfschlüssel-Abruf und Aktivierung."""
+
     def fake_post(url: str, payload: dict):
         if calls is not None:
             calls.append((url, payload))
         return response
 
+    def fake_fetch(server_url: str) -> dict:
+        if public_pem is None:
+            raise AssertionError("Test muss public_pem angeben")
+        return {key_id: public_pem}
+
     monkeypatch.setattr(licensing, "_post", fake_post)
+    monkeypatch.setattr(licensing, "fetch_public_keys", fake_fetch)
 
 
 # --- Deployment-ID ---------------------------------------------------------
@@ -326,7 +342,10 @@ def test_activation_stores_the_signed_document(licensing, keypair, monkeypatch):
     deployment = licensing.deployment_id()
     document = _document(private_key, deployment, max_users=3)
     calls: list = []
-    _stub_server(licensing, monkeypatch, _Response(200, {"license": document}), calls)
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}), calls,
+        public_pem=keypair[1],
+    )
 
     state = licensing.activate("lizenz.example.org", " ERF-TEST-KEY-0001 ")
 
@@ -347,7 +366,10 @@ def test_activation_rejects_an_unusable_document_without_storing_it(
     private_key, _ = keypair
     # Dokument für eine fremde Installation – darf nie gespeichert werden.
     document = _document(private_key, "erfassung-" + "1" * 32)
-    _stub_server(licensing, monkeypatch, _Response(200, {"license": document}))
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}),
+        public_pem=keypair[1],
+    )
 
     with pytest.raises(licensing.LicenseError):
         licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
@@ -364,8 +386,10 @@ def test_activation_rejects_an_unusable_document_without_storing_it(
         (500, "HTTP 500"),
     ],
 )
-def test_activation_errors_are_translated(licensing, monkeypatch, status_code, expected):
-    _stub_server(licensing, monkeypatch, _Response(status_code))
+def test_activation_errors_are_translated(
+    licensing, keypair, monkeypatch, status_code, expected
+):
+    _stub_server(licensing, monkeypatch, _Response(status_code), public_pem=keypair[1])
     with pytest.raises(licensing.LicenseError) as excinfo:
         licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
     assert expected in str(excinfo.value)
@@ -399,6 +423,7 @@ def test_recheck_reuses_the_stored_credentials(licensing, keypair, monkeypatch):
         monkeypatch,
         _Response(200, {"license": _document(private_key, deployment, max_users=9)}),
         calls,
+        public_pem=keypair[1],
     )
 
     state = licensing.recheck()
@@ -439,6 +464,146 @@ def test_deactivate_works_even_if_the_server_is_down(licensing, keypair, monkeyp
     monkeypatch.setattr(licensing, "_post", boom)
     licensing.deactivate()
     assert licensing.load_config().document == {}
+
+
+# --- Prüfschlüssel: Übernahme beim ersten Kontakt --------------------------
+
+def test_activation_adopts_the_servers_public_key(licensing, keypair, monkeypatch):
+    """Ohne eingebetteten Schlüssel übernimmt die Installation den des Servers."""
+    private_key, public_pem = keypair
+    monkeypatch.delenv("ERFASSUNG_LICENSE_PUBLIC_KEYS", raising=False)
+    assert licensing.embedded_public_keys() == {}
+
+    document = _document(private_key, licensing.deployment_id())
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}), public_pem=public_pem
+    )
+    state = licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
+
+    assert state.is_valid
+    assert licensing.load_config().trusted_keys == {KEY_ID: public_pem}
+    # Und die Offline-Prüfung kommt danach ohne Server aus.
+    assert licensing.current_status().is_valid
+
+
+def test_adopted_key_is_never_silently_replaced(licensing, keypair, monkeypatch):
+    """Ein Serverwechsel mit anderem Schlüssel wird abgewiesen, nicht übernommen."""
+    private_key, public_pem = keypair
+    monkeypatch.delenv("ERFASSUNG_LICENSE_PUBLIC_KEYS", raising=False)
+    document = _document(private_key, licensing.deployment_id())
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}), public_pem=public_pem
+    )
+    licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
+
+    # Ein Angreifer gibt sich unter derselben key_id mit eigenem Schlüssel aus.
+    other_private, other_public = _keypair()
+    forged = _document(other_private, licensing.deployment_id(), max_users=9999)
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": forged}), public_pem=other_public
+    )
+    with pytest.raises(licensing.LicenseError) as excinfo:
+        licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
+    assert "anderen" in str(excinfo.value)
+
+    # Nichts wurde überschrieben: alte Lizenz, alter Schlüssel.
+    assert licensing.load_config().trusted_keys == {KEY_ID: public_pem}
+    assert licensing.current_status().max_users == 5
+
+
+def test_key_rotation_via_a_new_key_id_is_accepted(licensing, keypair, monkeypatch):
+    """Echte Rotation läuft über eine neue key_id – die wird ergänzt."""
+    private_key, public_pem = keypair
+    monkeypatch.delenv("ERFASSUNG_LICENSE_PUBLIC_KEYS", raising=False)
+    document = _document(private_key, licensing.deployment_id())
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}), public_pem=public_pem
+    )
+    licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
+
+    new_private, new_public = _keypair()
+    rotated = _sign(
+        {
+            **{k: v for k, v in document.items() if k != "signature"},
+            "key_id": "k2",
+            "max_users": 50,
+        },
+        new_private,
+    )
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": rotated}),
+        public_pem=new_public, key_id="k2",
+    )
+    state = licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
+
+    assert state.max_users == 50
+    trusted = licensing.load_config().trusted_keys
+    assert trusted == {KEY_ID: public_pem, "k2": new_public}
+
+
+def test_embedded_key_wins_over_an_offered_one(licensing, keypair, monkeypatch):
+    """Liefert der Herausgeber einen Schlüssel mit, ist er maßgeblich."""
+    _, public_pem = keypair  # steckt via Fixture in ERFASSUNG_LICENSE_PUBLIC_KEYS
+    other_private, other_public = _keypair()
+    forged = _document(other_private, licensing.deployment_id())
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": forged}), public_pem=other_public
+    )
+    with pytest.raises(licensing.LicenseError):
+        licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
+
+
+def test_fingerprint_matches_the_license_server_format(licensing):
+    pem = "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n"
+    value = licensing.fingerprint(pem)
+    assert re.fullmatch(r"SHA256:[0-9A-F]{4}(:[0-9A-F]{4}){3}", value)
+    assert licensing.fingerprint(pem + "\n") == value
+
+
+def test_status_reports_the_fingerprint(licensing, keypair):
+    private_key, public_pem = keypair
+    _store(licensing, _document(private_key, licensing.deployment_id()))
+    state = licensing.current_status()
+    assert state.key_fingerprint == licensing.fingerprint(public_pem)
+
+
+def test_license_page_shows_the_fingerprint(client, licensing, keypair):
+    private_key, public_pem = keypair
+    _store(licensing, _document(private_key, licensing.deployment_id()))
+    _login(client)
+    page = client.get("/admin/system/license")
+    assert licensing.fingerprint(public_pem) in page.text
+
+
+def test_unreachable_key_endpoint_aborts_before_storing(licensing, monkeypatch):
+    import httpx
+
+    def boom(self, url, **kwargs):
+        raise httpx.ConnectError("Name or service not known")
+
+    monkeypatch.setattr(httpx.Client, "get", boom)
+    with pytest.raises(licensing.LicenseError) as excinfo:
+        licensing.activate("https://lizenz.example.invalid", "ERF-TEST-KEY-0001")
+    assert "nicht erreichbar" in str(excinfo.value)
+    assert licensing.load_config().document == {}
+
+
+def test_deactivate_keeps_the_trusted_keys(licensing, keypair, monkeypatch):
+    """Der Prüfschlüssel ist kein Geheimnis – aber sein Wechsel muss auffallen."""
+    private_key, public_pem = keypair
+    monkeypatch.delenv("ERFASSUNG_LICENSE_PUBLIC_KEYS", raising=False)
+    document = _document(private_key, licensing.deployment_id())
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}), public_pem=public_pem
+    )
+    licensing.activate("https://lizenz.example.org", "ERF-TEST-KEY-0001")
+
+    _stub_server(licensing, monkeypatch, _Response(204), public_pem=public_pem)
+    licensing.deactivate()
+
+    config = licensing.load_config()
+    assert config.document == {}
+    assert config.trusted_keys == {KEY_ID: public_pem}
 
 
 # --- Durchsetzung ----------------------------------------------------------
@@ -610,7 +775,10 @@ def test_banner_disappears_with_a_valid_license(client, licensing, keypair):
 def test_activation_via_the_admin_form(client, licensing, keypair, monkeypatch):
     private_key, _ = keypair
     document = _document(private_key, licensing.deployment_id(), max_users=42)
-    _stub_server(licensing, monkeypatch, _Response(200, {"license": document}))
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}),
+        public_pem=keypair[1],
+    )
     _login(client)
     token = _csrf(client, "/admin/system/license")
     response = client.post(
@@ -627,8 +795,8 @@ def test_activation_via_the_admin_form(client, licensing, keypair, monkeypatch):
     assert licensing.current_status().max_users == 42
 
 
-def test_failed_activation_reports_the_reason(client, licensing, monkeypatch):
-    _stub_server(licensing, monkeypatch, _Response(403))
+def test_failed_activation_reports_the_reason(client, licensing, keypair, monkeypatch):
+    _stub_server(licensing, monkeypatch, _Response(403), public_pem=keypair[1])
     _login(client)
     token = _csrf(client, "/admin/system/license")
     response = client.post(
@@ -717,7 +885,10 @@ def test_startup_writes_the_license_status_to_its_own_log(client):
 def test_activation_key_never_reaches_the_log(client, licensing, keypair, monkeypatch):
     private_key, _ = keypair
     document = _document(private_key, licensing.deployment_id())
-    _stub_server(licensing, monkeypatch, _Response(200, {"license": document}))
+    _stub_server(
+        licensing, monkeypatch, _Response(200, {"license": document}),
+        public_pem=keypair[1],
+    )
     _login(client)
     token = _csrf(client, "/admin/system/license")
     client.post(

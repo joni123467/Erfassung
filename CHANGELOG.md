@@ -24,8 +24,15 @@ Lizenz anschließend **offline** und hält sich an die lizenzierte Benutzerzahl.
 - **Offline-Prüfung** bei jedem Start und jeder Statusabfrage: Schemaversion,
   Ed25519-Signatur über die kanonische JSON-Form ohne das Feld `signature`,
   Produktkennung, Deployment-ID und Ablaufdatum. Der Lizenzserver muss dafür
-  nicht erreichbar sein. Die öffentlichen Prüfschlüssel liegen in
-  `app/licensing_keys.py`, die `key_id` aus dem Dokument erlaubt Rotation.
+  nicht erreichbar sein.
+- **Prüfschlüssel wird automatisch übernommen.** Bei der ersten Aktivierung
+  holt die Installation den öffentlichen Schlüssel des Lizenzservers
+  (`GET /v1/instance/public-key`) und merkt ihn sich dauerhaft. Danach ist er
+  je `key_id` unveränderlich: Ein gewechselter Schlüssel führt zum Abbruch,
+  ohne etwas zu überschreiben; eine Rotation über eine neue `key_id` wird
+  ergänzt. Ein in `app/licensing_keys.py` eingebetteter Schlüssel hat Vorrang.
+  Auf der Lizenzseite steht ein Fingerprint (`SHA256:…`) zum Abgleich mit dem
+  Lizenzserver.
 - **Durchsetzung**: `max_users` (`0` = unbegrenzt) und Ablaufdatum. Über die
   Oberfläche mit Klartextmeldung, über `POST /api/users` mit **HTTP 402**.
   Bestehende Benutzer werden nie gesperrt oder gelöscht.

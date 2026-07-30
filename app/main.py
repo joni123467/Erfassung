@@ -4956,7 +4956,6 @@ def admin_system_license(request: Request, db: Session = Depends(database.get_db
         admin_active="system_license",
         license_status=licensing.current_status(db),
         license_config=licensing.load_config(),
-        license_keys_configured=bool(licensing.public_keys()),
     )
 
 

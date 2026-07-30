@@ -36,6 +36,7 @@ kein vollständiger Kopierschutz und wird auch nicht als solcher dargestellt.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -125,8 +126,8 @@ def _b64u_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + padding)
 
 
-def public_keys() -> dict[str, str]:
-    """``{key_id: PEM}`` – eingebettet, optional per Umgebung überschrieben."""
+def embedded_public_keys() -> dict[str, str]:
+    """Vom Herausgeber mitgelieferte Schlüssel, optional per Umgebung ersetzt."""
     override = os.environ.get(PUBLIC_KEYS_ENV)
     if override:
         try:
@@ -138,6 +139,27 @@ def public_keys() -> dict[str, str]:
             return {str(k): str(v) for k, v in parsed.items()}
         LOGGER.warning("%s muss ein JSON-Objekt sein – wird ignoriert.", PUBLIC_KEYS_ENV)
     return dict(EMBEDDED_PUBLIC_KEYS)
+
+
+def public_keys(config: Optional["LicenseConfig"] = None) -> dict[str, str]:
+    """Alle Schlüssel, mit denen ein Lizenzdokument geprüft werden darf.
+
+    Eingebettete Schlüssel des Herausgebers haben Vorrang; ergänzt werden die
+    bei der Aktivierung übernommenen Schlüssel des eigenen Lizenzservers.
+    """
+    keys = dict((config or load_config()).trusted_keys)
+    keys.update(embedded_public_keys())
+    return keys
+
+
+def fingerprint(pem: str) -> str:
+    """``SHA256:<vier Gruppen>`` – identisch zum Lizenzserver.
+
+    Damit lässt sich mit bloßem Auge abgleichen, ob diese Installation den
+    richtigen Lizenzserver erwischt hat.
+    """
+    digest = hashlib.sha256(pem.strip().encode("ascii")).hexdigest()
+    return "SHA256:" + ":".join(digest[i : i + 4] for i in range(0, 16, 4)).upper()
 
 
 def _load_public_key(pem: str) -> Optional[Ed25519PublicKey]:
@@ -203,6 +225,9 @@ class LicenseConfig:
     document: dict[str, Any] = field(default_factory=dict)
     activated_at: str = ""
     last_checked_at: str = ""
+    #: ``{key_id: PEM}`` – bei der ersten Aktivierung vom Lizenzserver
+    #: übernommen und danach unveränderlich (siehe :func:`adopt_public_keys`).
+    trusted_keys: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -212,6 +237,7 @@ class LicenseConfig:
             "document": self.document,
             "activated_at": self.activated_at,
             "last_checked_at": self.last_checked_at,
+            "trusted_keys": self.trusted_keys,
         }
 
     @classmethod
@@ -226,6 +252,10 @@ class LicenseConfig:
         config.document = document if isinstance(document, dict) else {}
         config.activated_at = str(payload.get("activated_at") or "")
         config.last_checked_at = str(payload.get("last_checked_at") or "")
+        trusted = payload.get("trusted_keys")
+        config.trusted_keys = (
+            {str(k): str(v) for k, v in trusted.items()} if isinstance(trusted, dict) else {}
+        )
         return config
 
 
@@ -329,6 +359,9 @@ class LicenseStatus:
     last_checked_at: Optional[datetime] = None
     activation_key_masked: str = ""
     users_in_use: int = 0
+    #: Fingerprint des Schlüssels, mit dem geprüft wurde – zum Abgleich mit
+    #: der Instanzseite des Lizenzservers.
+    key_fingerprint: str = ""
 
     @property
     def label(self) -> str:
@@ -387,6 +420,7 @@ class LicenseStatus:
             "expires_at": stamp(self.expires_at),
             "days_until_expiry": self.days_until_expiry,
             "key_id": self.key_id,
+            "key_fingerprint": self.key_fingerprint,
             "deployment_id": self.deployment_id,
             "server_url": self.server_url,
             "activated_at": stamp(self.activated_at),
@@ -426,7 +460,7 @@ def _status_from_document(
             f"unterstützt Version {SUPPORTED_SCHEMA_VERSION}. Bitte die Anwendung aktualisieren."
         )
         return status
-    if not verify_signature(document):
+    if not verify_signature(document, public_keys(config)):
         status.status = STATUS_INVALID
         status.reason = (
             "Die Signatur des Lizenzdokuments ist ungültig oder der Schlüssel ist unbekannt."
@@ -448,6 +482,9 @@ def _status_from_document(
         status.reason = "Die Lizenz ist abgelaufen."
         return status
 
+    pem = public_keys(config).get(status.key_id)
+    if pem:
+        status.key_fingerprint = fingerprint(pem)
     status.status = STATUS_VALID
     return status
 
@@ -561,6 +598,63 @@ def _raise_for_activation(response: httpx.Response) -> None:
     raise LicenseError(f"Unerwartete Antwort des Lizenzservers (HTTP {response.status_code}).")
 
 
+def fetch_public_keys(server_url: str) -> dict[str, str]:
+    """Öffentliche Prüfschlüssel des Lizenzservers abholen.
+
+    Ein öffentlicher Schlüssel ist kein Geheimnis – mit ihm lassen sich
+    Signaturen nur prüfen, nie erzeugen. Der Abruf ist deshalb unauthentifiziert.
+    """
+    url = normalize_server_url(server_url)
+    try:
+        with httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as client:
+            response = client.get(f"{url}/v1/instance/public-key")
+    except httpx.HTTPError as exc:
+        raise LicenseError(f"Der Lizenzserver ist nicht erreichbar: {exc}") from exc
+    if response.status_code != 200:
+        raise LicenseError(
+            "Der Lizenzserver hat keinen Prüfschlüssel geliefert "
+            f"(HTTP {response.status_code})."
+        )
+    try:
+        payload = response.json()
+        key_id = str(payload["key_id"])
+        pem = str(payload["public_key"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise LicenseError("Der Lizenzserver hat eine unerwartete Antwort geschickt.") from exc
+    if _load_public_key(pem) is None:
+        raise LicenseError("Der Lizenzserver hat einen unbrauchbaren Prüfschlüssel geliefert.")
+    return {key_id: pem}
+
+
+def adopt_public_keys(config: LicenseConfig, offered: dict[str, str]) -> dict[str, str]:
+    """Angebotene Schlüssel übernehmen – aber niemals einen bestehenden ersetzen.
+
+    Beim ersten Kontakt wird dem Server vertraut (wie bei SSH). Danach ist der
+    Schlüssel je ``key_id`` unveränderlich: Wer sich später mit einem anderen
+    Schlüssel für dieselbe ``key_id`` ausgibt, wird abgewiesen. Ein Angreifer,
+    der den Server austauscht, kann damit keine eigenen Lizenzen unterschieben.
+
+    Eine echte Schlüsselrotation läuft über eine **neue** ``key_id`` – die wird
+    anstandslos ergänzt.
+    """
+    trusted = dict(config.trusted_keys)
+    embedded = embedded_public_keys()
+    for key_id, pem in offered.items():
+        known = trusted.get(key_id) or embedded.get(key_id)
+        if known and known.strip() != pem.strip():
+            raise LicenseError(
+                f"Der Lizenzserver weist sich für „{key_id}“ mit einem anderen "
+                f"Prüfschlüssel aus als bisher (bekannt: {fingerprint(known)}, "
+                f"angeboten: {fingerprint(pem)}). Die Aktivierung wurde "
+                "abgebrochen. Das ist zu erwarten, wenn der Lizenzserver neu "
+                "aufgesetzt wurde – dann bitte die Lizenz hier entfernen und "
+                "neu aktivieren. Andernfalls den Herausgeber kontaktieren."
+            )
+        if not known:
+            trusted[key_id] = pem
+    return trusted
+
+
 def activate(server_url: str, activation_key: str) -> LicenseStatus:
     """Installation aktivieren und das signierte Dokument ablegen.
 
@@ -576,6 +670,11 @@ def activate(server_url: str, activation_key: str) -> LicenseStatus:
     if not config.deployment_id:
         deployment_id()  # erzeugt und speichert die Kennung
         config = load_config()
+
+    # Prüfschlüssel zuerst: Ohne ihn ließe sich das Lizenzdokument gleich
+    # darauf gar nicht prüfen. Ein Wechsel des Schlüssels bricht hier ab,
+    # bevor irgendetwas gespeichert wird.
+    trusted = adopt_public_keys(config, fetch_public_keys(url))
 
     response = _post(
         f"{url}/v1/activations",
@@ -605,6 +704,7 @@ def activate(server_url: str, activation_key: str) -> LicenseStatus:
         document=document,
         activated_at=config.activated_at or _utcnow().isoformat(),
         last_checked_at=_utcnow().isoformat(),
+        trusted_keys=trusted,
     )
     status = _status_from_document(
         document, candidate, expected_deployment=config.deployment_id
@@ -664,6 +764,9 @@ def deactivate() -> None:
         LicenseConfig(
             deployment_id=config.deployment_id,
             server_url=config.server_url,
+            # Übernommene Prüfschlüssel bleiben erhalten: Sie sind kein
+            # Geheimnis, und ein späterer Schlüsselwechsel fällt so weiterhin auf.
+            trusted_keys=config.trusted_keys,
         )
     )
     _log("Lizenz lokal entfernt.")
@@ -683,7 +786,11 @@ __all__ = [
     "count_users",
     "current_status",
     "deactivate",
+    "adopt_public_keys",
     "deployment_id",
+    "embedded_public_keys",
+    "fetch_public_keys",
+    "fingerprint",
     "harden_config_permissions",
     "has_feature",
     "load_config",
