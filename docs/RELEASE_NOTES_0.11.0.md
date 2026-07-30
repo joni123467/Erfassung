@@ -12,7 +12,7 @@ und hält sich an die lizenzierte Benutzerzahl.
 | Neu | Administration → System → **Lizenz** |
 | Neu | `GET /api/license` (Status als JSON, ohne Geheimnisse) |
 | Neu | Protokollkanal `license.log` |
-| Neu | `config/license.json` (Deployment-ID, Serveradresse, signiertes Dokument) |
+| Neu | `config/license.json` (Deployment-ID, Serveradresse, Dokument, Prüfschlüssel) |
 | Durchgesetzt | Benutzerobergrenze `max_users`, Ablaufdatum |
 | Nicht durchgesetzt | alles Übrige – eine Installation ohne Lizenz läuft weiter |
 | Datenbank | **keine** Schemaänderung, keine Migration nötig |
@@ -42,8 +42,8 @@ frisches Dokument – nötig nach einer Verlängerung oder Erweiterung.
 ### 3. Offline-Prüfung
 
 Bei jedem Start und bei jeder Statusabfrage wird das gespeicherte Dokument
-gegen die in `app/licensing_keys.py` eingebetteten öffentlichen Schlüssel
-geprüft. Der Lizenzserver muss dafür **nicht** erreichbar sein. Geprüft werden:
+gegen die bekannten öffentlichen Schlüssel geprüft. Der Lizenzserver muss dafür
+**nicht** erreichbar sein. Geprüft werden:
 
 1. Version des Dokumentschemas,
 2. Ed25519-Signatur über die kanonische JSON-Form (sortierte Schlüssel, keine
@@ -70,6 +70,33 @@ Benutzer werden nie gesperrt oder gelöscht.
 Optionale Merkmale aus dem Lizenzdokument stehen über
 `licensing.has_feature("name")` bereit und werden auf der Lizenzseite
 angezeigt; in dieser Version hängt noch keine Funktion daran.
+
+## Woher der Prüfschlüssel kommt
+
+Der Lizenzserver signiert das Lizenzdokument mit seinem **privaten** Schlüssel;
+Erfassung prüft die Signatur mit dem **öffentlichen**. Ohne diesen Schlüssel
+könnte sich jeder ein Dokument mit beliebiger Benutzerzahl selbst schreiben.
+
+Er wird **automatisch bei der ersten Aktivierung übernommen** – der Server
+liefert ihn über `GET /v1/instance/public-key`. Kopieren muss niemand etwas.
+Danach gilt:
+
+- Der Schlüssel ist je `key_id` **unveränderlich**. Weist sich derselbe Server
+  später mit einem anderen Schlüssel für dieselbe `key_id` aus, bricht die
+  Aktivierung mit einer klaren Meldung ab und **nichts** wird überschrieben.
+  Ein untergeschobener Lizenzserver kann so keine eigenen Lizenzen einschleusen.
+- Eine echte **Schlüsselrotation** läuft über eine neue `key_id`; die wird
+  anstandslos ergänzt, der alte Schlüssel bleibt erhalten, damit vorhandene
+  Dokumente prüfbar bleiben.
+- Bringt der Herausgeber einen Schlüssel in `app/licensing_keys.py` mit, ist
+  dieser maßgeblich und lässt sich vom Server nicht überstimmen.
+
+Auf beiden Seiten steht ein **Fingerprint** (`SHA256:…`): in Erfassung auf der
+Lizenzseite, im Lizenzserver unter „Instanz". Wer möchte, gleicht ihn einmal
+ab; nötig ist es nicht.
+
+Das Vertrauen beim allerersten Kontakt ist bewusst gewählt (wie bei SSH) und
+als Restrisiko unten aufgeführt.
 
 ## Umgang mit dem Aktivierungsschlüssel
 
@@ -107,20 +134,17 @@ Weitere Restrisiken:
   vergibt kurze Laufzeiten (`expires_at`).
 - **Die Ablaufprüfung nutzt die lokale Uhr** und lässt sich auf dem
   Kundensystem manipulieren.
-- **Ohne eingebetteten Prüfschlüssel** (Auslieferung ohne
-  `EMBEDDED_PUBLIC_KEYS`) läuft die Anwendung dauerhaft im Zustand „nicht
-  lizenziert“. Die Lizenzseite weist darauf hin.
+- **Vertrauen beim ersten Kontakt.** Der Prüfschlüssel wird bei der ersten
+  Aktivierung ungeprüft übernommen. Wer genau in diesem Moment die Verbindung
+  umlenkt, kann einen eigenen Schlüssel unterschieben. Danach ist er
+  unveränderlich und jeder Wechsel fällt auf. Zum Ausschließen: den
+  Fingerprint nach der Aktivierung mit dem Lizenzserver vergleichen.
 
-## Für Herausgeber: Prüfschlüssel einbetten
+## Optional: Prüfschlüssel fest einbetten
 
-Im Lizenzserver-Repository:
-
-```bash
-python -m app.cli keygen --private-out /run/secrets/license_signing_key.pem
-```
-
-Der Befehl gibt das **öffentliche** PEM aus; der private Schlüssel verlässt den
-Lizenzserver nie. Das PEM in `app/licensing_keys.py` eintragen:
+Für den Normalfall nicht nötig – der Schlüssel wird automatisch übernommen.
+Wer ihn fest verdrahten will (dann ist auch der erste Kontakt abgesichert),
+trägt das öffentliche PEM in `app/licensing_keys.py` ein:
 
 ```python
 EMBEDDED_PUBLIC_KEYS = {
@@ -128,9 +152,8 @@ EMBEDDED_PUBLIC_KEYS = {
 }
 ```
 
-Die `key_id` (hier `k1`) steht in jedem Lizenzdokument. Bei einer Rotation
-bleibt der alte Eintrag stehen, bis alle Installationen ein neu signiertes
-Dokument erhalten haben.
+Das PEM zeigt der Lizenzserver unter „Instanz" an. Ein so eingebetteter
+Schlüssel hat Vorrang und lässt sich von einem Server nicht überstimmen.
 
 Für Entwicklung und Tests lässt sich die Zuordnung über die Umgebungsvariable
 `ERFASSUNG_LICENSE_PUBLIC_KEYS` (JSON-Objekt `{"key_id": "<PEM>"}`)
@@ -161,7 +184,7 @@ Für Entwicklung und Tests lässt sich die Zuordnung über die Umgebungsvariable
 
 **Tests**
 
-`tests/test_v0110.py` – 48 Tests: Deployment-ID (Stabilität, Zufall, keine
+`tests/test_v0110.py` – 57 Tests: Deployment-ID (Stabilität, Zufall, keine
 Hostdaten, Dateirechte, Verengung nach einem Restore), Offline-Prüfung (gültig,
 manipuliert, fremder Schlüssel, fremde Installation, fremdes Produkt,
 unbekannte Schemaversion, abgelaufen, Ablauffenster), kanonisches JSON,
@@ -171,3 +194,9 @@ Server, erneute Prüfung, Deaktivierung mit und ohne Server), Durchsetzung
 (unlizenziert, Grenze, `max_users = 0`, abgelaufen, HTML- und API-Anlage),
 Oberfläche (Status, maskierter Schlüssel, Navigation, Balken, Formular,
 Berechtigungen) sowie Protokoll und Export.
+
+Dazu die Schlüsselübernahme: automatische Übernahme beim ersten Kontakt,
+Ablehnung eines gewechselten Schlüssels unter derselben `key_id` (ohne
+irgendetwas zu überschreiben), Ergänzung bei echter Rotation über eine neue
+`key_id`, Vorrang des eingebetteten Schlüssels, Fingerprint-Format und
+-Anzeige sowie Abbruch vor dem Speichern, wenn der Server nicht erreichbar ist.
