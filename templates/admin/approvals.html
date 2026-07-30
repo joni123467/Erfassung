@@ -70,7 +70,7 @@
                 {% for vacation in pending_vacations %}
                     <tr>
                         <td>{{ vacation.user.full_name }}</td>
-                        <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                        <td>{{ vacation.start_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_start %} <small>(½)</small>{% endif %}{% if vacation.start_date != vacation.end_date %} – {{ vacation.end_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_end %} <small>(½)</small>{% endif %}{% endif %}</td>
                         <td>{% if vacation.use_overtime %}{{ vacation.overtime_minutes|format_minutes }} Std{% else %}–{% endif %}</td>
                         <td>{{ vacation.comment or '-' }}</td>
                         <td class="actions">
@@ -104,7 +104,7 @@
                 {% for vacation in withdrawal_requests %}
                     <tr>
                         <td>{{ vacation.user.full_name }}</td>
-                        <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                        <td>{{ vacation.start_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_start %} <small>(½)</small>{% endif %}{% if vacation.start_date != vacation.end_date %} – {{ vacation.end_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_end %} <small>(½)</small>{% endif %}{% endif %}</td>
                         <td>
                             {% if vacation.previous_status == 'approved' %}
                                 Genehmigt

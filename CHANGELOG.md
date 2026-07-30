@@ -5,6 +5,44 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.11.1] – 2026-07-30
+
+### Fixed
+
+- **Freigaben waren vollständig gesperrt.** Beim Umstieg auf Rollen (0.10.0)
+  blieben an drei Stellen die alten Gruppenrechte-Namen stehen
+  (`can_edit_time_entries`, `can_approve_manual_entries`,
+  `can_manage_vacations`). Ein unbekannter Berechtigungsschlüssel ergibt den
+  Geltungsbereich „keiner“ – dadurch wurde **jede** Freigabe von Buchungen und
+  Urlaubsanträgen abgewiesen, mit der Meldung „gehört nicht zu deinem Team“,
+  selbst für den Superadministrator. Betroffen waren das Freigeben und
+  Ablehnen manueller Buchungen, das Genehmigen und Ablehnen von Urlaub sowie
+  das Bearbeiten fremder Buchungen über die Zeitübersicht.
+  `_user_in_permission_scope` wirft jetzt bei einem unbekannten Schlüssel einen
+  Fehler, statt stillschweigend alles zu verbieten.
+
+### Added
+
+- **Halbe Urlaubstage.** Erster und letzter Tag eines Antrags lassen sich
+  einzeln halbieren; bei einem eintägigen Antrag genügt ein Häkchen. Halbe
+  Tage zählen mit 0,5 Urlaubstagen und der halben Tagessollzeit – in der
+  Urlaubsübersicht, der Tagesgutschrift, den Auswertungen und beim
+  Überstundenurlaub. In den Listen erscheinen sie als „½“. Bestandsanträge
+  bleiben unverändert ganze Tage.
+- **Lizenz beantragen oder erweitern.** Auf der Lizenzseite führt ein Knopf
+  zum Lizenzserver und nimmt Deployment-ID, Version, aktuelle Lizenz und die
+  Zahl der belegten Benutzerplätze mit. Weder Aktivierungsschlüssel noch
+  personenbezogene Daten werden übertragen. Sind alle Benutzerplätze belegt,
+  weist der Text ausdrücklich darauf hin.
+- Der Lizenzserver des Herausgebers (`https://lic.dh-cloud.de`) ist im
+  Aktivierungsformular vorbelegt.
+
+### Datenbank
+
+Migration 15 ergänzt `vacation_requests.half_day_start` und `.half_day_end`
+(beide `BOOLEAN DEFAULT 0`). Datenerhaltend: Bestandsanträge zählen weiterhin
+als ganze Tage.
+
 ## [0.11.0] – 2026-07-29
 
 ### Added – Lizenzierung gegen den Erfassung-Lizenzserver

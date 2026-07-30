@@ -564,6 +564,21 @@ SELECT id, name, date, region, created_at FROM holidays
                 connection.execute(
                     text("ALTER TABLE vacation_requests ADD COLUMN previous_status VARCHAR")
                 )
+            # Halbe Urlaubstage (ab 0.11.1). Bestandsanträge bleiben ganze Tage.
+            if "half_day_start" not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE vacation_requests "
+                        "ADD COLUMN half_day_start BOOLEAN DEFAULT 0"
+                    )
+                )
+            if "half_day_end" not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE vacation_requests "
+                        "ADD COLUMN half_day_end BOOLEAN DEFAULT 0"
+                    )
+                )
 
 
 def _sanitize_next(next_url: str, default: str = "/time") -> str:
@@ -2258,6 +2273,8 @@ def submit_vacation(
     end_date: date = Form(...),
     comment: str = Form(""),
     use_overtime: Optional[str] = Form(None),
+    half_day_start: Optional[str] = Form(None),
+    half_day_end: Optional[str] = Form(None),
     client_action_id: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
@@ -2287,21 +2304,30 @@ def submit_vacation(
             error="Enddatum darf nicht vor dem Startdatum liegen",
         )
     use_overtime_value = bool(use_overtime == "on" and user.overtime_vacation_enabled)
-    overtime_minutes = 0
+    half_start = half_day_start == "on"
+    half_end = half_day_end == "on"
+    if start_date == end_date:
+        # Eintägiger Antrag: ein Kennzeichen genügt, das zweite wäre sinnlos.
+        half_start = half_start or half_end
+        half_end = False
+    pending = schemas.VacationRequestCreate(
+        user_id=user.id,
+        start_date=start_date,
+        end_date=end_date,
+        comment=comment,
+        use_overtime=use_overtime_value,
+        overtime_minutes=0,
+        half_day_start=half_start,
+        half_day_end=half_end,
+    )
     if use_overtime_value:
-        overtime_minutes = services.calculate_required_vacation_minutes(user, start_date, end_date)
-    try:
-        crud.create_vacation_request(
-            db,
-            schemas.VacationRequestCreate(
-                user_id=user.id,
-                start_date=start_date,
-                end_date=end_date,
-                comment=comment,
-                use_overtime=use_overtime_value,
-                overtime_minutes=overtime_minutes,
-            ),
+        # Überstundenurlaub bucht genau die Minuten ab, die er kostet –
+        # halbe Tage entsprechend nur zur Hälfte.
+        pending.overtime_minutes = services.vacation_minutes_in_range(
+            user, models.VacationRequest(**pending.model_dump()), start_date, end_date
         )
+    try:
+        crud.create_vacation_request(db, pending)
     except ValueError as exc:
         error_message = "Urlaubsantrag konnte nicht gespeichert werden"
         if str(exc) == "VACATION_OVERLAP":
@@ -2632,6 +2658,16 @@ def _scoped_user_ids(db: Session, user: models.User, key: str) -> Optional[set[i
 def _user_in_permission_scope(
     db: Session, user: models.User, key: str, target_user_id: Optional[int]
 ) -> bool:
+    """Darf ``user`` dieses Recht auf den Zielbenutzer anwenden?
+
+    Ein unbekannter Berechtigungsschlüssel würde stillschweigend *jeden*
+    Zugriff verweigern – auch den des Superadministrators. Genau das ist beim
+    Umstieg auf Rollen (0.10.0) an drei Stellen passiert, an denen noch die
+    alten Gruppenrechte-Namen standen. Deshalb hier ein hörbarer Fehlschlag
+    statt einer stummen Sperre.
+    """
+    if key not in group_permissions.PERMISSIONS_BY_KEY:
+        raise KeyError(f"Unbekannte Berechtigung: {key!r}")
     return permission_service.can_access_user(db, user, key, target_user_id)
 
 
@@ -4158,7 +4194,7 @@ def delete_time_entry_html(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     existing_entry = crud.get_time_entry(db, entry_id)
     if existing_entry and not _user_in_permission_scope(
-        db, user, "can_edit_time_entries", existing_entry.user_id
+        db, user, "Time.Edit", existing_entry.user_id
     ):
         redirect = _build_redirect_with_next(
             "/admin/users",
@@ -4198,7 +4234,7 @@ def set_time_entry_status_admin(
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     target_entry = crud.get_time_entry(db, entry_id)
     if target_entry and not _user_in_permission_scope(
-        db, user, "can_approve_manual_entries", target_entry.user_id
+        db, user, "Time.Approve", target_entry.user_id
     ):
         redirect = _build_redirect(
             "/admin/approvals", error="Buchung gehört nicht zu deinem Team"
@@ -4234,7 +4270,7 @@ def set_vacation_status_admin(
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     target_vacation = crud.get_vacation_request(db, vacation_id)
     if target_vacation and not _user_in_permission_scope(
-        db, user, "can_manage_vacations", target_vacation.user_id
+        db, user, "Vacation.Manage", target_vacation.user_id
     ):
         redirect = _build_redirect(
             "/admin/approvals", error="Urlaubsantrag gehört nicht zu deinem Team"
@@ -4956,6 +4992,8 @@ def admin_system_license(request: Request, db: Session = Depends(database.get_db
         admin_active="system_license",
         license_status=licensing.current_status(db),
         license_config=licensing.load_config(),
+        default_server_url=licensing.DEFAULT_SERVER_URL,
+        license_request_url=licensing.license_request_url(db),
     )
 
 

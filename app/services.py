@@ -49,6 +49,62 @@ def calculate_required_vacation_minutes(
     return total
 
 
+def half_day_factor(vacation: models.VacationRequest, day: date) -> float:
+    """Anteil, mit dem ``day`` in diesen Urlaubsantrag eingeht.
+
+    ``1.0`` für einen ganzen Tag, ``0.5`` für einen halben. Ein eintägiger
+    Antrag gilt als halb, sobald eines der beiden Kennzeichen gesetzt ist –
+    dort gibt es kein „erster“ und „letzter“ Tag.
+    """
+    if vacation.start_date == vacation.end_date:
+        return 0.5 if (vacation.half_day_start or vacation.half_day_end) else 1.0
+    if day == vacation.start_date and vacation.half_day_start:
+        return 0.5
+    if day == vacation.end_date and vacation.half_day_end:
+        return 0.5
+    return 1.0
+
+
+def vacation_minutes_in_range(
+    user: models.User | None,
+    vacation: models.VacationRequest,
+    start: date,
+    end: date,
+) -> int:
+    """Urlaubsminuten dieses Antrags im Zeitraum – halbe Tage eingerechnet.
+
+    Zählt wie die Sollzeit nur Montag bis Freitag; halbe Tage gehen mit der
+    Hälfte der Tagessollzeit ein.
+    """
+    if not user:
+        return 0
+    daily_minutes = int(round(user.daily_target_minutes or 0))
+    if daily_minutes <= 0:
+        return 0
+    overlap_start = max(start, vacation.start_date)
+    overlap_end = min(end, vacation.end_date)
+    if overlap_start > overlap_end:
+        return 0
+    total = 0.0
+    current = overlap_start
+    while current <= overlap_end:
+        if current.weekday() < 5:
+            total += daily_minutes * half_day_factor(vacation, current)
+        current += timedelta(days=1)
+    return int(round(total))
+
+
+def vacation_days(vacation: models.VacationRequest) -> float:
+    """Angerechnete Urlaubstage eines Antrags (Mo–Fr, halbe Tage als 0,5)."""
+    total = 0.0
+    current = vacation.start_date
+    while current <= vacation.end_date:
+        if current.weekday() < 5:
+            total += half_day_factor(vacation, current)
+        current += timedelta(days=1)
+    return total
+
+
 def calculate_target_minutes_in_range(
     user: models.User | None, start: date, end: date
 ) -> int:
@@ -74,11 +130,7 @@ def calculate_vacation_overtime_in_range(
             continue
         if vacation.status != models.VacationStatus.APPROVED:
             continue
-        overlap_start = max(start, vacation.start_date)
-        overlap_end = min(end, vacation.end_date)
-        if overlap_start > overlap_end:
-            continue
-        total += calculate_required_vacation_minutes(user, overlap_start, overlap_end)
+        total += vacation_minutes_in_range(user, vacation, start, end)
     return total
 
 
@@ -94,11 +146,7 @@ def calculate_approved_vacation_minutes(
     for vacation in vacations:
         if vacation.status != models.VacationStatus.APPROVED:
             continue
-        overlap_start = max(start, vacation.start_date)
-        overlap_end = min(end, vacation.end_date)
-        if overlap_start > overlap_end:
-            continue
-        total += calculate_required_vacation_minutes(user, overlap_start, overlap_end)
+        total += vacation_minutes_in_range(user, vacation, start, end)
     return total
 
 
@@ -124,7 +172,8 @@ def calculate_vacation_minutes_by_day(
         current = overlap_start
         while current <= overlap_end:
             if current.weekday() < 5:
-                totals[current] = totals.get(current, 0) + daily_minutes
+                share = int(round(daily_minutes * half_day_factor(vacation, current)))
+                totals[current] = totals.get(current, 0) + share
             current += timedelta(days=1)
     return totals
 
@@ -170,7 +219,7 @@ def calculate_vacation_summary(
         overlap_end = min(period_end, vacation.end_date)
         if overlap_start > overlap_end:
             continue
-        minutes = calculate_required_vacation_minutes(user, overlap_start, overlap_end)
+        minutes = vacation_minutes_in_range(user, vacation, period_start, period_end)
         if vacation.status == models.VacationStatus.APPROVED:
             used_minutes += minutes
         elif vacation.status == models.VacationStatus.PENDING:

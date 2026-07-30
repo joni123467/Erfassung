@@ -50,11 +50,23 @@
         <label>
             Startdatum
             <input type="date" name="start_date" required>
+            <span class="checkbox">
+                <input type="checkbox" name="half_day_start" id="half-day-start">
+                <label for="half-day-start">nur ein halber Tag</label>
+            </span>
         </label>
         <label>
             Enddatum
             <input type="date" name="end_date" required>
+            <span class="checkbox">
+                <input type="checkbox" name="half_day_end" id="half-day-end">
+                <label for="half-day-end">nur ein halber Tag</label>
+            </span>
         </label>
+        <p class="form-hint full-width">
+            Halbe Tage zählen mit 0,5 Urlaubstagen und der halben Tagessollzeit.
+            Bei einem eintägigen Antrag genügt eines der beiden Häkchen.
+        </p>
         <label class="full-width">
             Kommentar
             <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
@@ -97,7 +109,7 @@
             <tbody>
             {% for vacation in vacations %}
                 <tr class="status-{{ vacation.status }}">
-                    <td>{{ vacation.start_date.strftime('%d.%m.%Y') }} – {{ vacation.end_date.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ vacation.start_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_start %} <small>(½)</small>{% endif %}{% if vacation.start_date != vacation.end_date %} – {{ vacation.end_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_end %} <small>(½)</small>{% endif %}{% endif %}</td>
                     <td class="status-label status-{{ vacation.status }}">
                         {% if vacation.status == 'approved' %}
                             Genehmigt

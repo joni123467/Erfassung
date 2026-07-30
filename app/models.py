@@ -313,6 +313,10 @@ class VacationRequest(Base):
     use_overtime = Column(Boolean, default=False)
     overtime_minutes = Column(Integer, default=0)
     previous_status = Column(String(32), nullable=True)
+    # Halbe Urlaubstage: erster bzw. letzter Tag zaehlt nur zur Haelfte.
+    # Bei einem eintaegigen Antrag genuegt eines der beiden Kennzeichen.
+    half_day_start = Column(Boolean, default=False, nullable=False)
+    half_day_end = Column(Boolean, default=False, nullable=False)
 
     user = relationship("User", back_populates="vacation_requests")
 
