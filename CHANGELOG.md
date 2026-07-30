@@ -5,6 +5,72 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.12.0] – 2026-07-30
+
+### Added – Funktionsbausteine
+
+Eine Lizenz schaltet Bereiche frei. **Immer enthalten**: Stempeln, eigene
+Zeitübersicht, Benutzer-/Gruppen-/Rollenverwaltung, Sicherungen,
+Systemeinstellungen. Zubuchbar:
+
+| Baustein | Schaltet frei |
+|---|---|
+| `orders` | Aufträge, Firmen, auftragsbezogenes Stempeln |
+| `vacation` | Urlaubsanträge, Urlaubskonten, Urlaubsfreigaben |
+| `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
+| `terminals` | RFID-Terminals und Geräte-Synchronisation |
+
+Eine Lizenz ohne jeden Baustein ist eine reine Stempel-Lizenz. Gesperrte
+Bereiche verschwinden aus der Navigation; ein direkter Aufruf landet mit
+Hinweis auf dem Dashboard, die API antwortet mit **HTTP 402**. Durchgesetzt
+wird das über eine Middleware (`LicenseFeatureMiddleware`) statt Route für
+Route – so kann kein Endpunkt versehentlich offen bleiben.
+
+**Ohne hinterlegte Lizenz bleibt alles offen.** Ein Update darf einen
+laufenden Betrieb nicht beschneiden.
+
+### Added – Regelmäßige Prüfung beim Lizenzserver
+
+- Ein Hintergrundthread (`app/license_scheduler.py`) fragt einmal täglich
+  nach (`POST /v1/activations/state`) und erhält ein frisch signiertes
+  Dokument. Änderungen an Benutzerzahl, Laufzeit und Bausteinen wirken damit
+  ohne Zutun des Kunden.
+- **Ein unerreichbarer Lizenzserver sperrt nie.** Störung, Netzausfall oder
+  abgeschalteter Server lassen die gespeicherte Lizenz unverändert
+  weiterlaufen; der Vorfall landet nur in `license.log`. Auch ein älterer
+  Lizenzserver ohne diesen Endpunkt ist unschädlich.
+- Auch das frische Dokument wird vor der Übernahme geprüft: Signatur,
+  Deployment-ID, Produkt und Schemaversion. Ein gefälschtes Dokument ersetzt
+  nie das gespeicherte.
+
+### Added – Übergangsfrist bei Sperrung
+
+Meldet der Server `suspended`, `revoked` oder `expired`, beginnt eine
+**Übergangsfrist von 14 Tagen**:
+
+- Tag 0–14: deutlicher Hinweis mit Restfrist auf jeder Administrationsseite,
+  sonst arbeitet alles weiter.
+- Ab Tag 15: Aufträge, Urlaubsplanung, Auswertungen und Terminals sind
+  gesperrt.
+- Immer offen: Stempeln, eigene Zeitübersicht, Benutzerverwaltung,
+  Sicherungen – eine Lizenzfrage darf keine Arbeitszeitdaten kosten.
+
+Eine Freigabe durch den Herausgeber beendet die Frist bei der nächsten
+Nachfrage sofort.
+
+### Changed
+
+- Die Lizenzseite zeigt jeden Baustein mit seinem Zustand, den letzten
+  Serverkontakt und bei einer Sperre die Restfrist.
+- `GET /api/license` liefert zusätzlich `blocked_status`, `blocked_reason`,
+  `grace_days_left`, `grace_expired` und `last_contact_at`.
+- `config/license.json` merkt sich Sperrzustand, Beginn der Frist und den
+  letzten Serverkontakt.
+
+### Datenbank
+
+Keine Schemaänderung.
+
 ## [0.11.1] – 2026-07-30
 
 ### Fixed

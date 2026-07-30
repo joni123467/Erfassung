@@ -327,11 +327,22 @@ def test_canonical_json_matches_the_license_server_rules(licensing):
     assert b"signature" not in licensing.signing_payload({"a": 1, "signature": "x"})
 
 
-def test_has_feature_requires_a_valid_license(licensing, keypair):
+def test_has_feature_follows_the_license(licensing, keypair):
+    """Seit 0.12.0 gilt: ohne Lizenz alles offen, mit Lizenz entscheidet sie.
+
+    Bis 0.11.x war es umgekehrt – ohne gültige Lizenz galt jedes Merkmal als
+    gesperrt. Das hätte mit den Funktionsbausteinen bedeutet, dass ein Update
+    einer unlizenzierten Installation reihenweise Bereiche schließt. Genau das
+    soll nicht passieren.
+    """
     private_key, _ = keypair
-    assert licensing.has_feature("reports") is False
+    # Ohne hinterlegte Lizenz bleibt alles nutzbar.
+    assert licensing.has_feature("reports") is True
+
     _store(licensing, _document(private_key, licensing.deployment_id(), features=["reports"]))
     assert licensing.has_feature("reports") is True
+    # Jetzt entscheidet das Dokument – alles Ungenannte ist zu.
+    assert licensing.has_feature("vacation") is False
     assert licensing.has_feature("unbekannt") is False
 
 

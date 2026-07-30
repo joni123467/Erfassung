@@ -15,7 +15,7 @@
             {'href': '/admin/groups', 'label': 'Gruppen', 'key': 'groups', 'show': admin_permissions.groups},
             {'href': '/admin/roles', 'label': 'Rollen', 'key': 'roles', 'show': admin_permissions.roles},
             {'href': '/admin/permissions', 'label': 'Berechtigungen', 'key': 'permissions', 'show': admin_permissions.roles},
-            {'href': '/admin/companies', 'label': 'Firmen', 'key': 'companies', 'show': admin_permissions.companies},
+            {'href': '/admin/companies', 'label': 'Firmen', 'key': 'companies', 'show': admin_permissions.companies and license_features.orders},
         ],
     },
     {
@@ -23,9 +23,9 @@
         'items': [
             {'href': '/admin/holidays', 'label': 'Feiertage', 'key': 'holidays', 'show': admin_permissions.holidays},
             {'href': '/admin/approvals', 'label': 'Freigaben', 'key': 'approvals', 'show': admin_permissions.approvals},
-            {'href': '/admin/reports/time', 'label': 'Zeitübersichten', 'key': 'reports', 'show': admin_permissions.reports},
-            {'href': '/admin/reports/users', 'label': 'Benutzerauswertung', 'key': 'user_reports', 'show': admin_permissions.reports},
-            {'href': '/admin/terminals', 'label': 'Terminals', 'key': 'terminals', 'show': admin_permissions.integrations},
+            {'href': '/admin/reports/time', 'label': 'Zeitübersichten', 'key': 'reports', 'show': admin_permissions.reports and license_features.reports},
+            {'href': '/admin/reports/users', 'label': 'Benutzerauswertung', 'key': 'user_reports', 'show': admin_permissions.reports and license_features.reports},
+            {'href': '/admin/terminals', 'label': 'Terminals', 'key': 'terminals', 'show': admin_permissions.integrations and license_features.terminals},
         ],
     },
     {
@@ -55,7 +55,25 @@
         ],
     },
 ] %}
-{% if license_state %}
+{% if license_state and license_state.is_blocked %}
+    <div class="alert {{ 'alert-danger' if license_state.grace_expired else 'alert-warning' }} license-banner" role="alert">
+        <span class="license-banner__text">
+            {% if license_state.grace_expired %}
+                <strong>Lizenz gesperrt.</strong> {{ license_state.blocked_reason }}
+                Die Übergangsfrist ist abgelaufen – Aufträge, Urlaubsplanung,
+                Auswertungen und Terminals sind gesperrt. Stempeln bleibt möglich.
+            {% else %}
+                <strong>Lizenz gesperrt.</strong> {{ license_state.blocked_reason }}
+                Noch {{ license_state.grace_days_left }} Tag{{ '' if license_state.grace_days_left == 1 else 'e' }},
+                dann werden Aufträge, Urlaubsplanung, Auswertungen und Terminals
+                gesperrt. Stempeln bleibt in jedem Fall möglich.
+            {% endif %}
+        </span>
+        {% if admin_permissions.system %}
+            <a class="license-banner__link" href="/admin/system/license">Lizenz verwalten</a>
+        {% endif %}
+    </div>
+{% elif license_state %}
     {# Lizenzhinweis: „nicht lizenziert“ ist nur ein Hinweis, alles andere eine Warnung. #}
     <div class="alert {{ 'alert-warning' if license_state.status in ('unlicensed', 'valid') else 'alert-danger' }} license-banner" role="status">
         <span class="license-banner__text">

@@ -144,8 +144,8 @@ def _closed_entry(user_id, start, end, *, is_remote=False, notes="Büro", day=DA
 # --- version & schema ------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.11.1"
-    assert client.get("/health").json()["version"] == "0.11.1"
+    assert client.main.APP_VERSION == "0.12.0"
+    assert client.get("/health").json()["version"] == "0.12.0"
 
 
 def test_columns_exist(client):

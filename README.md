@@ -2,7 +2,14 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.11.1`
+**Version:** `0.12.0`
+
+> Seit 0.12.0: **Funktionsbausteine und regelmäßige Lizenzprüfung** – eine
+> Lizenz schaltet `orders`, `vacation`, `reports` und `terminals` frei;
+> Stempeln bleibt immer enthalten. Die Installation fragt täglich beim
+> Lizenzserver nach. Ein unerreichbarer Server sperrt **nie**; eine gemeldete
+> Sperre wirkt erst nach 14 Tagen Übergangsfrist. Details unter
+> [„Funktionsbausteine"](#funktionsbausteine).
 
 > Seit 0.11.1: **Halbe Urlaubstage** – erster und letzter Tag eines Antrags
 > lassen sich einzeln halbieren (0,5 Urlaubstage, halbe Tagessollzeit). Dazu
@@ -508,6 +515,69 @@ eintägigen Antrag genügt eines davon.
 Ein halber Tag bringt die halbe Tagessollzeit – in der Urlaubsübersicht, der
 Tagesgutschrift, den Auswertungen und beim Überstundenurlaub. In den Listen
 erscheint er als „½" hinter dem Datum. Bestandsanträge bleiben ganze Tage.
+
+## Funktionsbausteine
+
+Eine Lizenz schaltet Bereiche frei. **Immer enthalten** und nie gesperrt:
+
+- Stempeln (Arbeitszeit, Pausen, Kommentare)
+- eigene Zeitübersicht und eigene Buchungen
+- Benutzer-, Gruppen- und Rollenverwaltung
+- Sicherung und Wiederherstellung
+- Systemeinstellungen, Logs, Datenbankverwaltung
+
+Zubuchbar sind vier Bausteine:
+
+| Baustein | Schaltet frei |
+|---|---|
+| `orders` | Aufträge, Firmen, auftragsbezogenes Stempeln |
+| `vacation` | Urlaubsanträge, Urlaubskonten, Urlaubsfreigaben |
+| `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
+| `terminals` | RFID-Terminals und Geräte-Synchronisation |
+
+Eine Lizenz ohne jeden Baustein ist damit eine reine **Stempel-Lizenz**.
+
+Gesperrte Bereiche verschwinden aus der Navigation; wer die Adresse direkt
+aufruft, landet mit einem Hinweis auf dem Dashboard. Die API antwortet mit
+**HTTP 402**. Abgesichert ist das über eine Middleware, nicht Route für Route –
+so kann kein Endpunkt versehentlich offen bleiben.
+
+> **Ohne hinterlegte Lizenz ist alles offen.** Ein Update darf einen laufenden
+> Betrieb nicht beschneiden. Erst eine gültige Lizenz entscheidet, was zu ist.
+
+### Regelmäßige Prüfung
+
+Einmal täglich fragt die Installation beim Lizenzserver nach
+(`POST /v1/activations/state`) und bekommt dabei ein frisch signiertes
+Dokument. Änderungen an Benutzerzahl, Laufzeit oder Bausteinen wirken damit
+**ohne Zutun des Kunden**, in der Regel binnen eines Tages.
+
+Den Zeitpunkt des letzten Kontakts zeigt die Lizenzseite. „Erneut prüfen“
+stößt die Abfrage sofort an.
+
+### Wenn der Lizenzserver ausfällt
+
+**Nichts passiert.** Eine Störung, ein Netzausfall oder ein abgeschalteter
+Server lassen die gespeicherte Lizenz unverändert weiterlaufen – die Prüfung
+ist ohnehin offline. Der Vorfall landet in `license.log`, sonst merkt niemand
+etwas. Nur eine *ausdrückliche* Sperrmeldung des Servers ändert etwas.
+
+### Wenn eine Lizenz gesperrt wird
+
+Meldet der Server `suspended`, `revoked` oder `expired`, beginnt eine
+**Übergangsfrist von 14 Tagen**:
+
+| Zeitraum | Wirkung |
+|---|---|
+| Tag 0–14 | Deutlicher Hinweis mit Restfrist auf jeder Administrationsseite. Alles funktioniert weiter. |
+| ab Tag 15 | Aufträge, Urlaubsplanung, Auswertungen und Terminals sind gesperrt. |
+| immer | Stempeln, eigene Zeitübersicht, Benutzerverwaltung und Sicherungen bleiben offen. |
+
+Gibt der Herausgeber die Lizenz wieder frei, endet die Frist bei der nächsten
+Nachfrage sofort – oder direkt über „Erneut prüfen“.
+
+Dass Stempeln nie gesperrt wird, ist Absicht: Eine Lizenzfrage darf keine
+Arbeitszeitdaten kosten.
 
 ## Auswertungen & Exporte
 
