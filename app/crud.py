@@ -697,7 +697,18 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
     return create_time_entry(db, entry), False
 
 
-def create_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> models.TimeEntry:
+def create_time_entry(
+    db: Session,
+    entry: schemas.TimeEntryCreate,
+    *,
+    actor: Optional[models.User] = None,
+) -> models.TimeEntry:
+    """Buchung anlegen und den Vorgang historisieren.
+
+    ``actor`` ist optional, weil Terminalimport und Migration keine Person
+    haben – dort steht in der Historie „System". Über die Oberfläche und die
+    Schnittstelle wird der Akteur jedoch immer mitgegeben.
+    """
     payload = entry.model_dump()
     if payload.get("break_started_at") and not payload.get("is_open"):
         payload["break_started_at"] = None
@@ -714,7 +725,9 @@ def create_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> models.Tim
     db_entry = models.TimeEntry(**payload)
     db.add(db_entry)
     db.flush()
-    revision_log.record_creation(db, db_entry, source=payload.get("source"))
+    revision_log.record_creation(
+        db, db_entry, actor=actor, source=payload.get("source")
+    )
     db.commit()
     db.refresh(db_entry)
     return db_entry
@@ -832,7 +845,13 @@ def start_running_entry(
     return create_time_entry(db, entry)
 
 
-def finish_running_entry(db: Session, entry: models.TimeEntry, finished_at: datetime) -> models.TimeEntry:
+def finish_running_entry(
+    db: Session,
+    entry: models.TimeEntry,
+    finished_at: datetime,
+    *,
+    actor: Optional[models.User] = None,
+) -> models.TimeEntry:
     """Laufende Buchung beenden.
 
     Bewusst **ohne** Periodenprüfung: Eine laufende Buchung muss sich immer
@@ -844,7 +863,9 @@ def finish_running_entry(db: Session, entry: models.TimeEntry, finished_at: date
     """
     normalized = _normalize_time(finished_at)
     if entry.break_started_at or entry.running_break is not None:
-        end_break(db, entry, normalized)
+        # Eine noch laufende Pause wird mitbeendet – auch das steht in der
+        # Historie, sonst fehlte der zweite Pausenstempel.
+        end_break(db, entry, normalized, actor=actor)
         db.refresh(entry)
     before = revision_log.snapshot(entry)
     entry.end_time = normalized.time()
@@ -852,48 +873,101 @@ def finish_running_entry(db: Session, entry: models.TimeEntry, finished_at: date
     entry.break_started_at = None
     entry.ended_at_utc = _to_utc(normalized)
     revision_log.record(
-        db, entry, models.RevisionAction.CLOSED, before=before, source=entry.source
+        db,
+        entry,
+        models.RevisionAction.CLOSED,
+        actor=actor,
+        before=before,
+        after=revision_log.snapshot(entry),
+        source=entry.source,
     )
     db.commit()
     db.refresh(entry)
     return entry
 
 
-def start_break(db: Session, entry: models.TimeEntry, started_at: datetime) -> models.TimeEntry:
+def start_break(
+    db: Session,
+    entry: models.TimeEntry,
+    started_at: datetime,
+    *,
+    actor: Optional[models.User] = None,
+    source: Optional[str] = None,
+) -> models.TimeEntry:
     """Pause beginnen – als eigenes Intervall mit Beginn.
 
     Die Altspalte ``break_started_at`` wird mitgeführt, damit Bestandscode und
     Offline-Shell unverändert weiterlaufen; führend ist ab jetzt das Intervall.
+
+    Der Beginn wird historisiert: Wann eine Pause begann, ist Teil der
+    Arbeitszeit und damit nachweispflichtig. Eine Begründung braucht es dafür
+    nicht – der Stempel ist die Aussage.
     """
     normalized = _normalize_time(started_at)
     if entry.running_break is not None:
         return entry
+    before = revision_log.snapshot(entry)
+    tz_name = entry.tz_name or local_timezone_name()
     entry.break_started_at = normalized.time()
     db.add(models.BreakInterval(
         entry_id=entry.id,
         started_at_utc=_to_utc(normalized),
-        tz_name=entry.tz_name or local_timezone_name(),
-        source=entry.source or "web",
+        tz_name=tz_name,
+        source=source or entry.source or "web",
     ))
+    db.flush()
+    revision_log.record(
+        db,
+        entry,
+        models.RevisionAction.BREAK_STARTED,
+        actor=actor,
+        before=before,
+        after=revision_log.snapshot(entry),
+        source=source or entry.source,
+        tz_name=tz_name,
+    )
     db.commit()
     db.refresh(entry)
     return entry
 
 
-def end_break(db: Session, entry: models.TimeEntry, finished_at: datetime) -> models.TimeEntry:
+def end_break(
+    db: Session,
+    entry: models.TimeEntry,
+    finished_at: datetime,
+    *,
+    actor: Optional[models.User] = None,
+    source: Optional[str] = None,
+) -> models.TimeEntry:
     """Laufende Pause beenden.
 
     Das Intervall bekommt sein Ende; die Summenspalte wird für Bestandscode
     fortgeschrieben. Ohne Intervall (Bestandsbuchung) greift der alte Weg.
+
+    Auch das Ende wird historisiert – erst mit ihm steht die Dauer der Pause
+    fest, und die entscheidet über die Einhaltung des § 4 ArbZG.
     """
     normalized = _normalize_time(finished_at)
     running = entry.running_break
+    before = revision_log.snapshot(entry)
+    tz_name = entry.tz_name or local_timezone_name()
     if running is not None:
         end_utc = _to_utc(normalized)
         if end_utc < running.started_at_utc:
             end_utc += timedelta(days=1)
         running.ended_at_utc = end_utc
         entry.break_started_at = None
+        db.flush()
+        revision_log.record(
+            db,
+            entry,
+            models.RevisionAction.BREAK_ENDED,
+            actor=actor,
+            before=before,
+            after=revision_log.snapshot(entry),
+            source=source or entry.source,
+            tz_name=tz_name,
+        )
         db.commit()
         db.refresh(entry)
         return entry
@@ -907,9 +981,107 @@ def end_break(db: Session, entry: models.TimeEntry, finished_at: datetime) -> mo
     duration = max(int((break_end - break_start).total_seconds() // 60), 0)
     entry.break_minutes = (entry.break_minutes or 0) + duration
     entry.break_started_at = None
+    db.flush()
+    revision_log.record(
+        db,
+        entry,
+        models.RevisionAction.BREAK_ENDED,
+        actor=actor,
+        before=before,
+        after=revision_log.snapshot(entry),
+        source=source or entry.source,
+        tz_name=tz_name,
+    )
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def correct_break(
+    db: Session,
+    interval_id: int,
+    *,
+    actor: Optional[models.User],
+    reason: str,
+    started_at: Optional[datetime] = None,
+    ended_at: Optional[datetime] = None,
+) -> Optional[models.BreakInterval]:
+    """Eine bereits erfasste Pause nachträglich verschieben.
+
+    Anders als Beginn und Ende ist das ein Eingriff in bereits erfasste Zeit –
+    deshalb mit **Pflichtbegründung**. Der alte Stand steht im Vorher-Snapshot
+    der Historie; das Intervall selbst wird geändert, nicht dupliziert.
+    """
+    interval = (
+        db.query(models.BreakInterval)
+        .filter(models.BreakInterval.id == interval_id)
+        .first()
+    )
+    if interval is None:
+        return None
+    entry = interval.entry
+    ensure_period_open(db, entry.work_date)
+    before = revision_log.snapshot(entry)
+    if started_at is not None:
+        interval.started_at_utc = _to_utc(_normalize_time(started_at))
+    if ended_at is not None:
+        interval.ended_at_utc = _to_utc(_normalize_time(ended_at))
+    db.flush()
+    revision_log.record(
+        db,
+        entry,
+        models.RevisionAction.BREAK_CORRECTED,
+        actor=actor,
+        reason=reason,
+        before=before,
+        after=revision_log.snapshot(entry),
+        source=entry.source,
+        tz_name=interval.tz_name or entry.tz_name,
+    )
+    db.commit()
+    db.refresh(interval)
+    return interval
+
+
+def cancel_break(
+    db: Session,
+    interval_id: int,
+    *,
+    actor: Optional[models.User],
+    reason: str,
+) -> Optional[models.BreakInterval]:
+    """Eine irrtümlich erfasste Pause zurücknehmen.
+
+    Das Intervall wird auf eine Länge von null gesetzt statt gelöscht: Auch
+    eine zurückgenommene Pause soll nachvollziehbar bleiben. Pflichtbegründung
+    wie bei jeder Stornierung.
+    """
+    interval = (
+        db.query(models.BreakInterval)
+        .filter(models.BreakInterval.id == interval_id)
+        .first()
+    )
+    if interval is None:
+        return None
+    entry = interval.entry
+    ensure_period_open(db, entry.work_date)
+    before = revision_log.snapshot(entry)
+    interval.ended_at_utc = interval.started_at_utc
+    db.flush()
+    revision_log.record(
+        db,
+        entry,
+        models.RevisionAction.BREAK_CANCELLED,
+        actor=actor,
+        reason=reason,
+        before=before,
+        after=revision_log.snapshot(entry),
+        source=entry.source,
+        tz_name=interval.tz_name or entry.tz_name,
+    )
+    db.commit()
+    db.refresh(interval)
+    return interval
 
 
 def get_time_entries_for_user(

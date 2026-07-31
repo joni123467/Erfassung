@@ -481,6 +481,55 @@ def ensure_schema() -> None:
         ):
             if _table not in table_names:
                 models.Base.metadata.tables[_table].create(bind=connection)
+        # Lebenszyklus der Feststellungen (ab 0.15.0): Sie werden nicht mehr
+        # gelöscht, sondern fortgeschrieben. Inhalte der Migration 18.
+        if "compliance_flags" in table_names:
+            flag_columns = {
+                column["name"]
+                for column in inspector.get_columns("compliance_flags")
+            }
+            if "state" not in flag_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE compliance_flags ADD COLUMN state "
+                        "VARCHAR DEFAULT 'detected'"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "UPDATE compliance_flags SET state = 'acknowledged' "
+                        "WHERE acknowledged_at IS NOT NULL"
+                    )
+                )
+            for _column, _type in (
+                ("fingerprint", "VARCHAR"),
+                ("acknowledged_fingerprint", "VARCHAR"),
+                ("resolved_at", "DATETIME"),
+                ("reopened_at", "DATETIME"),
+                ("updated_at", "DATETIME"),
+            ):
+                if _column not in flag_columns:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE compliance_flags ADD COLUMN {_column} {_type}"
+                        )
+                    )
+            if "revision_no" not in flag_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE compliance_flags ADD COLUMN revision_no "
+                        "INTEGER DEFAULT 1"
+                    )
+                )
+            connection.execute(
+                text("UPDATE compliance_flags SET state = 'detected' WHERE state IS NULL")
+            )
+            connection.execute(
+                text(
+                    "UPDATE compliance_flags SET revision_no = 1 "
+                    "WHERE revision_no IS NULL"
+                )
+            )
         if "time_entries" in table_names:
             columns = {column["name"] for column in inspector.get_columns("time_entries")}
             if "company_id" not in columns:
@@ -2450,7 +2499,7 @@ def punch_action(
             else:
                 previous_company = active_entry.company if active_entry else None
                 if active_entry:
-                    crud.finish_running_entry(db, active_entry, now)
+                    crud.finish_running_entry(db, active_entry, now, actor=user)
                 created = _safe_start_running_entry(
                     company_id=target_company.id,
                     notes_value=notes.strip(),
@@ -2467,13 +2516,13 @@ def punch_action(
         if not active_entry:
             error = "Keine laufende Arbeitszeit vorhanden."
         else:
-            crud.finish_running_entry(db, active_entry, now)
+            crud.finish_running_entry(db, active_entry, now, actor=user)
             message = "Arbeitszeit beendet."
     elif action == "end_company":
         if not active_entry or active_entry.company_id is None:
             error = "Es läuft kein Auftrag."
         else:
-            crud.finish_running_entry(db, active_entry, now)
+            crud.finish_running_entry(db, active_entry, now, actor=user)
             created = _safe_start_running_entry(notes_value=notes.strip())
             if created:
                 message = "Auftrag beendet. Arbeitszeit läuft weiter."
@@ -2485,7 +2534,9 @@ def punch_action(
         elif active_entry.break_started_at:
             error = "Pause läuft bereits."
         else:
-            crud.start_break(db, active_entry, now)
+            # Akteur und Quelle mitgeben: Web, Mobil/Offline, Terminalimport
+            # und API laufen über denselben Revisionspfad.
+            crud.start_break(db, active_entry, now, actor=user)
             message = "Pause gestartet."
     elif action == "end_break":
         if not active_entry:
@@ -2493,7 +2544,7 @@ def punch_action(
         elif not active_entry.break_started_at:
             error = "Es läuft keine Pause."
         else:
-            crud.end_break(db, active_entry, now)
+            crud.end_break(db, active_entry, now, actor=user)
             message = "Pause beendet."
     elif action == "update_notes":
         # Optionaler Nachbearbeitungsschritt: Kommentar der gerade beendeten
@@ -3093,6 +3144,88 @@ def _can_manage_system(user: models.User) -> bool:
 
 def _can_manage_backups(user: models.User) -> bool:
     return permission_service.has(user, "System.Backup")
+
+
+# ── Absicherung der JSON-Schnittstelle (ab 0.15.0) ────────────────────────
+#
+# Bis 0.14.2 waren neun ``/api/*``-Endpunkte ohne jede Prüfung erreichbar –
+# darunter das Anlegen von Benutzern, das Auflisten aller Personen und der
+# vollständige Arbeitszeitexport einer beliebigen Person. Der CSRF-Schutz war
+# dabei keine Hürde: Ein Aufruf von ``GET /api/csrf`` liefert Sitzung und Token
+# auch ohne Anmeldung.
+#
+# Die folgenden drei Helfer sind der einzige Weg in die Schnittstelle:
+# ``_api_user`` klärt *wer*, ``_api_require`` klärt *darf überhaupt* und
+# ``_api_require_scope`` klärt *darf für diese Person*. Jede Ablehnung wird
+# protokolliert – ohne Geheimnisse, aber mit Endpunkt und Zielperson, damit
+# ein Angriffsversuch sichtbar wird.
+
+
+def _api_client(request: Request) -> str:
+    """Kurzbeschreibung des Aufrufers für das Sicherheitsprotokoll.
+
+    Bewusst ohne IP-Adresse: Sie wäre ein personenbezogenes Datum, das die
+    Anwendung sonst nirgends dauerhaft festhält (Art. 5 Abs. 1 lit. c DSGVO).
+    """
+    return f"{request.method} {request.url.path}"
+
+
+def _api_user(request: Request, db: Session) -> models.User:
+    """Angemeldete Person – sonst 401.
+
+    Anonyme Aufrufe bekommen ausdrücklich 401 und nicht 403: Der Unterschied
+    zwischen „nicht angemeldet" und „angemeldet, aber nicht berechtigt" gehört
+    in die Antwort, sonst rätselt jeder Client.
+    """
+    user = get_logged_in_user(request, db)
+    if not user:
+        logging_setup.log_security(
+            f"Anonymer Zugriff auf {_api_client(request)} abgewiesen",
+            level=logging.WARNING,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet"
+        )
+    return user
+
+
+def _api_require(request: Request, user: models.User, key: str) -> None:
+    """Recht ohne Personenbezug prüfen – sonst 403."""
+    if not permission_service.has(user, key):
+        logging_setup.log_security(
+            f"Zugriff auf {_api_client(request)} ohne Recht {key} abgewiesen",
+            level=logging.WARNING,
+            user=user,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Keine Berechtigung"
+        )
+
+
+def _api_require_scope(
+    request: Request,
+    db: Session,
+    user: models.User,
+    key: str,
+    target_user_id: Optional[int],
+) -> None:
+    """Recht **für diese Person** prüfen – sonst 403.
+
+    Der Geltungsbereich ist der eigentliche Schutz: Ohne ihn genügte die
+    Kenntnis einer fremden Benutzer-ID, um an deren Zeitdaten zu kommen.
+    """
+    _api_require(request, user, key)
+    if not _user_in_permission_scope(db, user, key, target_user_id):
+        logging_setup.log_security(
+            f"Zugriff auf {_api_client(request)} außerhalb des Geltungsbereichs "
+            f"von {key} abgewiesen (Zielperson {target_user_id})",
+            level=logging.WARNING,
+            user=user,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Außerhalb deines Geltungsbereichs",
+        )
 
 
 def _permission_scope(user: models.User, key: str) -> str:
@@ -4177,6 +4310,33 @@ def acknowledge_compliance_flag(
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    # Die Kenntnis einer flag_id darf nicht genügen: Eine Kennzeichnung gehört
+    # zu einer Person, und über deren Zeitdaten entscheidet der Geltungsbereich
+    # von ``Time.View``. Ohne diese Prüfung liesse sich über eine geratene ID
+    # ein fremder Verstoss einordnen – und der Verstoss selbst verriete
+    # Arbeitszeit, Datum und Schweregrad.
+    target = compliance.get_flag(db, flag_id)
+    if target is None:
+        return RedirectResponse(
+            url=_build_redirect("/admin/compliance", error="Kennzeichnung nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if not _user_in_permission_scope(db, user, "Time.View", target.user_id):
+        logging_setup.log_security(
+            f"Einordnung einer fremden Kennzeichnung abgewiesen "
+            f"(Kennzeichnung {flag_id}, Zielperson {target.user_id})",
+            level=logging.WARNING,
+            user=user,
+        )
+        logging_setup.log_audit(
+            "Einordnung abgewiesen – ausserhalb des Geltungsbereichs",
+            user=user,
+            detail=f"Kennzeichnung {flag_id}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Diese Kennzeichnung liegt ausserhalb deines Geltungsbereichs",
+        )
     try:
         flag = compliance.acknowledge(db, flag_id, user=user, note=note)
     except ValueError:
@@ -5817,12 +5977,22 @@ def admin_timemoto_redirect(request: Request):
 
 
 @app.post("/api/groups", response_model=schemas.Group)
-def create_group(group: schemas.GroupCreate, db: Session = Depends(database.get_db)):
-    return crud.create_group(db, group)
+def create_group(
+    group: schemas.GroupCreate,
+    request: Request,
+    db: Session = Depends(database.get_db),
+):
+    user = _api_user(request, db)
+    _api_require(request, user, "System.Groups")
+    created = crud.create_group(db, group)
+    logging_setup.log_audit("Gruppe angelegt (API)", user=user, detail=created.name)
+    return created
 
 
 @app.get("/api/groups", response_model=List[schemas.Group])
-def list_groups(db: Session = Depends(database.get_db)):
+def list_groups(request: Request, db: Session = Depends(database.get_db)):
+    user = _api_user(request, db)
+    _api_require(request, user, "System.Groups")
     return crud.get_groups(db)
 
 
@@ -5883,27 +6053,60 @@ def update_role_api(
 
 
 @app.post("/api/users", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
+def create_user(
+    user: schemas.UserCreate,
+    request: Request,
+    db: Session = Depends(database.get_db),
+):
+    actor = _api_user(request, db)
+    _api_require(request, actor, "User.Create")
     if crud.get_user_by_username(db, user.username):
         raise HTTPException(status_code=400, detail="Benutzername bereits vergeben")
     limit_error = licensing.user_limit_error(db)
     if limit_error:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=limit_error)
-    return crud.create_user(db, user)
+    created = crud.create_user(db, user)
+    # Kein Passwort, keine PIN im Protokoll – nur wer wen angelegt hat.
+    logging_setup.log_audit("Benutzer angelegt (API)", user=actor, detail=created.username)
+    return created
 
 
 @app.get("/api/users", response_model=List[schemas.User])
-def list_users(db: Session = Depends(database.get_db)):
-    return crud.get_users(db)
+def list_users(request: Request, db: Session = Depends(database.get_db)):
+    """Benutzerliste – auf den Geltungsbereich von ``User.View`` begrenzt.
+
+    Vorher gab dieser Endpunkt jedem anonymen Aufrufer sämtliche Stammdaten
+    aller Personen heraus.
+    """
+    actor = _api_user(request, db)
+    _api_require(request, actor, "User.View")
+    people = crud.get_users(db)
+    allowed = _scoped_user_ids(db, actor, "User.View")
+    if allowed is not None:
+        people = [person for person in people if person.id in allowed]
+    return people
 
 
 @app.post("/api/time-entries", response_model=schemas.TimeEntry)
-def create_time_entry(entry: schemas.TimeEntryCreate, db: Session = Depends(database.get_db)):
+def create_time_entry(
+    entry: schemas.TimeEntryCreate,
+    request: Request,
+    db: Session = Depends(database.get_db),
+):
+    """Buchung anlegen – nur für Personen im eigenen Geltungsbereich.
+
+    Für die eigene Person genügt das Selbstbedienungsrecht; für fremde
+    Personen ist ``Time.Edit`` samt Geltungsbereich nötig. Vorher konnte
+    jeder Aufrufer einer beliebigen Person Arbeitszeit unterschieben.
+    """
+    actor = _api_user(request, db)
+    if entry.user_id != actor.id:
+        _api_require_scope(request, db, actor, "Time.Edit", entry.user_id)
     user = crud.get_user(db, entry.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
     try:
-        db_entry = crud.create_time_entry(db, entry)
+        db_entry = crud.create_time_entry(db, entry, actor=actor)
     except crud.PeriodLocked as exc:
         # Gesperrte Abrechnungsperiode: kein Serverfehler, sondern eine
         # bewusste Ablehnung – mit dem Grund im Klartext.
@@ -5917,19 +6120,55 @@ def create_time_entry(entry: schemas.TimeEntryCreate, db: Session = Depends(data
 
 
 @app.delete("/api/time-entries/{entry_id}")
-def delete_time_entry(entry_id: int, db: Session = Depends(database.get_db)):
-    """Storniert die Buchung – seit 0.14.0 wird nichts mehr physisch gelöscht."""
+def delete_time_entry(
+    entry_id: int,
+    request: Request,
+    reason: str = Query(default="", max_length=500),
+    db: Session = Depends(database.get_db),
+):
+    """Storniert die Buchung – seit 0.14.0 wird nichts mehr physisch gelöscht.
+
+    Anders als bisher braucht der Vorgang einen angemeldeten Akteur **und**
+    eine Begründung. Beides landet in der Revisionshistorie; eine Stornierung
+    ohne Urheber wäre für die Nachvollziehbarkeit wertlos.
+    """
+    actor = _api_user(request, db)
+    entry = crud.get_time_entry(db, entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+    if entry.user_id != actor.id:
+        _api_require_scope(request, db, actor, "Time.Edit", entry.user_id)
+    cleaned = (reason or "").strip()
+    if not cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Für eine Stornierung ist eine Begründung erforderlich",
+        )
     try:
-        removed = crud.delete_time_entry(db, entry_id)
+        cancelled = crud.cancel_time_entry(db, entry_id, actor=actor, reason=cleaned)
     except crud.PeriodLocked as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    if not removed:
+    except revisions.ReasonRequired as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if cancelled is None:
         raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+    compliance.refresh_for_entry(db, cancelled)
+    logging_setup.log_audit(
+        "Buchung storniert (API)", user=actor, detail=f"Buchung {entry_id}"
+    )
     return {"detail": "Zeitbuchung storniert"}
 
 
 @app.post("/api/vacations", response_model=schemas.VacationRequest)
-def create_vacation(vacation: schemas.VacationRequestCreate, db: Session = Depends(database.get_db)):
+def create_vacation(
+    vacation: schemas.VacationRequestCreate,
+    request: Request,
+    db: Session = Depends(database.get_db),
+):
+    """Urlaubsantrag anlegen – für sich selbst oder im eigenen Geltungsbereich."""
+    actor = _api_user(request, db)
+    if vacation.user_id != actor.id:
+        _api_require_scope(request, db, actor, "Vacation.Manage", vacation.user_id)
     user = crud.get_user(db, vacation.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
@@ -5966,15 +6205,50 @@ def create_vacation(vacation: schemas.VacationRequestCreate, db: Session = Depen
 
 
 @app.post("/api/vacations/{vacation_id}/status", response_model=schemas.VacationRequest)
-def update_vacation_status(vacation_id: int, status: str, db: Session = Depends(database.get_db)):
+def update_vacation_status(
+    vacation_id: int,
+    status: str,
+    request: Request,
+    db: Session = Depends(database.get_db),
+):
+    """Über einen Antrag entscheiden – nur mit ``Vacation.Manage`` im Scope.
+
+    Vorher konnte jeder Aufrufer jeden Antrag genehmigen; die Kenntnis der ID
+    genügte.
+    """
+    actor = _api_user(request, db)
+    existing = crud.get_vacation_request(db, vacation_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Urlaubseintrag nicht gefunden")
+    _api_require_scope(request, db, actor, "Vacation.Manage", existing.user_id)
     updated = crud.update_vacation_status(db, vacation_id, status)
     if not updated:
         raise HTTPException(status_code=404, detail="Urlaubseintrag nicht gefunden")
+    logging_setup.log_audit(
+        "Urlaubsstatus geändert (API)",
+        user=actor,
+        detail=f"Antrag {vacation_id} → {status}",
+    )
     return schemas.VacationRequest.model_validate(updated)
 
 
 @app.get("/api/users/{user_id}/excel")
-def export_user_time_entries(user_id: int, db: Session = Depends(database.get_db)):
+def export_user_time_entries(
+    user_id: int, request: Request, db: Session = Depends(database.get_db)
+):
+    """Arbeitszeitexport einer Person.
+
+    Für die eigene Person immer erlaubt, für fremde nur mit ``Time.View`` im
+    Geltungsbereich – und dann protokolliert. Vorher lud dieser Endpunkt für
+    jeden anonymen Aufrufer die vollständige Arbeitszeit jeder Person aus.
+    """
+    actor = _api_user(request, db)
+    if user_id != actor.id:
+        _api_require_scope(request, db, actor, "Time.View", user_id)
+        _log_data_access(
+            db, actor=actor, subject_id=user_id, scope="excel_export",
+            detail="Arbeitszeitexport (Excel)",
+        )
     user = crud.get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")

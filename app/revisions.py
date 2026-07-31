@@ -266,6 +266,10 @@ def parse(payload: Optional[str]) -> Optional[dict[str, Any]]:
 ACTION_LABELS = {
     models.RevisionAction.CREATED: "Angelegt",
     models.RevisionAction.CLOSED: "Beendet",
+    models.RevisionAction.BREAK_STARTED: "Pause begonnen",
+    models.RevisionAction.BREAK_ENDED: "Pause beendet",
+    models.RevisionAction.BREAK_CORRECTED: "Pause korrigiert",
+    models.RevisionAction.BREAK_CANCELLED: "Pause storniert",
     models.RevisionAction.UPDATED: "Geändert",
     models.RevisionAction.APPROVED: "Freigegeben",
     models.RevisionAction.REJECTED: "Abgelehnt",

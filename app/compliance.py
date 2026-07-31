@@ -23,13 +23,30 @@ Geprüft wird:
 Keine dieser Kennzeichnungen ist eine rechtliche Bewertung des Einzelfalls:
 Ausnahmen (Tarifverträge, §7 ArbZG, §10 ArbZG, Bereitschaft) kann eine Software
 nicht kennen. Sie zeigt, was auffällt; entscheiden müssen Menschen.
+
+**Kunden sind keine Arbeitgeber.** ``Company`` und ``CompanyLocation`` sind in
+dieser Anwendung Kunde und Auftragsort – sie dienen der Auftragszuordnung. Für
+die arbeitsrechtliche Bewertung sind sie ohne Bedeutung:
+
+* Die Feiertagsregion kommt ausschließlich aus der zentralen Konfiguration
+  (Tabelle ``holidays``), nie aus dem Kundenstandort. Wer für einen Kunden in
+  Bayern arbeitet, hat deswegen weder Fronleichnam frei noch verliert er einen
+  Feiertag seiner eigenen Region.
+* Höchstarbeitszeit, Ruhepause und Ruhezeit werden über **alle** Kunden und
+  Aufträge hinweg gemeinsam bewertet. Ein Auftrags-, Kunden- oder
+  Standortwechsel ist keine Pause und beginnt keinen neuen Arbeitstag.
+
+Dieses Modul greift deshalb an keiner Stelle auf ``company`` oder ``location``
+zu. Wer das ändert, hebelt die Trennung aus.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta
+import hashlib
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -65,22 +82,265 @@ def _format_minutes(minutes: int) -> str:
     return f"{minutes // 60}:{minutes % 60:02d} Std"
 
 
-def _entry_bounds(entry: models.TimeEntry) -> tuple[datetime, datetime]:
-    """Beginn und Ende als Zeitpunkte – Ende ggf. am Folgetag.
+def _timezone(name: Optional[str]) -> ZoneInfo:
+    """Zeitzone einer Buchung – mit der Anlagenzeitzone als Rückfallebene."""
+    for candidate in (name, crud_timezone_name()):
+        if not candidate:
+            continue
+        try:
+            return ZoneInfo(candidate)
+        except Exception:  # pragma: no cover - unbekannte Zone in Altdaten
+            continue
+    return ZoneInfo("UTC")
 
-    Die UTC-Stempel haben Vorrang, wenn sie gepflegt sind; sonst wird aus
-    ``work_date`` und den Ortszeiten zusammengesetzt. So funktioniert die
-    Prüfung für Bestandsbuchungen genauso wie für neue.
+
+def crud_timezone_name() -> str:
+    from . import crud
+
+    return crud.local_timezone_name()
+
+
+def _from_local(moment: Optional[datetime], tz: ZoneInfo) -> Optional[datetime]:
+    """Ortszeit nach UTC bringen.
+
+    Für ``work_date`` + ``start_time``/``end_time``: Diese Werte sind Ortszeit,
+    also wird die Zeitzone der Buchung angeheftet und umgerechnet. Damit lösen
+    sich Sommer- und Winterzeit korrekt auf.
     """
-    start = datetime.combine(entry.work_date, entry.start_time or time(0, 0))
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=tz).astimezone(timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _from_utc_column(moment: Optional[datetime]) -> Optional[datetime]:
+    """Wert aus ``started_at_utc``/``ended_at_utc`` zonenbehaftet machen.
+
+    Die Spalte heißt nicht umsonst so: Ihr Inhalt **ist** UTC. Ein naiver Wert
+    darf hier deshalb nicht als Ortszeit gelesen werden – das verschöbe jede
+    Auswertung um den Zonenversatz.
+    """
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _entry_bounds(entry: models.TimeEntry) -> tuple[datetime, datetime]:
+    """Beginn und Ende einer Buchung als **UTC-Zeitpunkte**.
+
+    Gepflegte UTC-Stempel haben Vorrang – sie sind eindeutig. Erst wenn sie
+    fehlen (Bestandsbuchungen vor 0.14.0), wird aus ``work_date`` und den
+    Ortszeiten zusammengesetzt und über die Zeitzone der Buchung nach UTC
+    gerechnet.
+
+    Bis 0.14.2 behauptete diese Funktion den UTC-Vorrang zwar, benutzte die
+    Stempel aber nie. Über eine Zeitumstellung hinweg lag die Ruhezeit dadurch
+    um eine Stunde daneben.
+    """
+    tz = _timezone(getattr(entry, "tz_name", None))
+
+    start = _from_utc_column(getattr(entry, "started_at_utc", None))
+    if start is None:
+        start = _from_local(
+            datetime.combine(entry.work_date, entry.start_time or time(0, 0)), tz
+        )
+
     if entry.is_open or entry.end_time is None:
-        now = datetime.now()
-        end = datetime.combine(now.date(), now.time())
+        end = datetime.now(timezone.utc)
     else:
-        end = datetime.combine(entry.work_date, entry.end_time)
+        end = _from_utc_column(getattr(entry, "ended_at_utc", None))
+        if end is None:
+            end = _from_local(datetime.combine(entry.work_date, entry.end_time), tz)
+            # Nachtarbeit: Endet die Buchung vor ihrem Beginn, liegt das Ende
+            # am Folgetag. Bei gepflegten UTC-Stempeln erübrigt sich das.
+            if end is not None and end < start:
+                end += timedelta(days=1)
     if end < start:
-        end += timedelta(days=1)
+        end = start
     return start, end
+
+
+def _local_date(moment: datetime, tz_name: Optional[str] = None) -> date:
+    """Kalendertag eines UTC-Zeitpunkts in Ortszeit."""
+    return moment.astimezone(_timezone(tz_name)).date()
+
+
+def _break_cuts(entry: models.TimeEntry) -> tuple[list[tuple[datetime, datetime]], int]:
+    """Gebuchte Pausen einer Buchung als UTC-Intervalle.
+
+    Rückgabe: die zeitlich verorteten Pausen und die Minuten, die sich
+    **nicht** verorten lassen. Letztere stammen aus Bestandsbuchungen, die nur
+    eine Pausensumme kennen – sie zählen für die Mindestpause mit, lassen sich
+    aber nicht in die Schicht einsortieren.
+    """
+    tz = _timezone(getattr(entry, "tz_name", None))
+    cuts: list[tuple[datetime, datetime]] = []
+    placed = 0
+    for interval in getattr(entry, "_break_intervals", []) or []:
+        started = _from_utc_column(getattr(interval, "started_at_utc", None))
+        ended = _from_utc_column(getattr(interval, "ended_at_utc", None))
+        if started is None or ended is None or ended <= started:
+            continue
+        cuts.append((started, ended))
+        placed += int((ended - started).total_seconds() // 60)
+    unplaced = max(int(entry.total_break_minutes or 0) - placed, 0)
+    return sorted(cuts), unplaced
+
+
+def _subtract(
+    span: tuple[datetime, datetime], cuts: list[tuple[datetime, datetime]]
+) -> list[tuple[datetime, datetime]]:
+    """Arbeitsintervalle einer Buchung: Zeitraum abzüglich der Pausen."""
+    result: list[tuple[datetime, datetime]] = []
+    cursor, end = span
+    for cut_start, cut_end in cuts:
+        if cut_end <= cursor or cut_start >= end:
+            continue
+        if cut_start > cursor:
+            result.append((cursor, min(cut_start, end)))
+        cursor = max(cursor, cut_end)
+        if cursor >= end:
+            break
+    if cursor < end:
+        result.append((cursor, end))
+    return [(a, b) for a, b in result if b > a]
+
+
+class Shift:
+    """Eine zusammenhängende Arbeitsschicht über alle Kunden und Aufträge.
+
+    Der Kern der Pausenprüfung: § 4 ArbZG kennt keine Aufträge. Wer von 8 bis
+    12 für Kunde A und von 12 bis 17 für Kunde B arbeitet, hat neun Stunden am
+    Stück gearbeitet und keine Pause gemacht – auch wenn das in zwei Buchungen
+    steht. Ein Wechsel von Kunde, Auftrag oder Einsatzort ist **keine** Pause.
+    """
+
+    __slots__ = ("intervals", "entries", "unplaced_break_minutes")
+
+    def __init__(self) -> None:
+        self.intervals: list[tuple[datetime, datetime]] = []
+        self.entries: list[models.TimeEntry] = []
+        self.unplaced_break_minutes = 0
+
+    @property
+    def start(self) -> datetime:
+        return self.intervals[0][0]
+
+    @property
+    def end(self) -> datetime:
+        return self.intervals[-1][1]
+
+    @property
+    def work_minutes(self) -> int:
+        """Tatsächliche Arbeitszeit der Schicht in Minuten.
+
+        Nicht verortete Pausen aus Bestandsbuchungen werden abgezogen: Sie
+        liegen irgendwo in der Schicht, nur wo genau, sagt die Altbuchung
+        nicht.
+        """
+        gross = sum(
+            int((end - start).total_seconds() // 60) for start, end in self.intervals
+        )
+        return max(gross - self.unplaced_break_minutes, 0)
+
+    @property
+    def break_minutes(self) -> int:
+        """Anrechenbare Ruhepausen (§ 4 Abs. 1 Satz 2 ArbZG).
+
+        Angerechnet werden nur Unterbrechungen von mindestens
+        ``MIN_BREAK_SEGMENT_MINUTES``. Kürzere Lücken – etwa der Wechsel
+        zwischen zwei Aufträgen – sind keine Ruhepause und wurden beim Bau der
+        Schicht bereits zur Arbeitszeit geschlagen.
+        """
+        total = self.unplaced_break_minutes
+        for index in range(1, len(self.intervals)):
+            gap = int(
+                (self.intervals[index][0] - self.intervals[index - 1][1]).total_seconds()
+                // 60
+            )
+            if gap >= models.MIN_BREAK_SEGMENT_MINUTES:
+                total += gap
+        return total
+
+    @property
+    def required_break_minutes(self) -> int:
+        """Mindestpause für die Arbeitszeit dieser Schicht."""
+        duration = self.work_minutes
+        if duration > 9 * 60:
+            return 45
+        if duration > 6 * 60:
+            return 30
+        return 0
+
+    @property
+    def break_shortfall_minutes(self) -> int:
+        return max(self.required_break_minutes - self.break_minutes, 0)
+
+
+def build_shifts(entries: Iterable[models.TimeEntry]) -> list[Shift]:
+    """Buchungen zu chronologischen Schichten zusammenfassen.
+
+    Vorgehen:
+
+    1. Jede Buchung wird um ihre gebuchten Pausen bereinigt.
+    2. Alle Arbeitsintervalle werden über **alle Kunden, Aufträge und
+       Einsatzorte hinweg** chronologisch sortiert.
+    3. Überlappende und unmittelbar aufeinanderfolgende Intervalle werden
+       zusammengeführt; Lücken unter ``MIN_BREAK_SEGMENT_MINUTES`` gelten als
+       Arbeitszeit, nicht als Pause.
+    4. Eine Lücke von mindestens ``SHIFT_BREAK_MINUTES`` trennt zwei Schichten
+       – alles darunter bleibt dieselbe Schicht mit einer Pause. Siehe dort:
+       Der Wert ist eine fachliche Festlegung, keine Zahl aus dem Gesetz.
+
+    Damit wird Nachtarbeit über Mitternacht automatisch richtig behandelt: Die
+    Schicht endet dort, wo tatsächlich eine Ruhezeit liegt, nicht am
+    Kalendertagwechsel.
+    """
+    pieces: list[tuple[datetime, datetime, models.TimeEntry]] = []
+    unplaced: dict[int, int] = {}
+    for entry in entries:
+        cuts, leftover = _break_cuts(entry)
+        for start, end in _subtract(_entry_bounds(entry), cuts):
+            pieces.append((start, end, entry))
+        if leftover:
+            unplaced[id(entry)] = unplaced.get(id(entry), 0) + leftover
+    if not pieces:
+        return []
+    pieces.sort(key=lambda item: (item[0], item[1]))
+
+    shifts: list[Shift] = []
+    current = Shift()
+    for start, end, entry in pieces:
+        if not current.intervals:
+            current.intervals.append((start, end))
+            current.entries.append(entry)
+            continue
+        last_start, last_end = current.intervals[-1]
+        gap = int((start - last_end).total_seconds() // 60)
+        if gap >= models.SHIFT_BREAK_MINUTES:
+            shifts.append(current)
+            current = Shift()
+            current.intervals.append((start, end))
+            current.entries.append(entry)
+            continue
+        if entry not in current.entries:
+            current.entries.append(entry)
+        if gap < models.MIN_BREAK_SEGMENT_MINUTES:
+            # Überlappend oder direkt anschließend: zusammenführen. Der Wechsel
+            # von Auftrag, Kunde oder Standort ist keine Ruhepause.
+            current.intervals[-1] = (last_start, max(last_end, end))
+        else:
+            current.intervals.append((start, end))
+    shifts.append(current)
+
+    for shift in shifts:
+        shift.unplaced_break_minutes = sum(
+            unplaced.get(id(entry), 0) for entry in shift.entries
+        )
+    return shifts
 
 
 def _countable(entries: Iterable[models.TimeEntry]) -> list[models.TimeEntry]:
@@ -93,6 +353,20 @@ def _countable(entries: Iterable[models.TimeEntry]) -> list[models.TimeEntry]:
         entry for entry in entries
         if entry.status != models.TimeEntryStatus.CANCELLED
     ]
+
+
+def _entries_around(
+    db: Session, user_id: int, work_date: date, *, days: int = 1
+) -> list[models.TimeEntry]:
+    """Buchungen des Tages samt Nachbartagen – für Schichten über Mitternacht."""
+    return _countable(
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.user_id == user_id)
+        .filter(models.TimeEntry.work_date >= work_date - timedelta(days=days))
+        .filter(models.TimeEntry.work_date <= work_date + timedelta(days=days))
+        .order_by(models.TimeEntry.work_date, models.TimeEntry.start_time)
+        .all()
+    )
 
 
 def evaluate_day(
@@ -141,21 +415,31 @@ def evaluate_day(
             ),
         })
 
-    # Pausen werden je Buchung bewertet: Zwei getrennte Buchungen sind zwei
-    # Arbeitsabschnitte, und der Fehlbetrag der längeren geht sonst unter.
-    for entry in entries:
-        shortfall = entry.break_shortfall_minutes
-        if shortfall > 0:
-            findings.append({
-                "code": models.ComplianceCode.BREAK_MISSING,
-                "severity": SEVERITY_WARNING,
-                "entry_id": entry.id,
-                "detail": (
-                    f"{shortfall} Minuten Ruhepause fehlen "
-                    f"({_format_minutes(entry.gross_minutes)} Anwesenheit, "
-                    f"{entry.countable_break_minutes} Minuten anrechenbare Pause)."
-                ),
-            })
+    # Pausen werden über die **ganze Schicht** bewertet, nicht je Buchung.
+    # Wer von 8 bis 12 für Kunde A und von 12 bis 17 für Kunde B arbeitet, hat
+    # neun Stunden am Stück gearbeitet – der Kundenwechsel ist keine Pause.
+    # Herangezogen werden auch die Nachbartage, damit eine Nachtschicht nicht
+    # am Kalendertagwechsel zerfällt.
+    for shift in build_shifts(_entries_around(db, user_id, work_date)):
+        if _local_date(shift.start) != work_date:
+            # Jede Schicht wird an ihrem Beginntag bewertet – sonst stünde
+            # dieselbe Feststellung an zwei Tagen.
+            continue
+        shortfall = shift.break_shortfall_minutes
+        if shortfall <= 0:
+            continue
+        findings.append({
+            "code": models.ComplianceCode.BREAK_MISSING,
+            "severity": SEVERITY_WARNING,
+            "entry_id": shift.entries[-1].id,
+            "detail": (
+                f"{shortfall} Minuten Ruhepause fehlen: "
+                f"{_format_minutes(shift.work_minutes)} Arbeitszeit in einer Schicht "
+                f"über {len(shift.entries)} Buchung(en), "
+                f"{shift.break_minutes} Minuten anrechenbare Pause, "
+                f"erforderlich {shift.required_break_minutes} Minuten."
+            ),
+        })
 
     if work_date.weekday() == 6:
         findings.append({
@@ -186,39 +470,40 @@ def _rest_finding(
     work_date: date,
     entries: list[models.TimeEntry],
 ) -> Optional[dict[str, object]]:
-    """Ruhezeit zum vorherigen Arbeitstag prüfen (§5 ArbZG).
+    """Ruhezeit zur vorangegangenen Schicht prüfen (§ 5 ArbZG).
 
-    Verglichen wird das späteste Ende der Vortage mit dem frühesten Beginn
-    dieses Tages. Zwei Tage zurück, damit eine Nachtschicht, die erst am
-    Folgetag endet, nicht übersehen wird.
+    Verglichen werden **Schichten**, nicht Kalendertage: Eine Nachtschicht
+    endet am Folgetag, und ein Kundenwechsel innerhalb einer Schicht ist keine
+    Ruhezeit. Gerechnet wird durchgehend in UTC, damit eine Zeitumstellung das
+    Ergebnis nicht um eine Stunde verschiebt.
     """
-    starts = [_entry_bounds(entry)[0] for entry in entries]
-    if not starts:
+    if not entries:
         return None
-    first_start = min(starts)
+    # Drei Tage zurück und einen vor: genug, damit eine lange Nachtschicht und
+    # die davorliegende Ruhezeit vollständig im Fenster liegen.
+    shifts = build_shifts(_entries_around(db, user_id, work_date, days=3))
+    today_shifts = [
+        shift for shift in shifts if _local_date(shift.start) == work_date
+    ]
+    if not today_shifts:
+        return None
+    current = today_shifts[0]
 
-    previous = _countable(
-        db.query(models.TimeEntry)
-        .filter(models.TimeEntry.user_id == user_id)
-        .filter(models.TimeEntry.work_date < work_date)
-        .filter(models.TimeEntry.work_date >= work_date - timedelta(days=2))
-        .all()
-    )
-    ends = [_entry_bounds(entry)[1] for entry in previous]
-    ends = [end for end in ends if end <= first_start]
-    if not ends:
+    earlier = [shift for shift in shifts if shift.end <= current.start]
+    if not earlier:
         return None
-    last_end = max(ends)
-    rest_minutes = int((first_start - last_end).total_seconds() // 60)
+    previous = max(earlier, key=lambda shift: shift.end)
+    rest_minutes = int((current.start - previous.end).total_seconds() // 60)
     if rest_minutes >= models.MIN_REST_MINUTES:
         return None
+    local_end = previous.end.astimezone(_timezone(None))
     return {
         "code": models.ComplianceCode.REST_UNDER_11H,
         "severity": SEVERITY_CRITICAL,
-        "entry_id": entries[0].id,
+        "entry_id": current.entries[0].id,
         "detail": (
             f"Nur {_format_minutes(max(rest_minutes, 0))} Ruhezeit seit "
-            f"{last_end.strftime('%d.%m.%Y %H:%M')} – vorgeschrieben sind 11 Stunden."
+            f"{local_end.strftime('%d.%m.%Y %H:%M')} – vorgeschrieben sind 11 Stunden."
         ),
     }
 
@@ -233,12 +518,42 @@ def _holiday_dates(db: Session, year: int) -> set[date]:
         return set()
 
 
-def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.ComplianceFlag]:
-    """Kennzeichnungen eines Tages neu berechnen und speichern.
+def fingerprint(finding: dict[str, object]) -> str:
+    """Prüfsumme des bewerteten Datenstands einer Feststellung.
 
-    Offene (unbestätigte) Kennzeichnungen werden ersetzt, bestätigte bleiben
-    stehen: Wer einen Verstoß eingeordnet hat, soll das nicht bei jeder
-    Nachbuchung erneut tun müssen.
+    Sie bindet die Bestätigung an genau **den** Stand, für den sie abgegeben
+    wurde. Ändert sich Arbeitszeit, Pause oder Schweregrad, ändert sich die
+    Prüfsumme – und die Feststellung wird wieder geöffnet. Eine Bestätigung
+    von gestern soll einen Verstoß von heute nicht zudecken.
+
+    Bewusst über Code, Schweregrad und Detailtext: Der Detailtext enthält die
+    bewerteten Minuten und ist damit der kompakteste verfügbare Abdruck des
+    Datenstands.
+    """
+    payload = "|".join(
+        (
+            str(finding.get("code", "")),
+            str(finding.get("severity", "")),
+            str(finding.get("detail", "")),
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:64]
+
+
+def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.ComplianceFlag]:
+    """Kennzeichnungen eines Tages neu bewerten und **fortschreiben**.
+
+    Bis 0.14.2 wurden offene Kennzeichnungen bei jeder Neuberechnung physisch
+    gelöscht. Damit war hinterher nicht mehr erkennbar, dass es sie je gab –
+    das Gegenteil dessen, was eine revisionssichere Erfassung leisten soll.
+
+    Jetzt wird jede Feststellung fortgeschrieben:
+
+    * **neu** → ``detected``
+    * **weiterhin vorhanden, anderer Datenstand** → ``changed``
+    * **weiterhin vorhanden, gleicher Datenstand** → bleibt, wie sie ist
+    * **nicht mehr vorhanden** → ``resolved`` (nicht gelöscht)
+    * **bestätigt, aber Datenstand geändert** → ``reopened``
 
     Fehler werden protokolliert und geschluckt – eine Stempelung darf nie an
     der Regelprüfung scheitern.
@@ -251,28 +566,69 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
             .filter(models.ComplianceFlag.work_date == work_date)
             .all()
         )
-        acknowledged = {flag.code for flag in existing if flag.acknowledged_at is not None}
-        for flag in existing:
-            if flag.acknowledged_at is None:
-                db.delete(flag)
-        db.flush()
+        by_code = {flag.code: flag for flag in existing}
+        now = datetime.utcnow()
+        seen: set[str] = set()
+        touched: list[models.ComplianceFlag] = []
 
-        created: list[models.ComplianceFlag] = []
         for finding in findings:
-            if finding["code"] in acknowledged:
+            code = str(finding["code"])
+            seen.add(code)
+            digest = fingerprint(finding)
+            flag = by_code.get(code)
+            if flag is None:
+                flag = models.ComplianceFlag(
+                    user_id=user_id,
+                    entry_id=finding.get("entry_id"),
+                    work_date=work_date,
+                    code=code,
+                    severity=str(finding["severity"]),
+                    detail=str(finding["detail"])[:500],
+                    state=models.ComplianceState.DETECTED,
+                    fingerprint=digest,
+                    revision_no=1,
+                    updated_at=now,
+                )
+                db.add(flag)
+                touched.append(flag)
                 continue
-            flag = models.ComplianceFlag(
-                user_id=user_id,
-                entry_id=finding.get("entry_id"),
-                work_date=work_date,
-                code=str(finding["code"]),
-                severity=str(finding["severity"]),
-                detail=str(finding["detail"])[:500],
-            )
-            db.add(flag)
-            created.append(flag)
+
+            unchanged = flag.fingerprint == digest
+            flag.entry_id = finding.get("entry_id")
+            flag.severity = str(finding["severity"])
+            flag.detail = str(finding["detail"])[:500]
+            flag.resolved_at = None
+            if unchanged and flag.state != models.ComplianceState.RESOLVED:
+                # Nichts hat sich geändert – Bestätigung und Zustand bleiben.
+                continue
+            flag.fingerprint = digest
+            flag.revision_no = int(flag.revision_no or 1) + 1
+            flag.updated_at = now
+            if flag.acknowledged_at is not None:
+                # Bestätigt, aber der bewertete Stand ist ein anderer: Die
+                # Bestätigung gilt nicht mehr, die Feststellung wird wieder
+                # geöffnet. Die alte Einordnung bleibt als Text erhalten.
+                flag.state = models.ComplianceState.REOPENED
+                flag.reopened_at = now
+                flag.acknowledged_at = None
+                flag.acknowledged_by_id = None
+            else:
+                flag.state = models.ComplianceState.CHANGED
+            touched.append(flag)
+
+        # Nicht mehr vorhandene Feststellungen werden erledigt, nicht gelöscht.
+        for code, flag in by_code.items():
+            if code in seen or flag.state == models.ComplianceState.RESOLVED:
+                continue
+            flag.state = models.ComplianceState.RESOLVED
+            flag.resolved_at = now
+            flag.updated_at = now
+            touched.append(flag)
+
         db.commit()
-        return created
+        for flag in touched:
+            db.refresh(flag)
+        return touched
     except Exception as exc:  # pragma: no cover - defensiv
         db.rollback()
         LOGGER.warning("Regelprüfung für %s am %s fehlgeschlagen: %s", user_id, work_date, exc)
@@ -308,8 +664,16 @@ def open_flags(
     limit: int = 200,
 ) -> list[models.ComplianceFlag]:
     """Offene Kennzeichnungen – für die Eskalation in der Administration."""
+    # Offen heißt: braucht noch Aufmerksamkeit. Erledigte und bestätigte
+    # Feststellungen bleiben erhalten, tauchen hier aber nicht mehr auf.
     query = db.query(models.ComplianceFlag).filter(
-        models.ComplianceFlag.acknowledged_at.is_(None)
+        models.ComplianceFlag.state.in_(
+            (
+                models.ComplianceState.DETECTED,
+                models.ComplianceState.CHANGED,
+                models.ComplianceState.REOPENED,
+            )
+        )
     )
     if user_ids is not None:
         ids = list(user_ids)
@@ -327,6 +691,15 @@ def open_flags(
     )
 
 
+def get_flag(db: Session, flag_id: int) -> Optional[models.ComplianceFlag]:
+    """Einzelne Feststellung – für die Rechteprüfung vor dem Einordnen."""
+    return (
+        db.query(models.ComplianceFlag)
+        .filter(models.ComplianceFlag.id == flag_id)
+        .first()
+    )
+
+
 def acknowledge(
     db: Session, flag_id: int, *, user: models.User, note: str
 ) -> Optional[models.ComplianceFlag]:
@@ -334,16 +707,26 @@ def acknowledge(
 
     Bestätigen heißt nicht „erledigt", sondern „gesehen und bewertet" – der
     Verstoß selbst bleibt für die Prüfung erhalten.
+
+    Die Bestätigung wird an den **geprüften Datenstand** gebunden
+    (``acknowledged_fingerprint``). Ändert sich die Buchung später, öffnet
+    :func:`refresh_day` die Feststellung wieder: Eine Einordnung gilt für das,
+    was zum Zeitpunkt der Einordnung dastand – nicht für alles, was später
+    daraus wird.
     """
-    flag = db.query(models.ComplianceFlag).filter(models.ComplianceFlag.id == flag_id).first()
+    flag = get_flag(db, flag_id)
     if flag is None:
         return None
     cleaned = (note or "").strip()
     if not cleaned:
         raise ValueError("REASON_REQUIRED")
-    flag.acknowledged_at = datetime.utcnow()
+    now = datetime.utcnow()
+    flag.acknowledged_at = now
     flag.acknowledged_by_id = user.id if user else None
     flag.acknowledgement = cleaned[:500]
+    flag.state = models.ComplianceState.ACKNOWLEDGED
+    flag.acknowledged_fingerprint = flag.fingerprint
+    flag.updated_at = now
     db.commit()
     db.refresh(flag)
     return flag
