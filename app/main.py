@@ -1655,7 +1655,10 @@ def _build_dashboard_context(db: Session, user: models.User):
     holiday_region = crud.get_default_holiday_region(db)
     holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
     holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
-    companies = crud.get_companies(db)
+    # Ohne den Baustein „orders" gibt es nichts zum Anstempeln: Ohne Firmenliste
+    # und ohne Anlegeerlaubnis blenden Dashboard und Mobilansicht den ganzen
+    # Auftragsteil von selbst aus (``{% if companies or can_create_companies %}``).
+    companies = crud.get_companies(db) if _can_clock_on_orders() else []
     vacations = crud.get_vacations_for_user(db, user.id)
     daily_overview = _build_daily_overview(db, user.id, today)
     weekly_summary = _build_weekly_overview(db, user, today, today=today)
@@ -1852,6 +1855,12 @@ def submit_time_entry(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     new_company_value = (new_company_name or "").strip()
     company_value: Optional[int] = None
+    if (new_company_value or company_id) and not _can_clock_on_orders():
+        redirect = _build_redirect(
+            _sanitize_next(next_url),
+            error="Auftragsbezogenes Stempeln ist in dieser Lizenz nicht enthalten.",
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if new_company_value:
         if not _can_create_companies(user):
             redirect = _build_redirect(
@@ -1977,6 +1986,7 @@ def mobile_sync_data(
     active_entry = crud.get_open_time_entry(db, user.id)
     metrics = services.calculate_dashboard_metrics(db, user.id, today.replace(day=1))
     vacation_licensed = has_license_feature("vacation")
+    orders_licensed = _can_clock_on_orders()
 
     payload = {
         "version": APP_VERSION,
@@ -1993,6 +2003,8 @@ def mobile_sync_data(
             "daily_target_minutes": int(round(user.daily_target_minutes or 0)),
             "weekly_target_minutes": int(round(user.weekly_target_minutes or 0)),
         },
+        # Ohne den Baustein „orders" bekommt die Offline-Shell keine Firmen –
+        # damit bietet sie den Auftragsstart gar nicht erst an.
         "companies": [
             {
                 "id": company.id,
@@ -2000,7 +2012,7 @@ def mobile_sync_data(
                 "description": company.description or "",
             }
             for company in companies
-        ],
+        ] if orders_licensed else [],
         "entries": [_serialize_mobile_entry(entry) for entry in entries],
         "vacations": (
             [_serialize_mobile_vacation(vacation) for vacation in vacations]
@@ -2199,6 +2211,14 @@ def punch_action(
                 message = "Arbeitszeit gestartet."
             elif not error:
                 message = "Arbeitszeit läuft bereits."
+    elif action == "start_company" and not _can_clock_on_orders():
+        # Nur das *Starten* eines Auftrags ist gesperrt. „Auftrag beenden"
+        # bleibt erlaubt, damit ein bereits laufender Auftrag nicht hängen
+        # bleibt, wenn eine Lizenz ausläuft – sonst ginge Arbeitszeit verloren.
+        error = (
+            "Auftragsbezogenes Stempeln ist in dieser Lizenz nicht enthalten. "
+            "Die Arbeitszeit lässt sich weiterhin ohne Auftrag erfassen."
+        )
     elif action == "start_company":
         new_company_value = (new_company_name or "").strip()
         target_company = None
@@ -2713,8 +2733,18 @@ def _can_approve_manual_entries(user: models.User) -> bool:
     return permission_service.has(user, "Time.Approve")
 
 
+def _can_clock_on_orders() -> bool:
+    """Ist auftragsbezogenes Stempeln lizenziert?
+
+    Das reine Stempeln bleibt immer möglich – Firmen und Aufträge gehören
+    dagegen zum Baustein ``orders`` und verschwinden ohne ihn aus Oberfläche,
+    Mobilansicht und Synchronisation.
+    """
+    return has_license_feature("orders")
+
+
 def _can_create_companies(user: models.User) -> bool:
-    return permission_service.has(user, "Company.Create")
+    return permission_service.has(user, "Company.Create") and _can_clock_on_orders()
 
 
 def _can_view_time_reports(user: models.User) -> bool:

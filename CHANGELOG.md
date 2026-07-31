@@ -41,6 +41,14 @@ Ab sofort entscheidet ausschließlich das Lizenzdokument.
 
 ### Fixed
 
+- **Auftragsbezogenes Stempeln lief ohne Lizenz weiter.** Firmen- und
+  Auftragsauswahl gehören zum Baustein `orders`, `/punch` war aber bewusst
+  ganz von der Middleware ausgenommen, damit Stempeln nie blockiert. Jetzt
+  entfällt ohne `orders` der ganze Auftragsteil in Dashboard, Mobilansicht und
+  Synchronisation, und `start_company` sowie ein Nachtrag mit Firma werden
+  serverseitig abgewiesen. **„Auftrag beenden" bleibt erlaubt** – läuft eine
+  Lizenz mitten im Auftrag aus, muss sich die Buchung schließen lassen, sonst
+  ginge Arbeitszeit verloren. Das reine Stempeln ist unverändert offen.
 - `GET /api/users/{id}/excel` war nicht lizenzpflichtig, obwohl es eine
   Auswertung ist: Am Pfadpräfix ließ es sich nicht von der Benutzer-API
   unterscheiden, die zur Basis gehört. Die Middleware kennt dafür jetzt
@@ -62,7 +70,7 @@ aktivierte Installation lässt sich also einrichten und aktivieren.
 
 ### Tests
 
-`tests/test_v0121.py` – 27 Tests: jeder zubuchbare Bereich ohne Lizenz zu
+`tests/test_v0121.py` – 33 Tests: jeder zubuchbare Bereich ohne Lizenz zu
 (Oberfläche und API), Basis offen, Navigation ohne die gesperrten Punkte,
 Benutzeranlage abgewiesen, Stempeln und Anmelden weiterhin möglich,
 abgelaufene und ungültige Lizenz schalten nichts frei, gültige Lizenz öffnet
