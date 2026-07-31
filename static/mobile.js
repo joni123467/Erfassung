@@ -762,41 +762,65 @@ async function hydrateCompaniesFromCache() {
 // Einsatzorte aus dem Snapshot in die Auswahllisten schreiben. Ohne das stünde
 // man offline vor einer Liste mit nur „Vor Ort“ und „Remote“ – die Standorte
 // kommen aus der Synchronisation, nicht aus der zwischengespeicherten Seite.
+// Einsatzorte aus dem Snapshot in die Auswahlliste des Auftragsdialogs
+// schreiben – gefiltert auf die gewählte Firma. Ein Standort gehört zu genau
+// einer Firma; firmenfremde Einträge dürfen dort nie auftauchen.
+//
+// Beim Wechsel der Firma wird der Hauptstandort vorausgewählt: Wer eine Firma
+// mit Standort wählt, meint fast immer deren Standort und nicht „Vor Ort".
 async function hydrateLocationsFromCache() {
   const snapshot = await getRecord(DATA_STORE, 'snapshot');
   const locations = snapshot?.data?.locations;
-  if (!Array.isArray(locations) || locations.length === 0) return;
+  if (!Array.isArray(locations)) return;
 
-  document.querySelectorAll('select[name="work_location"]').forEach((select) => {
-    if (!(select instanceof HTMLSelectElement)) return;
-    const selected = select.value;
+  const byCompany = new Map();
+  locations.forEach((location) => {
+    const key = String(location.company_id || '');
+    if (!byCompany.has(key)) byCompany.set(key, []);
+    byCompany.get(key).push(location);
+  });
+
+  const fill = (select, items, keepValue) => {
+    const previous = keepValue ? select.value : '';
     select.innerHTML = '';
     [['onsite', 'Vor Ort'], ['remote', 'Remote']].forEach(([value, label]) => {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = label;
-      if (value === selected) option.selected = true;
       select.appendChild(option);
     });
+    (items || []).forEach((location) => {
+      const option = document.createElement('option');
+      option.value = String(location.id);
+      option.textContent = location.city
+        ? `${location.name} · ${location.city}`
+        : location.name;
+      select.appendChild(option);
+    });
+    const primary = (items || []).find((item) => item.is_primary) || (items || [])[0];
+    const wanted = previous && [...select.options].some((o) => o.value === previous)
+      ? previous
+      : (primary ? String(primary.id) : 'onsite');
+    select.value = wanted;
+  };
 
-    const groups = new Map();
-    locations.forEach((location) => {
-      const name = location.company_name || '';
-      if (!groups.has(name)) groups.set(name, []);
-      groups.get(name).push(location);
-    });
-    groups.forEach((items, companyName) => {
-      const group = document.createElement('optgroup');
-      group.label = companyName;
-      items.forEach((location) => {
-        const option = document.createElement('option');
-        option.value = String(location.id);
-        option.textContent = location.name;
-        if (String(location.id) === String(selected)) option.selected = true;
-        group.appendChild(option);
-      });
-      select.appendChild(group);
-    });
+  document.querySelectorAll('[data-location-picker]').forEach((select) => {
+    if (!(select instanceof HTMLSelectElement)) return;
+    const form = select.closest('form');
+    const companySelect = form ? form.querySelector('select[name="company_id"]') : null;
+    if (!companySelect) {
+      fill(select, [], true);
+      return;
+    }
+    const update = (keepValue) => {
+      const key = String(companySelect.value || '');
+      fill(select, key ? byCompany.get(key) : [], keepValue);
+    };
+    if (!select.dataset.locationWired) {
+      companySelect.addEventListener('change', () => update(false));
+      select.dataset.locationWired = '1';
+    }
+    update(true);
   });
 }
 

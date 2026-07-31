@@ -58,3 +58,75 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+
+// ── Einsatzort folgt der Firma ────────────────────────────────────────────
+//
+// Ein Standort gehört zu genau einer Firma. Wird im Formular eine andere
+// Firma gewählt, muss die Standortliste mitwandern – sonst stünden dort
+// firmenfremde Einträge. Die Daten liegen als JSON in der Seite, es wird
+// also nichts nachgeladen (und es funktioniert offline).
+//
+// Der Server prüft dieselbe Zuordnung noch einmal nach; dieses Skript ist
+// Bedienkomfort, keine Absicherung.
+(function () {
+  function readCatalogue() {
+    const node = document.getElementById('location-catalogue');
+    if (!node) return null;
+    try {
+      return JSON.parse(node.textContent || '{}');
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function fillPicker(picker, locations, keepValue) {
+    const previous = keepValue ? picker.value : '';
+    picker.innerHTML = '';
+    [['onsite', 'Vor Ort'], ['remote', 'Remote']].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      picker.appendChild(option);
+    });
+    (locations || []).forEach((location) => {
+      const option = document.createElement('option');
+      option.value = String(location.id);
+      option.textContent = location.city
+        ? `${location.name} · ${location.city}`
+        : location.name;
+      picker.appendChild(option);
+    });
+
+    // Vorauswahl: der Hauptstandort der Firma. „Vor Ort" wäre hier die
+    // falsche Antwort – wer eine Firma mit Standort wählt, meint fast immer
+    // deren Standort.
+    const primary = (locations || []).find((location) => location.is_primary)
+      || (locations || [])[0];
+    const wanted = previous && [...picker.options].some((o) => o.value === previous)
+      ? previous
+      : (primary ? String(primary.id) : 'onsite');
+    picker.value = wanted;
+  }
+
+  function wire(form, catalogue) {
+    const picker = form.querySelector('[data-location-picker]');
+    const companySelect = form.querySelector('select[name="company_id"]');
+    if (!picker || !companySelect) return;
+
+    const update = (keepValue) => {
+      const key = String(companySelect.value || '');
+      fillPicker(picker, key ? catalogue[key] : [], keepValue);
+    };
+
+    companySelect.addEventListener('change', () => update(false));
+    // Beim Laden nur auffrischen, wenn die Firma bereits feststeht – eine
+    // servergerenderte Auswahl (z. B. beim Bearbeiten) bleibt sonst erhalten.
+    if (companySelect.value) update(true);
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    const catalogue = readCatalogue();
+    if (!catalogue) return;
+    document.querySelectorAll('form').forEach((form) => wire(form, catalogue));
+  });
+})();

@@ -5,6 +5,44 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.13.1] – 2026-07-31
+
+### Fixed – Standorte gehören zu ihrer Firma
+
+0.13.0 hat die Standorte bewusst **nicht** an die gewählte Firma gebunden. Das
+war in der Praxis falsch: Beim Schnellstempeln standen Firmenstandorte zur
+Wahl, obwohl es dort keine Firma gibt; im Auftragsdialog blieb „Vor Ort"
+vorausgewählt statt des Standorts der Firma; und es waren firmenfremde
+Standorte wählbar.
+
+- **Schnell stempeln** bietet wieder ausschließlich **Vor Ort** und **Remote**.
+- Der **Auftragsdialog** zeigt neben Vor Ort und Remote nur die Standorte der
+  **gewählten Firma**. Beim Wechsel der Firma tauscht die Liste, und der
+  **Hauptstandort** ist vorausgewählt.
+- Dasselbe gilt für den Nachtrag und die Buchungsbearbeitung.
+- **Serverseitig geprüft**: Ein Standort wird nur angenommen, wenn er zur
+  gebuchten Firma gehört. Ein veraltetes oder manipuliertes Formular kann
+  keinen fremden Standort unterschieben; verworfen wird still („vor Ort"),
+  abgewiesen wird nichts.
+- Der Einsatzort wird bei `/punch` erst aufgelöst, wenn die Firma feststeht –
+  bei `start_company` also nach dem eventuellen Anlegen einer neuen Firma.
+- Auch die Standorte des **eigenen Betriebs** hängen jetzt an ihrer Firma; wer
+  im eigenen Büro arbeitet, startet einen Auftrag darauf. Die Markierung
+  behält ihren Zweck: interne Zeit bleibt in Auswertungen unterscheidbar.
+
+Die Standorte liegen als JSON in der Seite (`#location-catalogue`), der
+Wechsel läuft ohne Nachladen und damit auch offline; die Stempel-App zieht
+dieselbe Liste aus dem Offline-Speicher.
+
+### Datenbank
+
+Keine Schemaänderung, keine Migration.
+
+### Tests
+
+`tests/test_v0130.py` – 27 Tests. Details in
+[`docs/RELEASE_NOTES_0.13.1.md`](docs/RELEASE_NOTES_0.13.1.md).
+
 ## [0.13.0] – 2026-07-31
 
 ### Added – Standorte statt „Vor Ort“
@@ -28,7 +66,8 @@ einen davon.
   beim bisherigen Schalter. Bewusst ein Bedienelement statt Schalter *und*
   Liste.
 - Der Einsatzort hängt **nicht** an der gewählten Firma: Wer für Kunde A
-  arbeitet, kann im eigenen Büro sitzen.
+  arbeitet, kann im eigenen Büro sitzen. *(Nur 0.13.0 – seit 0.13.1 gehört ein
+  Standort zu genau einer Firma.)*
 - Laufende Buchung, Buchungslisten, Freigaben und Auswertungen zeigen den
   Standortnamen (mit Anschrift im Dashboard). Die Spalte „Ort“ in PDF und
   Excel erscheint jetzt auch, wenn nur Standorte und kein Remote genutzt wird.

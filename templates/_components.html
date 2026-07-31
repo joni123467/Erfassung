@@ -24,27 +24,37 @@
 </label>
 {%- endmacro %}
 
-{% macro location_picker(options=None, checked=False, selected=None, block=False) -%}
-{% if options %}
+{% macro location_picker(locations=None, catalogue=None, checked=False, selected=None, block=False) -%}
+{% if catalogue %}
+{# Firmengebunden: Angeboten werden ausschließlich die Standorte der gewählten
+   Firma. ``data-location-picker`` verbindet die Liste mit der Firmenauswahl
+   desselben Formulars – wechselt die Firma, wechselt die Liste und der
+   Hauptstandort ist vorausgewählt. Ohne JavaScript bleibt die
+   servergerenderte Liste stehen; der Server prüft ohnehin nach, dass der
+   Standort zur gebuchten Firma gehört. #}
 <label class="location-toggle location-toggle--select{% if block %} location-toggle--block{% endif %}">
     <span class="visually-hidden">Einsatzort</span>
     <span class="location-toggle__face">
         <span class="location-toggle__dot" aria-hidden="true"></span>
         <span class="location-toggle__caption" aria-hidden="true">Einsatzort</span>
-        <select class="location-toggle__select" name="work_location">
+        <select class="location-toggle__select" name="work_location" data-location-picker>
             <option value="onsite"{% if not selected and not checked %} selected{% endif %}>Vor Ort</option>
             <option value="remote"{% if not selected and checked %} selected{% endif %}>Remote</option>
-            {% for group_name, group_locations in options %}
-                <optgroup label="{{ group_name }}">
-                    {% for location in group_locations %}
-                        <option value="{{ location.id }}"{% if selected == location.id %} selected{% endif %}>{{ location.name }}{% if location.city %} · {{ location.city }}{% endif %}</option>
-                    {% endfor %}
-                </optgroup>
+            {% for location in (locations or []) %}
+                <option value="{{ location.id }}"{% if selected == location.id %} selected{% endif %}>{{ location.name }}{% if location.city %} · {{ location.city }}{% endif %}</option>
             {% endfor %}
         </select>
     </span>
 </label>
 {% else %}
 {{ location_toggle(checked=checked, block=block) }}
+{% endif %}
+{%- endmacro %}
+
+{# Standorte je Firma als JSON – Grundlage für den Wechsel der Auswahl.
+   Einmal je Seite einbinden, dort wo eine Firmenauswahl vorkommt. #}
+{% macro location_catalogue(catalogue) -%}
+{% if catalogue %}
+<script type="application/json" id="location-catalogue">{{ catalogue | tojson }}</script>
 {% endif %}
 {%- endmacro %}

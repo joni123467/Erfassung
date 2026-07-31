@@ -262,32 +262,59 @@ def test_without_locations_the_toggle_stays(client):
     assert 'name="work_location"' not in page
 
 
-def test_with_locations_a_list_appears_in_the_same_shell(client):
+def test_quick_clocking_offers_only_remote_and_on_site(client):
+    """Schnell stempeln kennt keine Standorte.
+
+    Standorte gehören zu einer Firma. Ohne Auftrag gibt es keine Firma – und
+    damit nichts auszuwählen. Dort bleibt es beim Umschalter.
+    """
     company_id = _company("Müller GmbH")
     _location(company_id, "Werk Nord", city="Kiel")
     _login(client)
     page = client.get("/dashboard").text
+
+    schnell = page[page.index("Schnell stempeln"):page.index("order-modal")]
+    assert 'name="is_remote"' in schnell
+    assert 'name="work_location"' not in schnell
+
+
+def test_the_order_dialog_offers_the_list_in_the_same_shell(client):
+    company_id = _company("Müller GmbH")
+    _location(company_id, "Werk Nord", city="Kiel")
+    _login(client)
+    page = client.get("/dashboard").text
+
     assert 'name="work_location"' in page
     # Gleiche Pille, gleiche Beschriftung wie beim Umschalter.
     assert "location-toggle__face" in page
     assert "Einsatzort" in page
-    assert "Werk Nord" in page
     assert ">Vor Ort<" in page and ">Remote<" in page
+    # Ohne gewählte Firma steht noch kein Standort in der Liste; er kommt aus
+    # dem Katalog, sobald die Firma feststeht.
+    assert 'id="location-catalogue"' in page
+    assert "Werk Nord" in page
 
 
-def test_the_own_company_is_listed_first(client):
-    """Die eigenen Büros stehen oben – sie werden am häufigsten gebraucht."""
-    kunde = _company("Ärgerlich AG")
-    _location(kunde, "Werk Nord")
-    eigen = _company("Wir GmbH", internal=True)
-    _location(eigen, "Büro Hamburg")
+def test_the_catalogue_is_grouped_by_company(client):
+    """Grundlage für den Wechsel: je Firma genau ihre Standorte."""
+    import json
+
+    eins = _company("Müller GmbH")
+    werk = _location(eins, "Werk Nord", city="Kiel")
+    zwei = _company("Schmitz KG")
+    lager = _location(zwei, "Lager Süd")
 
     _login(client)
     page = client.get("/dashboard").text
-    assert page.index("Wir GmbH") < page.index("Ärgerlich AG")
+    raw = page.split('id="location-catalogue">')[1].split("</script>")[0]
+    catalogue = json.loads(raw)
+
+    assert [item["id"] for item in catalogue[str(eins)]] == [werk]
+    assert [item["id"] for item in catalogue[str(zwei)]] == [lager]
+    assert catalogue[str(eins)][0]["is_primary"] is True
 
 
-def test_clocking_on_a_location(client):
+def test_clocking_on_a_location_of_the_booked_company(client):
     company_id = _company("Müller GmbH")
     location_id = _location(company_id, "Werk Nord", city="Kiel", street="Hafenstr. 1",
                             postal_code="24103")
@@ -295,8 +322,9 @@ def test_clocking_on_a_location(client):
     token = _csrf(client, "/dashboard")
     response = client.post(
         "/punch",
-        data={"action": "start_work", "csrf_token": token,
-              "work_location": str(location_id), "next_url": "/dashboard"},
+        data={"action": "start_company", "company_id": str(company_id),
+              "csrf_token": token, "work_location": str(location_id),
+              "next_url": "/dashboard"},
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
@@ -304,6 +332,44 @@ def test_clocking_on_a_location(client):
     assert entry["location_id"] == location_id
     assert entry["label"] == "Werk Nord"
     assert entry["address"] == "Hafenstr. 1, 24103 Kiel"
+    assert entry["is_remote"] is False
+
+
+def test_a_location_of_another_company_is_discarded(client):
+    """Ein manipuliertes Formular darf keinen fremden Standort unterschieben."""
+    kunde = _company("Müller GmbH")
+    fremd = _company("Schmitz KG")
+    fremder_standort = _location(fremd, "Lager Süd")
+
+    _login(client)
+    token = _csrf(client, "/dashboard")
+    response = client.post(
+        "/punch",
+        data={"action": "start_company", "company_id": str(kunde),
+              "csrf_token": token, "work_location": str(fremder_standort),
+              "next_url": "/dashboard"},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    entry = _open_entry()
+    assert entry["location_id"] is None
+    assert entry["label"] == "Vor Ort"
+
+
+def test_quick_clocking_ignores_a_location(client):
+    """Ohne Firma kein Standort – auch wenn das Feld mitgeschickt wird."""
+    company_id = _company("Müller GmbH")
+    location_id = _location(company_id, "Werk Nord")
+    _login(client)
+    token = _csrf(client, "/dashboard")
+    client.post(
+        "/punch",
+        data={"action": "start_work", "csrf_token": token,
+              "work_location": str(location_id), "next_url": "/dashboard"},
+        follow_redirects=False,
+    )
+    entry = _open_entry()
+    assert entry["location_id"] is None
     assert entry["is_remote"] is False
 
 
@@ -364,8 +430,9 @@ def test_an_unknown_or_closed_location_falls_back_to_onsite(client):
     token = _csrf(client, "/dashboard")
     response = client.post(
         "/punch",
-        data={"action": "start_work", "csrf_token": token,
-              "work_location": str(location_id), "next_url": "/dashboard"},
+        data={"action": "start_company", "company_id": str(company_id),
+              "csrf_token": token, "work_location": str(location_id),
+              "next_url": "/dashboard"},
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
@@ -374,16 +441,21 @@ def test_an_unknown_or_closed_location_falls_back_to_onsite(client):
     assert entry["location_id"] is None and entry["is_remote"] is False
 
     _clear_entries()
-    client.post("/punch", data={"action": "start_work", "csrf_token": token,
-                                "work_location": "99999", "next_url": "/dashboard"},
+    client.post("/punch",
+                data={"action": "start_company", "company_id": str(company_id),
+                      "csrf_token": token, "work_location": "99999",
+                      "next_url": "/dashboard"},
                 follow_redirects=False)
     assert _open_entry()["location_id"] is None
 
 
-def test_the_location_is_independent_of_the_order(client):
-    """Für Kunde A arbeiten und im eigenen Büro sitzen ist kein Widerspruch."""
-    from app import crud
+def test_the_own_locations_need_their_own_order(client):
+    """Auch die eigenen Büros hängen an ihrer Firma.
 
+    Vor 0.13.1 stand der eigene Betrieb überall zur Wahl. Das war bequem, aber
+    falsch: Ein Standort gehört zu genau einer Firma, sonst landet er an einer
+    Buchung, zu der er nicht passt.
+    """
     kunde = _company("Müller GmbH")
     eigen = _company("Wir GmbH", internal=True)
     buero = _location(eigen, "Büro Hamburg")
@@ -396,14 +468,16 @@ def test_the_location_is_independent_of_the_order(client):
               "work_location": str(buero), "next_url": "/dashboard"},
         follow_redirects=False,
     )
-    db = _db()
-    try:
-        admin = crud.get_user_by_username(db, "admin")
-        entry = crud.get_open_time_entry(db, admin.id)
-        assert entry.company_id == kunde
-        assert entry.location_id == buero
-    finally:
-        db.close()
+    assert _open_entry()["location_id"] is None
+
+    _clear_entries()
+    client.post(
+        "/punch",
+        data={"action": "start_company", "company_id": str(eigen), "csrf_token": token,
+              "work_location": str(buero), "next_url": "/dashboard"},
+        follow_redirects=False,
+    )
+    assert _open_entry()["location_id"] == buero
 
 
 # --- Historie --------------------------------------------------------------
@@ -415,8 +489,10 @@ def test_a_deleted_location_keeps_its_name_on_the_booking(client):
     location_id = _location(company_id, "Werk Nord")
     _login(client)
     token = _csrf(client, "/dashboard")
-    client.post("/punch", data={"action": "start_work", "csrf_token": token,
-                                "work_location": str(location_id), "next_url": "/dashboard"},
+    client.post("/punch",
+                data={"action": "start_company", "company_id": str(company_id),
+                      "csrf_token": token, "work_location": str(location_id),
+                      "next_url": "/dashboard"},
                 follow_redirects=False)
 
     db = _db()
@@ -438,8 +514,10 @@ def test_deleting_the_company_also_preserves_the_location_name(client):
     location_id = _location(company_id, "Werk Nord")
     _login(client)
     token = _csrf(client, "/dashboard")
-    client.post("/punch", data={"action": "start_work", "csrf_token": token,
-                                "work_location": str(location_id), "next_url": "/dashboard"},
+    client.post("/punch",
+                data={"action": "start_company", "company_id": str(company_id),
+                      "csrf_token": token, "work_location": str(location_id),
+                      "next_url": "/dashboard"},
                 follow_redirects=False)
 
     db = _db()
@@ -567,8 +645,10 @@ def test_the_booking_list_shows_the_location_name(client):
     location_id = _location(company_id, "Werk Nord")
     _login(client)
     token = _csrf(client, "/dashboard")
-    client.post("/punch", data={"action": "start_work", "csrf_token": token,
-                                "work_location": str(location_id), "next_url": "/dashboard"},
+    client.post("/punch",
+                data={"action": "start_company", "company_id": str(company_id),
+                      "csrf_token": token, "work_location": str(location_id),
+                      "next_url": "/dashboard"},
                 follow_redirects=False)
     client.post("/punch", data={"action": "end_work", "csrf_token": token,
                                 "next_url": "/dashboard"}, follow_redirects=False)
@@ -602,8 +682,9 @@ def test_without_the_orders_module_there_are_no_locations(tmp_path, monkeypatch)
         admin.must_change_password = False
         admin.remote_flag_enabled = True
         company = crud.create_company(db, schemas.CompanyCreate(name="Müller GmbH"))
+        company_id = int(company.id)
         crud.create_company_location(
-            db, company.id, schemas.CompanyLocationCreate(name="Werk Nord")
+            db, company_id, schemas.CompanyLocationCreate(name="Werk Nord")
         )
         db.commit()
         db.close()
@@ -611,5 +692,7 @@ def test_without_the_orders_module_there_are_no_locations(tmp_path, monkeypatch)
         _login(client)
         page = client.get("/dashboard").text
         assert 'name="work_location"' not in page
+        assert 'id="location-catalogue"' not in page
         assert 'name="is_remote"' in page
-        assert main._location_options(database.SessionLocal()) == []
+        assert main._location_catalogue(database.SessionLocal()) == {}
+        assert main._locations_of(database.SessionLocal(), company_id) == []
