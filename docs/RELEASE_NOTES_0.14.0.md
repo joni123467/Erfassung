@@ -225,3 +225,13 @@ Idempotenz und der logische Export der neuen Tabellen.
 Angepasst wurden Tests, die das alte Verhalten festhielten: Änderungen brauchen
 jetzt eine Begründung, und verdrängte Buchungen werden storniert statt
 gelöscht.
+
+Die gesamte Suite läuft mit **495 Tests** grün durch.
+
+Nebenbei ist dabei ein Problem der Testinfrastruktur aufgefallen: Jeder Test
+lädt die Anwendung frisch und legt dabei eine eigene Engine an, deren
+Verbindungspool bisher offen blieb. Über die volle Suite lief der Prozess
+dadurch in das Limit für offene Dateien – und zwar erst beim Aufräumen am
+Ende, sodass pytest gar keine Zusammenfassung mehr schrieb. Ein grüner Lauf
+war so nicht von einem roten zu unterscheiden. `tests/conftest.py` schließt
+den Pool jetzt nach jedem Test; an der Anwendung ändert das nichts.

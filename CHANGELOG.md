@@ -74,8 +74,14 @@ Anlagevermerk. Portables DDL für SQLite, MySQL, MariaDB und PostgreSQL.
 
 ### Tests
 
-`tests/test_v0140.py` – 42 Tests. Details in
-[`docs/RELEASE_NOTES_0.14.0.md`](docs/RELEASE_NOTES_0.14.0.md).
+`tests/test_v0140.py` – 42 Tests; die Suite umfasst damit 495 Tests. Details
+in [`docs/RELEASE_NOTES_0.14.0.md`](docs/RELEASE_NOTES_0.14.0.md).
+
+Neu ist `tests/conftest.py`: Jeder Test lädt die Anwendung frisch und legte
+dabei eine Engine an, deren Verbindungspool offen blieb. Über die gesamte
+Suite lief der Prozess dadurch in das Limit für offene Dateien – und zwar
+erst beim Aufräumen, sodass pytest keine Zusammenfassung mehr schrieb. Ein
+autouse-Fixture schließt den Pool jetzt nach jedem Test.
 
 ## [0.13.1] – 2026-07-31
 
