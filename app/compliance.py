@@ -50,7 +50,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from . import models
+from . import models, worktime
 
 LOGGER = logging.getLogger("erfassung.application")
 
@@ -66,6 +66,8 @@ LABELS: dict[str, str] = {
     models.ComplianceCode.BREAK_MISSING: "Ruhepause fehlt",
     models.ComplianceCode.SUNDAY_WORK: "Sonntagsarbeit",
     models.ComplianceCode.HOLIDAY_WORK: "Feiertagsarbeit",
+    models.ComplianceCode.AVERAGE_OVER_8H: "Ausgleich fehlt (Ø über 8 Stunden)",
+    models.ComplianceCode.COMPENSATION_DUE: "Ausgleichszeitraum läuft ab",
 }
 
 REFERENCES: dict[str, str] = {
@@ -75,97 +77,33 @@ REFERENCES: dict[str, str] = {
     models.ComplianceCode.BREAK_MISSING: "§4 ArbZG",
     models.ComplianceCode.SUNDAY_WORK: "§9 ArbZG",
     models.ComplianceCode.HOLIDAY_WORK: "§9 ArbZG",
+    models.ComplianceCode.AVERAGE_OVER_8H: "§3 Satz 2 ArbZG",
+    models.ComplianceCode.COMPENSATION_DUE: "§3 Satz 2 ArbZG",
 }
+
+
+def _naive_utc(moment: object) -> Optional[datetime]:
+    """Zonenbehafteten UTC-Zeitpunkt als naiven Wert für die Spalte."""
+    if not isinstance(moment, datetime):
+        return None
+    if moment.tzinfo is None:
+        return moment
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _format_minutes(minutes: int) -> str:
     return f"{minutes // 60}:{minutes % 60:02d} Std"
 
 
-def _timezone(name: Optional[str]) -> ZoneInfo:
-    """Zeitzone einer Buchung – mit der Anlagenzeitzone als Rückfallebene."""
-    for candidate in (name, crud_timezone_name()):
-        if not candidate:
-            continue
-        try:
-            return ZoneInfo(candidate)
-        except Exception:  # pragma: no cover - unbekannte Zone in Altdaten
-            continue
-    return ZoneInfo("UTC")
-
-
-def crud_timezone_name() -> str:
-    from . import crud
-
-    return crud.local_timezone_name()
-
-
-def _from_local(moment: Optional[datetime], tz: ZoneInfo) -> Optional[datetime]:
-    """Ortszeit nach UTC bringen.
-
-    Für ``work_date`` + ``start_time``/``end_time``: Diese Werte sind Ortszeit,
-    also wird die Zeitzone der Buchung angeheftet und umgerechnet. Damit lösen
-    sich Sommer- und Winterzeit korrekt auf.
-    """
-    if moment is None:
-        return None
-    if moment.tzinfo is None:
-        return moment.replace(tzinfo=tz).astimezone(timezone.utc)
-    return moment.astimezone(timezone.utc)
-
-
-def _from_utc_column(moment: Optional[datetime]) -> Optional[datetime]:
-    """Wert aus ``started_at_utc``/``ended_at_utc`` zonenbehaftet machen.
-
-    Die Spalte heißt nicht umsonst so: Ihr Inhalt **ist** UTC. Ein naiver Wert
-    darf hier deshalb nicht als Ortszeit gelesen werden – das verschöbe jede
-    Auswertung um den Zonenversatz.
-    """
-    if moment is None:
-        return None
-    if moment.tzinfo is None:
-        return moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(timezone.utc)
-
-
-def _entry_bounds(entry: models.TimeEntry) -> tuple[datetime, datetime]:
-    """Beginn und Ende einer Buchung als **UTC-Zeitpunkte**.
-
-    Gepflegte UTC-Stempel haben Vorrang – sie sind eindeutig. Erst wenn sie
-    fehlen (Bestandsbuchungen vor 0.14.0), wird aus ``work_date`` und den
-    Ortszeiten zusammengesetzt und über die Zeitzone der Buchung nach UTC
-    gerechnet.
-
-    Bis 0.14.2 behauptete diese Funktion den UTC-Vorrang zwar, benutzte die
-    Stempel aber nie. Über eine Zeitumstellung hinweg lag die Ruhezeit dadurch
-    um eine Stunde daneben.
-    """
-    tz = _timezone(getattr(entry, "tz_name", None))
-
-    start = _from_utc_column(getattr(entry, "started_at_utc", None))
-    if start is None:
-        start = _from_local(
-            datetime.combine(entry.work_date, entry.start_time or time(0, 0)), tz
-        )
-
-    if entry.is_open or entry.end_time is None:
-        end = datetime.now(timezone.utc)
-    else:
-        end = _from_utc_column(getattr(entry, "ended_at_utc", None))
-        if end is None:
-            end = _from_local(datetime.combine(entry.work_date, entry.end_time), tz)
-            # Nachtarbeit: Endet die Buchung vor ihrem Beginn, liegt das Ende
-            # am Folgetag. Bei gepflegten UTC-Stempeln erübrigt sich das.
-            if end is not None and end < start:
-                end += timedelta(days=1)
-    if end < start:
-        end = start
-    return start, end
-
-
-def _local_date(moment: datetime, tz_name: Optional[str] = None) -> date:
-    """Kalendertag eines UTC-Zeitpunkts in Ortszeit."""
-    return moment.astimezone(_timezone(tz_name)).date()
+# Die Zeitrechnung liegt zentral in :mod:`app.worktime` – dieselbe Funktion,
+# die auch ``TimeEntry.gross_minutes`` benutzt. Zwei Rechnungen für dieselbe
+# Frage haben bis 0.15.0 über eine Zeitumstellung hinweg zwei verschiedene
+# Antworten geliefert.
+_timezone = worktime.zone
+_from_local = worktime.from_local
+_from_utc_column = worktime.from_utc_column
+_entry_bounds = worktime.entry_bounds
+_local_date = worktime.local_date
 
 
 def _break_cuts(entry: models.TimeEntry) -> tuple[list[tuple[datetime, datetime]], int]:
@@ -280,6 +218,25 @@ class Shift:
         return max(self.required_break_minutes - self.break_minutes, 0)
 
 
+def shift_break_minutes() -> int:
+    """Ab welcher Unterbrechung gilt eine Schicht als beendet?
+
+    Der Wert kommt aus der persistenten Systemkonfiguration im config-Volume
+    (Administration → System → Einstellungen). Er ist eine **betriebliche
+    Festlegung**, keine Zahl aus dem Gesetz – siehe
+    :data:`app.app_config.SystemSettings.shift_break_minutes`.
+
+    Bestandsinstallationen ohne Eintrag bekommen die bisherigen 360 Minuten,
+    das Verhalten ändert sich also nicht von selbst.
+    """
+    try:
+        from . import app_config
+
+        return int(app_config.load_system_settings().shift_break_minutes)
+    except Exception:  # pragma: no cover - Konfigurationsfehler darf nichts kippen
+        return models.SHIFT_BREAK_MINUTES
+
+
 def build_shifts(entries: Iterable[models.TimeEntry]) -> list[Shift]:
     """Buchungen zu chronologischen Schichten zusammenfassen.
 
@@ -299,6 +256,7 @@ def build_shifts(entries: Iterable[models.TimeEntry]) -> list[Shift]:
     Schicht endet dort, wo tatsächlich eine Ruhezeit liegt, nicht am
     Kalendertagwechsel.
     """
+    shift_gap = shift_break_minutes()
     pieces: list[tuple[datetime, datetime, models.TimeEntry]] = []
     unplaced: dict[int, int] = {}
     for entry in entries:
@@ -320,7 +278,7 @@ def build_shifts(entries: Iterable[models.TimeEntry]) -> list[Shift]:
             continue
         last_start, last_end = current.intervals[-1]
         gap = int((start - last_end).total_seconds() // 60)
-        if gap >= models.SHIFT_BREAK_MINUTES:
+        if gap >= shift_gap:
             shifts.append(current)
             current = Shift()
             current.intervals.append((start, end))
@@ -432,6 +390,8 @@ def evaluate_day(
             "code": models.ComplianceCode.BREAK_MISSING,
             "severity": SEVERITY_WARNING,
             "entry_id": shift.entries[-1].id,
+            # Mehrere Schichten an einem Tag ergeben mehrere Feststellungen.
+            "shift_start": shift.start,
             "detail": (
                 f"{shortfall} Minuten Ruhepause fehlen: "
                 f"{_format_minutes(shift.work_minutes)} Arbeitszeit in einer Schicht "
@@ -461,7 +421,136 @@ def evaluate_day(
     rest = _rest_finding(db, user_id, work_date, entries)
     if rest:
         findings.append(rest)
+    findings.extend(_compensation_findings(db, user_id, work_date, entries))
     return findings
+
+
+class CompensationReport:
+    """Auswertung des Ausgleichszeitraums nach § 3 Satz 2 ArbZG.
+
+    Das Gesetz erlaubt bis zu zehn Stunden werktäglich, „wenn innerhalb von
+    sechs Kalendermonaten oder innerhalb von 24 Wochen im Durchschnitt acht
+    Stunden werktäglich nicht überschritten werden". Diese Auswertung macht
+    genau das nachvollziehbar: Sie sagt, **welcher Zeitraum** betrachtet wurde,
+    **welche Tage** eingeflossen sind und **wie viel Ausgleich** noch fehlt.
+    """
+
+    __slots__ = ("start", "end", "workdays", "total_minutes", "allowance_minutes")
+
+    def __init__(
+        self, start: date, end: date, workdays: int, total_minutes: int
+    ) -> None:
+        self.start = start
+        self.end = end
+        self.workdays = workdays
+        self.total_minutes = total_minutes
+        #: Zulässige Gesamtarbeitszeit: acht Stunden je **Werktag** mit Arbeit.
+        self.allowance_minutes = workdays * models.MAX_DAILY_MINUTES
+
+    @property
+    def average_minutes(self) -> int:
+        """Werktäglicher Durchschnitt im Zeitraum."""
+        if self.workdays <= 0:
+            return 0
+        return int(round(self.total_minutes / self.workdays))
+
+    @property
+    def excess_minutes(self) -> int:
+        """Noch auszugleichender Überhang; 0, wenn der Schnitt passt."""
+        return max(self.total_minutes - self.allowance_minutes, 0)
+
+    @property
+    def is_compliant(self) -> bool:
+        return self.excess_minutes <= 0
+
+
+def compensation_report(
+    db: Session, user_id: int, reference: date
+) -> CompensationReport:
+    """Rollierender Ausgleichszeitraum, der am ``reference``-Tag endet.
+
+    Gezählt werden nur **Werktage mit Arbeit** (Montag bis Samstag im Sinne des
+    ArbZG, das den Samstag als Werktag kennt). Tage ohne Buchung senken den
+    Durchschnitt nicht künstlich – sonst ließe sich jede Überschreitung durch
+    eine lange Abwesenheit wegrechnen.
+    """
+    start = reference - timedelta(days=models.COMPENSATION_DAYS - 1)
+    entries = _countable(
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.user_id == user_id)
+        .filter(models.TimeEntry.work_date >= start)
+        .filter(models.TimeEntry.work_date <= reference)
+        .all()
+    )
+    per_day: dict[date, int] = {}
+    for entry in entries:
+        if entry.work_date.weekday() == 6:
+            # Sonntag ist kein Werktag im Sinne des § 3 ArbZG. Die Arbeit wird
+            # gespeichert und als Sonntagsarbeit gekennzeichnet, geht aber
+            # nicht in den werktäglichen Durchschnitt ein.
+            continue
+        per_day[entry.work_date] = per_day.get(entry.work_date, 0) + entry.worked_minutes
+    worked_days = {day: minutes for day, minutes in per_day.items() if minutes > 0}
+    return CompensationReport(
+        start=start,
+        end=reference,
+        workdays=len(worked_days),
+        total_minutes=sum(worked_days.values()),
+    )
+
+
+def _compensation_findings(
+    db: Session, user_id: int, work_date: date, entries: list[models.TimeEntry]
+) -> list[dict[str, object]]:
+    """Ausgleichsprüfung – nur an Tagen, an denen sie etwas aussagt.
+
+    Ausgewertet wird an Tagen mit mehr als acht Stunden: Erst dann stellt sich
+    die Frage nach dem Ausgleich überhaupt. Blockiert wird nichts.
+    """
+    if not entries:
+        return []
+    day_minutes = sum(entry.worked_minutes for entry in entries)
+    if day_minutes <= models.MAX_DAILY_MINUTES:
+        return []
+
+    report = compensation_report(db, user_id, work_date)
+    if report.workdays <= 0:
+        return []
+
+    span = (
+        f"{report.start.strftime('%d.%m.%Y')}–{report.end.strftime('%d.%m.%Y')}, "
+        f"{report.workdays} Arbeitstage, Ø {_format_minutes(report.average_minutes)}"
+    )
+    if not report.is_compliant:
+        return [{
+            "code": models.ComplianceCode.AVERAGE_OVER_8H,
+            "severity": SEVERITY_WARNING,
+            "entry_id": entries[-1].id,
+            "detail": (
+                f"Der werktägliche Durchschnitt liegt über 8 Stunden: {span}. "
+                f"Auszugleichen sind {_format_minutes(report.excess_minutes)} "
+                f"bis zum Ende des Ausgleichszeitraums."
+            ),
+        }]
+
+    # Der Schnitt stimmt – aber läuft der Zeitraum bald ab und steht noch ein
+    # Überhang aus den letzten Wochen im Raum? Dann früh warnen, solange
+    # Ausgleich noch möglich ist.
+    remaining = models.COMPENSATION_DAYS - (
+        (report.end - report.start).days + 1
+    )
+    headroom = report.allowance_minutes - report.total_minutes
+    if headroom < models.MAX_DAILY_MINUTES and remaining <= models.COMPENSATION_WARNING_DAYS:
+        return [{
+            "code": models.ComplianceCode.COMPENSATION_DUE,
+            "severity": SEVERITY_INFO,
+            "entry_id": entries[-1].id,
+            "detail": (
+                f"Der Ausgleichszeitraum ist fast ausgeschöpft: {span}. "
+                f"Es bleiben {_format_minutes(max(headroom, 0))} Spielraum."
+            ),
+        }]
+    return []
 
 
 def _rest_finding(
@@ -501,6 +590,7 @@ def _rest_finding(
         "code": models.ComplianceCode.REST_UNDER_11H,
         "severity": SEVERITY_CRITICAL,
         "entry_id": current.entries[0].id,
+        "shift_start": current.start,
         "detail": (
             f"Nur {_format_minutes(max(rest_minutes, 0))} Ruhezeit seit "
             f"{local_end.strftime('%d.%m.%Y %H:%M')} – vorgeschrieben sind 11 Stunden."
@@ -516,6 +606,26 @@ def _holiday_dates(db: Session, year: int) -> set[date]:
         return {holiday.date for holiday in crud.get_holidays_for_year(db, year, region)}
     except Exception:  # pragma: no cover - die Prüfung darf nie eine Buchung kippen
         return set()
+
+
+def finding_key(user_id: int, work_date: date, finding: dict[str, object]) -> str:
+    """Stabiler Schlüssel einer Feststellung (ab 0.16.0).
+
+    Bis 0.15.0 wurde eine Feststellung nur über ``code`` wiedergefunden. Das
+    genügt nicht: An einem Tag kann es mehrere getrennte Schichten geben, und
+    jede kann denselben Verstoß erzeugen. Zwei fehlende Ruhepausen an einem Tag
+    sind **zwei** Feststellungen – sie müssen sich getrennt bestätigen,
+    erledigen und erneut öffnen lassen.
+
+    Der Schlüssel bindet deshalb Benutzer, Tag, Code **und** den Schichtbeginn
+    zusammen. Feststellungen ohne Schichtbezug (Sonntags-, Feiertagsarbeit,
+    Tageshöchstarbeitszeit) gelten je Tag und bekommen einen leeren Anker – für
+    sie ändert sich nichts.
+    """
+    anchor = finding.get("shift_start")
+    anchor_text = anchor.isoformat() if hasattr(anchor, "isoformat") else ""
+    payload = "|".join((str(user_id), work_date.isoformat(), str(finding.get("code", "")), anchor_text))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:64]
 
 
 def fingerprint(finding: dict[str, object]) -> str:
@@ -566,16 +676,27 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
             .filter(models.ComplianceFlag.work_date == work_date)
             .all()
         )
-        by_code = {flag.code: flag for flag in existing}
+        # Zuordnung über den Schlüssel, nicht über den Code: Sonst fielen
+        # zwei gleichartige Verstöße aus verschiedenen Schichten desselben
+        # Tages zu einer Feststellung zusammen.
+        by_key: dict[str, models.ComplianceFlag] = {}
+        for flag in existing:
+            key = flag.finding_key or flag.code
+            # Bestandsdaten ohne Schlüssel: der erste Treffer je Code gewinnt,
+            # damit eine vorhandene Bestätigung nicht verlorengeht.
+            by_key.setdefault(key, flag)
         now = datetime.utcnow()
         seen: set[str] = set()
         touched: list[models.ComplianceFlag] = []
 
         for finding in findings:
             code = str(finding["code"])
-            seen.add(code)
+            key = finding_key(user_id, work_date, finding)
+            seen.add(key)
             digest = fingerprint(finding)
-            flag = by_code.get(code)
+            flag = by_key.get(key) or by_key.get(code)
+            if flag is not None and flag.finding_key and flag.finding_key != key:
+                flag = None
             if flag is None:
                 flag = models.ComplianceFlag(
                     user_id=user_id,
@@ -586,6 +707,8 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
                     detail=str(finding["detail"])[:500],
                     state=models.ComplianceState.DETECTED,
                     fingerprint=digest,
+                    finding_key=key,
+                    shift_start_utc=_naive_utc(finding.get("shift_start")),
                     revision_no=1,
                     updated_at=now,
                 )
@@ -594,6 +717,9 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
                 continue
 
             unchanged = flag.fingerprint == digest
+            # Bestandsfeststellungen bekommen ihren Schlüssel nachgereicht.
+            flag.finding_key = key
+            flag.shift_start_utc = _naive_utc(finding.get("shift_start"))
             flag.entry_id = finding.get("entry_id")
             flag.severity = str(finding["severity"])
             flag.detail = str(finding["detail"])[:500]
@@ -617,8 +743,8 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
             touched.append(flag)
 
         # Nicht mehr vorhandene Feststellungen werden erledigt, nicht gelöscht.
-        for code, flag in by_code.items():
-            if code in seen or flag.state == models.ComplianceState.RESOLVED:
+        for key, flag in by_key.items():
+            if key in seen or flag.state == models.ComplianceState.RESOLVED:
                 continue
             flag.state = models.ComplianceState.RESOLVED
             flag.resolved_at = now
@@ -698,6 +824,50 @@ def get_flag(db: Session, flag_id: int) -> Optional[models.ComplianceFlag]:
         .filter(models.ComplianceFlag.id == flag_id)
         .first()
     )
+
+
+#: Bearbeitungsstand der Ausnahmedokumentation zu Sonn-/Feiertagsarbeit.
+HANDLING_STATES = {
+    "open": "Offen",
+    "documented": "Begründet",
+    "rest_granted": "Ersatzruhetag gewährt",
+    "not_required": "Kein Ersatzruhetag nötig",
+}
+
+
+def document_exception(
+    db: Session,
+    flag_id: int,
+    *,
+    user: Optional[models.User],
+    reason: str = "",
+    legal_basis: str = "",
+    replacement_rest_date: Optional[date] = None,
+    handling_state: str = "documented",
+) -> Optional[models.ComplianceFlag]:
+    """Ausnahme zu Sonn-/Feiertagsarbeit dokumentieren (§§ 9–11 ArbZG).
+
+    Sonntagsarbeit ist nicht verboten, sondern erlaubnispflichtig: § 10 ArbZG
+    zählt Ausnahmen auf, § 11 Abs. 3 verlangt einen **Ersatzruhetag**. Ob eine
+    Ausnahme greift, kann die Anwendung nicht entscheiden – sie hält fest,
+    worauf sich der Betrieb beruft und ob der Ersatzruhetag gewährt wurde.
+
+    Die tatsächlich geleistete Arbeit bleibt davon unberührt gespeichert und
+    gekennzeichnet; hier kommt nur die Einordnung dazu.
+    """
+    flag = get_flag(db, flag_id)
+    if flag is None:
+        return None
+    if handling_state not in HANDLING_STATES:
+        raise ValueError("UNKNOWN_HANDLING_STATE")
+    flag.exception_reason = (reason or "").strip()[:500] or None
+    flag.legal_basis = (legal_basis or "").strip()[:255] or None
+    flag.replacement_rest_date = replacement_rest_date
+    flag.handling_state = handling_state
+    flag.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(flag)
+    return flag
 
 
 def acknowledge(

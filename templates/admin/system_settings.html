@@ -95,6 +95,21 @@
                 <label class="checkbox-inline"><input type="checkbox" name="sync_full_on_start" {% if system_settings.sync_full_on_start %}checked{% endif %}> Vollsynchronisation beim Start</label>
                 <label class="checkbox-inline"><input type="checkbox" name="auto_holiday_management" {% if system_settings.auto_holiday_management %}checked{% endif %}> Automatische Feiertagsverwaltung</label>
             </div>
+            <div class="field">
+                <label for="shift-break-minutes">Schichtgrenze (Minuten)</label>
+                <input type="number" id="shift-break-minutes" name="shift_break_minutes"
+                       min="{{ shift_break_min }}" max="{{ shift_break_max }}" step="15"
+                       value="{{ system_settings.shift_break_minutes }}">
+                <p class="form-hint">
+                    Ab dieser Unterbrechung gilt eine Schicht als beendet und die
+                    Ruhezeitprüfung nach §&nbsp;5 ArbZG greift; darunter bleibt es
+                    dieselbe Schicht mit einer Pause.
+                    <strong>Betriebliche Festlegung, keine gesetzliche Zahl</strong> –
+                    das Arbeitszeitgesetz kennt den Begriff „Schicht" nicht.
+                    Voreinstellung {{ shift_break_default }} Minuten, zulässig
+                    {{ shift_break_min }}–{{ shift_break_max }}.
+                </p>
+            </div>
         </fieldset>
 
         <div class="settings-form__actions">

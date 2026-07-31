@@ -17,7 +17,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from . import database, paths
 
@@ -44,11 +44,17 @@ def _coerce_level(value: Any, fallback: str) -> str:
     return fallback
 
 
-def _coerce_int(value: Any, fallback: int, minimum: int = 0) -> int:
+def _coerce_int(
+    value: Any, fallback: int, minimum: int = 0, maximum: Optional[int] = None
+) -> int:
+    """Ganze Zahl aus einer Konfigurationsdatei – notfalls der Vorgabewert."""
     try:
-        return max(int(value), minimum)
+        result = max(int(value), minimum)
     except (TypeError, ValueError):
         return fallback
+    if maximum is not None:
+        result = min(result, maximum)
+    return result
 
 
 def _coerce_bool(value: Any, fallback: bool) -> bool:
@@ -121,6 +127,12 @@ class LoggingConfig:
         return config
 
 
+#: Zulässiger Bereich für ``SystemSettings.shift_break_minutes``.
+SHIFT_BREAK_MIN_MINUTES = 60
+SHIFT_BREAK_MAX_MINUTES = 720
+SHIFT_BREAK_DEFAULT_MINUTES = 360
+
+
 @dataclass
 class SystemSettings:
     """Global system / synchronisation settings."""
@@ -129,6 +141,21 @@ class SystemSettings:
     sync_interval_minutes: int = 60
     sync_full_on_start: bool = False
     auto_holiday_management: bool = True
+    #: Ab welcher Unterbrechung gilt eine Schicht als beendet (ab 0.16.0)?
+    #:
+    #: **Betriebliche Festlegung, keine gesetzliche Zahl.** Das ArbZG kennt den
+    #: Begriff „Schicht" nicht; es kennt Ruhepausen (§ 4, höchstens 45 Minuten
+    #: gefordert) und die Ruhezeit zwischen zwei Arbeitstagen (§ 5, elf
+    #: Stunden). Dazwischen muss der Betrieb entscheiden: Ist eine
+    #: Unterbrechung von vier Stunden eine lange Pause oder Feierabend?
+    #:
+    #: Voreinstellung sechs Stunden – ein geteilter Dienst bleibt damit eine
+    #: Schicht (und muss die Pausenpflicht erfüllen), eine längere
+    #: Unterbrechung gilt als Ende des Arbeitstags und löst die
+    #: Ruhezeitprüfung aus. Zulässig sind 60 bis 720 Minuten: Unter einer
+    #: Stunde wäre jede längere Mittagspause ein Feierabend, über zwölf Stunden
+    #: bliebe von der Ruhezeitprüfung nichts übrig.
+    shift_break_minutes: int = 360
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -147,6 +174,12 @@ class SystemSettings:
         )
         config.auto_holiday_management = _coerce_bool(
             payload.get("auto_holiday_management"), config.auto_holiday_management
+        )
+        config.shift_break_minutes = _coerce_int(
+            payload.get("shift_break_minutes"),
+            config.shift_break_minutes,
+            minimum=SHIFT_BREAK_MIN_MINUTES,
+            maximum=SHIFT_BREAK_MAX_MINUTES,
         )
         return config
 
@@ -442,6 +475,18 @@ def validate_import(payload: Any) -> tuple[bool, str]:
     level = (logging_section or {}).get("level")
     if level is not None and (not isinstance(level, str) or level.upper() not in VALID_LEVELS):
         return False, f"Ungültiges Log-Level: {level!r}."
+    shift = (system_section or {}).get("shift_break_minutes")
+    if shift is not None:
+        # Bewusst streng: Ein unsinniger Wert würde die Regelprüfung still
+        # verfälschen, und das fiele erst in einer Auswertung auf.
+        if isinstance(shift, bool) or not isinstance(shift, int):
+            return False, "Schichtgrenze muss eine ganze Zahl in Minuten sein."
+        if not (SHIFT_BREAK_MIN_MINUTES <= shift <= SHIFT_BREAK_MAX_MINUTES):
+            return (
+                False,
+                f"Schichtgrenze muss zwischen {SHIFT_BREAK_MIN_MINUTES} und "
+                f"{SHIFT_BREAK_MAX_MINUTES} Minuten liegen.",
+            )
     return True, "Einstellungen sind gültig."
 
 

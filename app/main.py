@@ -57,6 +57,7 @@ from . import (
     security,
     services,
     system_info,
+    worktime,
 )
 from .integrations import timemoto, terminals
 from .excel_export import export_time_entries, export_user_summary_excel
@@ -507,6 +508,13 @@ def ensure_schema() -> None:
                 ("resolved_at", "DATETIME"),
                 ("reopened_at", "DATETIME"),
                 ("updated_at", "DATETIME"),
+                # Schlüssel je Schicht und Sonn-/Feiertagsvermerke (ab 0.16.0,
+                # Inhalte der Migration 19).
+                ("finding_key", "VARCHAR"),
+                ("shift_start_utc", "DATETIME"),
+                ("exception_reason", "VARCHAR"),
+                ("legal_basis", "VARCHAR"),
+                ("replacement_rest_date", "DATE"),
             ):
                 if _column not in flag_columns:
                     connection.execute(
@@ -528,6 +536,19 @@ def ensure_schema() -> None:
                 text(
                     "UPDATE compliance_flags SET revision_no = 1 "
                     "WHERE revision_no IS NULL"
+                )
+            )
+            if "handling_state" not in flag_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE compliance_flags ADD COLUMN handling_state "
+                        "VARCHAR DEFAULT 'open'"
+                    )
+                )
+            connection.execute(
+                text(
+                    "UPDATE compliance_flags SET handling_state = 'open' "
+                    "WHERE handling_state IS NULL"
                 )
             )
         if "time_entries" in table_names:
@@ -3228,6 +3249,78 @@ def _api_require_scope(
         )
 
 
+def _validated_location(
+    db: Session, company_id: Optional[int], location_id: Optional[int]
+) -> Optional[int]:
+    """Standort nur übernehmen, wenn er zur gebuchten Firma gehört.
+
+    Ein Kundenstandort ist eine Zuordnung, kein Freitextfeld: Ein veraltetes
+    oder manipuliertes Formular darf keinen firmenfremden Standort
+    unterschieben. Verworfen statt abgewiesen – eine Buchung soll nie an einer
+    Stammdatenfrage scheitern.
+    """
+    if location_id is None:
+        return None
+    if company_id is None:
+        return None
+    location = crud.get_company_location(db, int(location_id))
+    if location is None or not location.is_active:
+        return None
+    if int(location.company_id) != int(company_id):
+        return None
+    return int(location.id)
+
+
+def _self_service_entry(
+    db: Session, actor: models.User, raw: schemas.TimeEntryCreate
+) -> schemas.TimeEntryCreate:
+    """Eigenen Nachtrag auf das eindampfen, was der Beschäftigte bestimmen darf.
+
+    Der Aufrufer darf Datum, Zeiten, Pause, Kunde, Standort, Einsatzort und
+    Kommentar setzen – mehr nicht. Alles Übrige bestimmt der Server:
+
+    * ``status=pending`` – ein eigener Nachtrag geht immer in die Freigabe.
+    * ``is_manual=True`` – er ist nachgetragen, nicht gestempelt.
+    * ``is_open=False`` – ein Nachtrag ist abgeschlossen.
+    * ``source``/``external_id`` bleiben leer – diese Felder gehören
+      vertrauenswürdigen Importpfaden (Terminals) und dürfen nicht gefälscht
+      werden, sonst ließe sich eine Buchung als Terminalstempelung ausgeben.
+    * Die UTC-Stempel entstehen aus den eingegebenen Ortszeiten und der
+      **zentralen Betriebszeitzone** – nicht aus einer Client-Angabe.
+
+    Umgesetzt über das enge Schema :class:`schemas.SelfServiceTimeEntryCreate`:
+    Was dort nicht steht, kann gar nicht erst durchgereicht werden.
+    """
+    trusted = schemas.SelfServiceTimeEntryCreate.model_validate(
+        raw.model_dump(include=set(schemas.SelfServiceTimeEntryCreate.model_fields))
+    )
+    tz_name = worktime.timezone_name()
+    started = datetime.combine(trusted.work_date, trusted.start_time)
+    ended = datetime.combine(trusted.work_date, trusted.end_time)
+    if ended < started:
+        # Nachtarbeit über Mitternacht: Das Ende liegt am Folgetag.
+        ended += timedelta(days=1)
+    return schemas.TimeEntryCreate(
+        user_id=actor.id,
+        work_date=trusted.work_date,
+        start_time=trusted.start_time,
+        end_time=trusted.end_time,
+        break_minutes=trusted.break_minutes,
+        company_id=trusted.company_id,
+        location_id=_validated_location(db, trusted.company_id, trusted.location_id),
+        is_remote=bool(trusted.is_remote) and _can_flag_remote(actor),
+        notes=trusted.notes,
+        status=models.TimeEntryStatus.PENDING,
+        is_manual=True,
+        is_open=False,
+        source=None,
+        external_id=None,
+        started_at_utc=worktime.to_utc_naive(started, tz_name),
+        ended_at_utc=worktime.to_utc_naive(ended, tz_name),
+        tz_name=tz_name,
+    )
+
+
 def _permission_scope(user: models.User, key: str) -> str:
     return permission_service.scope(user, key)
 
@@ -4293,8 +4386,78 @@ def admin_compliance_page(request: Request, db: Session = Depends(database.get_d
         flags=flags,
         compliance_label=compliance.label,
         compliance_reference=compliance.reference,
+        handling_states=compliance.HANDLING_STATES,
         admin_active="compliance",
         active_tab="reports",
+    )
+
+
+@app.post("/admin/compliance/{flag_id}/exception")
+def document_compliance_exception(
+    request: Request,
+    flag_id: int,
+    reason: str = Form(""),
+    legal_basis: str = Form(""),
+    replacement_rest_date: Optional[str] = Form(None),
+    handling_state: str = Form("documented"),
+    db: Session = Depends(database.get_db),
+):
+    """Ausnahme zu Sonn-/Feiertagsarbeit dokumentieren (§§ 9–11 ArbZG)."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    target = compliance.get_flag(db, flag_id)
+    if target is None:
+        return RedirectResponse(
+            url=_build_redirect("/admin/compliance", error="Kennzeichnung nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    # Derselbe Schutz wie beim Einordnen: Die Kenntnis einer ID genügt nicht.
+    if not _user_in_permission_scope(db, user, "Time.View", target.user_id):
+        logging_setup.log_security(
+            f"Ausnahmedokumentation ausserhalb des Geltungsbereichs abgewiesen "
+            f"(Kennzeichnung {flag_id}, Zielperson {target.user_id})",
+            level=logging.WARNING,
+            user=user,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Diese Kennzeichnung liegt ausserhalb deines Geltungsbereichs",
+        )
+    parsed_rest: Optional[date] = None
+    if replacement_rest_date:
+        try:
+            parsed_rest = date.fromisoformat(replacement_rest_date)
+        except ValueError:
+            return RedirectResponse(
+                url=_build_redirect("/admin/compliance", error="Ungültiges Datum"),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+    try:
+        compliance.document_exception(
+            db,
+            flag_id,
+            user=user,
+            reason=reason,
+            legal_basis=legal_basis,
+            replacement_rest_date=parsed_rest,
+            handling_state=handling_state,
+        )
+    except ValueError:
+        return RedirectResponse(
+            url=_build_redirect("/admin/compliance", error="Unbekannter Bearbeitungsstand"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit(
+        "Ausnahme zu Sonn-/Feiertagsarbeit dokumentiert",
+        user=user,
+        detail=f"Kennzeichnung {flag_id}: {handling_state}",
+    )
+    return RedirectResponse(
+        url=_build_redirect("/admin/compliance", msg="Ausnahme dokumentiert"),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
@@ -6093,20 +6256,31 @@ def create_time_entry(
     request: Request,
     db: Session = Depends(database.get_db),
 ):
-    """Buchung anlegen – nur für Personen im eigenen Geltungsbereich.
+    """Buchung anlegen – Selbstbedienung und Verwaltung sauber getrennt.
 
-    Für die eigene Person genügt das Selbstbedienungsrecht; für fremde
-    Personen ist ``Time.Edit`` samt Geltungsbereich nötig. Vorher konnte
-    jeder Aufrufer einer beliebigen Person Arbeitszeit unterschieben.
+    * **Für sich selbst** genügt ``Own.Time.Edit``. Der Nachtrag wird dann
+      serverseitig auf das Nötige eingedampft: ``status=pending``,
+      ``is_manual=true``, ``is_open=false``, keine frei gewählte Quelle, keine
+      externe ID, UTC-Stempel aus der Betriebszeitzone. Ein Beschäftigter kann
+      sich damit keine freigegebene Buchung anlegen und keine Terminalquelle
+      vortäuschen.
+    * **Für andere** ist ``Time.Edit`` samt Geltungsbereich nötig; dort gilt
+      das vollständige Schema, weil Verwaltung und Import genau diese Felder
+      brauchen.
     """
     actor = _api_user(request, db)
-    if entry.user_id != actor.id:
+    own = entry.user_id == actor.id
+    if own:
+        _api_require(request, actor, "Own.Time.Edit")
+        payload = _self_service_entry(db, actor, entry)
+    else:
         _api_require_scope(request, db, actor, "Time.Edit", entry.user_id)
-    user = crud.get_user(db, entry.user_id)
+        payload = entry
+    user = crud.get_user(db, payload.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
     try:
-        db_entry = crud.create_time_entry(db, entry, actor=actor)
+        db_entry = crud.create_time_entry(db, payload, actor=actor)
     except crud.PeriodLocked as exc:
         # Gesperrte Abrechnungsperiode: kein Serverfehler, sondern eine
         # bewusste Ablehnung – mit dem Grund im Klartext.
@@ -6116,6 +6290,7 @@ def create_time_entry(
         if str(exc) == "OVERLAPPING_TIME_ENTRY":
             detail = "Zeitüberschneidung mit bestehender Buchung"
         raise HTTPException(status_code=400, detail=detail)
+    compliance.refresh_for_entry(db, db_entry)
     return schemas.TimeEntry.model_validate(db_entry)
 
 
@@ -6136,7 +6311,11 @@ def delete_time_entry(
     entry = crud.get_time_entry(db, entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
-    if entry.user_id != actor.id:
+    if entry.user_id == actor.id:
+        # Eigenes Storno hat ein eigenes Recht: Nachtragen und Zurücknehmen
+        # sind verschiedene Dinge – ``Own.Time.Edit`` wäre dafür zu weit.
+        _api_require(request, actor, "Own.Time.Cancel")
+    else:
         _api_require_scope(request, db, actor, "Time.Edit", entry.user_id)
     cleaned = (reason or "").strip()
     if not cleaned:
@@ -6167,7 +6346,9 @@ def create_vacation(
 ):
     """Urlaubsantrag anlegen – für sich selbst oder im eigenen Geltungsbereich."""
     actor = _api_user(request, db)
-    if vacation.user_id != actor.id:
+    if vacation.user_id == actor.id:
+        _api_require(request, actor, "Own.Vacation.Request")
+    else:
         _api_require_scope(request, db, actor, "Vacation.Manage", vacation.user_id)
     user = crud.get_user(db, vacation.user_id)
     if not user:
@@ -6589,6 +6770,9 @@ def admin_system_settings(request: Request, db: Session = Depends(database.get_d
         admin_active="system_settings",
         logging_config=app_config.load_logging_config(),
         system_settings=app_config.load_system_settings(),
+        shift_break_min=app_config.SHIFT_BREAK_MIN_MINUTES,
+        shift_break_max=app_config.SHIFT_BREAK_MAX_MINUTES,
+        shift_break_default=app_config.SHIFT_BREAK_DEFAULT_MINUTES,
         level_choices=LOG_LEVEL_CHOICES,
         db_backend=system_info.database_status(db)["type"],
     )
@@ -6615,6 +6799,7 @@ def admin_system_settings_save(
     sync_interval_minutes: str = Form("60"),
     sync_full_on_start: Optional[str] = Form(None),
     auto_holiday_management: Optional[str] = Form(None),
+    shift_break_minutes: int = Form(app_config.SHIFT_BREAK_DEFAULT_MINUTES),
     db: Session = Depends(database.get_db),
 ):
     user, redirect = _require_system_admin(request, db)
@@ -6648,11 +6833,25 @@ def admin_system_settings_save(
             "sync_interval_minutes": sync_interval_minutes,
             "sync_full_on_start": _parse_checkbox(sync_full_on_start),
             "auto_holiday_management": _parse_checkbox(auto_holiday_management),
+            "shift_break_minutes": shift_break_minutes,
         }
     )
+    previous_shift = app_config.load_system_settings().shift_break_minutes
     # Audit the change while the previous logging policy is still active, so the
     # entry is never lost when the new settings disable audit logging.
-    logging_setup.log_audit("Systemeinstellungen geändert", user=user, detail=f"level={logging_config.level}")
+    logging_setup.log_audit(
+        "Systemeinstellungen geändert", user=user, detail=f"level={logging_config.level}"
+    )
+    if previous_shift != system_settings.shift_break_minutes:
+        # Die Schichtgrenze verändert die Bewertung von Pausen und Ruhezeiten
+        # rückwirkend – das gehört ausdrücklich ins Audit-Protokoll.
+        logging_setup.log_audit(
+            "Schichtgrenze geändert",
+            user=user,
+            detail=(
+                f"{previous_shift} → {system_settings.shift_break_minutes} Minuten"
+            ),
+        )
     app_config.save_logging_config(logging_config)
     app_config.save_system_settings(system_settings)
     logging_setup.configure_logging(logging_config)

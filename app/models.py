@@ -20,6 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
+from . import worktime
 from .database import Base
 
 
@@ -324,6 +325,18 @@ ABSOLUTE_MAX_DAILY_MINUTES = 10 * 60
 #: Ununterbrochene Ruhezeit zwischen zwei Arbeitstagen (§5 ArbZG).
 MIN_REST_MINUTES = 11 * 60
 
+#: Ausgleichszeitraum nach § 3 Satz 2 ArbZG: „innerhalb von sechs
+#: Kalendermonaten oder innerhalb von 24 Wochen". Das Gesetz nennt beide
+#: Varianten gleichrangig; diese Umsetzung rechnet mit **24 Wochen**, weil ein
+#: Wochenraster zu einer werktäglichen Betrachtung passt und tagesgenau
+#: rollierend auswertbar ist. Die Kalendermonatsvariante wäre bis zu zwei
+#: Wochen länger und damit für den Beschäftigten ungünstiger.
+COMPENSATION_WEEKS = 24
+COMPENSATION_DAYS = COMPENSATION_WEEKS * 7
+
+#: Ab wann vor Ablauf des Ausgleichszeitraums gewarnt wird.
+COMPENSATION_WARNING_DAYS = 28
+
 #: Ab dieser Unterbrechung gilt eine Schicht als beendet und eine neue als
 #: begonnen (ab 0.15.0).
 #:
@@ -371,6 +384,13 @@ class ComplianceCode:
     BREAK_MISSING = "break_missing"
     SUNDAY_WORK = "sunday_work"
     HOLIDAY_WORK = "holiday_work"
+    #: Der Ausgleich nach § 3 Satz 2 ArbZG fehlt (ab 0.16.0): Im
+    #: Ausgleichszeitraum liegt der werktägliche Durchschnitt über acht
+    #: Stunden.
+    AVERAGE_OVER_8H = "average_over_8h"
+    #: Der Ausgleichszeitraum läuft ab und der Überhang ist noch nicht
+    #: abgebaut – eine Vorwarnung, solange Ausgleich noch möglich ist.
+    COMPENSATION_DUE = "compensation_due"
 
 
 class PeriodStatus:
@@ -472,18 +492,12 @@ class TimeEntry(Base):
     def gross_minutes(self) -> int:
         """Anwesenheit von Beginn bis Ende, ohne Pausenabzug.
 
-        Endet die Buchung vor ihrem Beginn, liegt das Ende am Folgetag –
-        Nachtarbeit über Mitternacht wird damit richtig gerechnet.
+        Gerechnet wird über :mod:`app.worktime` – dieselbe Funktion, die auch
+        die Regelprüfung benutzt. Bis 0.15.0 gab es hier eine zweite Rechnung
+        mit naiven Ortszeiten; über eine Zeitumstellung hinweg wichen
+        Auswertung und Regelprüfung dadurch um eine Stunde voneinander ab.
         """
-        start_dt = datetime.combine(self.work_date, self.start_time)
-        if self.is_open:
-            now_dt = datetime.now()
-            end_dt = datetime.combine(now_dt.date(), now_dt.time())
-        else:
-            end_dt = datetime.combine(self.work_date, self.end_time)
-        if end_dt < start_dt:
-            end_dt += timedelta(days=1)
-        return max(int((end_dt - start_dt).total_seconds() // 60), 0)
+        return worktime.gross_minutes(self)
 
     @property
     def required_break_minutes(self) -> int:
@@ -810,6 +824,34 @@ class ComplianceFlag(Base):
     #: Wie oft der Verstoß nach einer Änderung erneut auftrat.
     revision_no = Column(Integer, nullable=False, default=1)
     updated_at = Column(DateTime, default=datetime.utcnow)
+    #: Stabiler Schlüssel der Feststellung (ab 0.16.0).
+    #:
+    #: Bis 0.15.0 wurde eine Feststellung nur über ``code`` wiedergefunden.
+    #: Das genügt nicht: An einem Tag kann es **mehrere getrennte Schichten**
+    #: geben, und jede kann denselben Verstoß erzeugen – zwei fehlende
+    #: Ruhepausen an einem Tag sind zwei Feststellungen, nicht eine. Der
+    #: Schlüssel enthält deshalb zusätzlich den Schichtbeginn.
+    finding_key = Column(String(64), nullable=True, index=True)
+    #: Beginn der betroffenen Schicht in UTC – macht die Zuordnung lesbar.
+    shift_start_utc = Column(DateTime, nullable=True)
+
+    # ── Sonn- und Feiertagsarbeit (§§ 9 ff. ArbZG, ab 0.16.0) ────────────
+    #
+    # Sonntagsarbeit ist nicht verboten, sondern erlaubnispflichtig: § 10 ArbZG
+    # zählt Ausnahmen auf, § 11 Abs. 3 verlangt einen **Ersatzruhetag**. Die
+    # Anwendung kann nicht entscheiden, ob eine Ausnahme greift – sie kann aber
+    # festhalten, worauf sich der Betrieb beruft und ob der Ersatzruhetag
+    # gewährt wurde. Alle Felder sind optional; ohne Eintrag verhält sich die
+    # Kennzeichnung wie bisher.
+    #: Warum wurde an diesem Tag gearbeitet?
+    exception_reason = Column(String(500), nullable=True)
+    #: Worauf stützt sich die Ausnahme (Paragraf, Tarifvertrag,
+    #: Betriebsvereinbarung, Genehmigung)?
+    legal_basis = Column(String(255), nullable=True)
+    #: Gewährter Ersatzruhetag (§ 11 Abs. 3 ArbZG).
+    replacement_rest_date = Column(Date, nullable=True)
+    #: Bearbeitungsstand der Ausnahmedokumentation.
+    handling_state = Column(String(32), nullable=False, default="open")
 
     user = relationship("User", foreign_keys=[user_id])
 

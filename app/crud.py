@@ -6,7 +6,7 @@ from typing import Iterable, List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from . import models, schemas
+from . import models, schemas, worktime
 from . import permissions as group_permissions
 from . import revisions as revision_log
 from . import security
@@ -17,14 +17,14 @@ from . import security
 #: Zeitzone der Installation. Ortszeit bleibt führend für Anzeige und
 #: Auswertung; die UTC-Stempel machen die Angabe eindeutig – etwa in der Nacht
 #: der Zeitumstellung, in der eine Ortszeit zweimal vorkommt.
-TIMEZONE_ENV = "ERFASSUNG_TIMEZONE"
-DEFAULT_TIMEZONE = "Europe/Berlin"
+#: Zeitzonenkonstanten liegen zentral in :mod:`app.worktime`; hier bleiben nur
+#: die Namen erhalten, weil Bestandscode sie importiert.
+TIMEZONE_ENV = worktime.TIMEZONE_ENV
+DEFAULT_TIMEZONE = worktime.DEFAULT_TIMEZONE
 
 
 def local_timezone_name() -> str:
-    import os
-
-    return (os.environ.get(TIMEZONE_ENV) or "").strip() or DEFAULT_TIMEZONE
+    return worktime.timezone_name()
 
 
 def _local_zone():

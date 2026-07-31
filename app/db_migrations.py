@@ -740,6 +740,46 @@ def _add_compliance_lifecycle(engine: Engine) -> None:
             )
 
 
+def _add_finding_keys_and_holiday_notes(engine: Engine) -> None:
+    """Feststellungsschlüssel und Sonn-/Feiertagsvermerke (ab 0.16.0).
+
+    Zwei Ergänzungen an ``compliance_flags``:
+
+    * ``finding_key`` und ``shift_start_utc`` machen eine Feststellung je
+      **Schicht** eindeutig. Bis 0.15.0 wurde nur über ``code`` zugeordnet –
+      zwei fehlende Ruhepausen an einem Tag fielen dadurch zu einer
+      Feststellung zusammen.
+    * Vermerke zur Sonn- und Feiertagsarbeit (§§ 9 ff. ArbZG): Ausnahmegrund,
+      Rechts-/Betriebsgrundlage, Ersatzruhetag und Bearbeitungsstand.
+
+    Datenerhaltend: Vorhandene Feststellungen behalten Inhalt, Zustand und
+    Bestätigung. ``finding_key`` bleibt zunächst ``NULL``; die nächste
+    Neuberechnung trägt ihn nach und ordnet dabei über den Code zu, damit keine
+    Bestätigung verlorengeht.
+    """
+    if not db_schema.has_table(engine, "compliance_flags"):
+        models.Base.metadata.tables["compliance_flags"].create(
+            bind=engine, checkfirst=True
+        )
+        return
+
+    db_schema.add_column(engine, "compliance_flags", "finding_key", "VARCHAR(64)")
+    db_schema.add_column(engine, "compliance_flags", "shift_start_utc", "DATETIME")
+    db_schema.add_column(engine, "compliance_flags", "exception_reason", "VARCHAR(500)")
+    db_schema.add_column(engine, "compliance_flags", "legal_basis", "VARCHAR(255)")
+    db_schema.add_column(engine, "compliance_flags", "replacement_rest_date", "DATE")
+    db_schema.add_column(
+        engine, "compliance_flags", "handling_state", "VARCHAR(32)", default="'open'"
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE compliance_flags SET handling_state = 'open' "
+                "WHERE handling_state IS NULL"
+            )
+        )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -759,6 +799,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (16, _add_company_locations),
     (17, _add_compliance_and_revisions),
     (18, _add_compliance_lifecycle),
+    (19, _add_finding_keys_and_holiday_notes),
 ]
 
 
