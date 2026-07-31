@@ -179,9 +179,12 @@
                                 Kommentar (optional)
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
-                            {% if can_flag_remote %}
-                                {{ location_picker(catalogue=location_catalogue_data, block=True) }}
-                            {% endif %}
+                            {# Kein can_flag_remote hier: Der Standort einer Firma ist
+                               keine Remote-Arbeit. Wer nie remote arbeitet, muss
+                               trotzdem sagen können, an welchem Standort er ist –
+                               die Option „Remote" blendet das Makro selbst aus. #}
+                            {{ location_picker(catalogue=location_catalogue_data, block=True,
+                                               allow_remote=can_flag_remote) }}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
                                     <span class="modal-action__icon" aria-hidden="true">✕</span>
@@ -470,9 +473,8 @@
             Kommentar
             <textarea name="notes" rows="2" placeholder="z. B. Projekt oder Kunde"></textarea>
         </label>
-        {% if can_flag_remote %}
-            <div class="full-width">{{ location_picker(catalogue=location_catalogue_data) }}</div>
-        {% endif %}
+        <div class="full-width">{{ location_picker(catalogue=location_catalogue_data,
+                                                   allow_remote=can_flag_remote) }}</div>
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
     <p class="form-hint">Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.</p>

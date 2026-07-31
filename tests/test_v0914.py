@@ -142,8 +142,8 @@ def _entries_for(user_id: int):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.14.0"
-    assert client.get("/health").json()["version"] == "0.14.0"
+    assert client.main.APP_VERSION == "0.14.1"
+    assert client.get("/health").json()["version"] == "0.14.1"
 
 
 # --- split behaviour --------------------------------------------------------------

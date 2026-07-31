@@ -755,6 +755,10 @@ def synchronize(
                     try:
                         crud.create_time_entry(db, entry)
                     except ValueError:
+                        # Überschneidung oder gesperrte Abrechnungsperiode
+                        # (``crud.PeriodLocked`` ist ein ``ValueError``): Der
+                        # Import zählt das Ereignis als übersprungen und läuft
+                        # weiter. Ein Abbruch würde den ganzen Abgleich kippen.
                         result.skipped_events += 1
                     else:
                         result.created_entries += 1

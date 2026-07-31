@@ -81,8 +81,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function fillPicker(picker, locations, keepValue) {
     const previous = keepValue ? picker.value : '';
+    // „Remote" gibt es nur, wenn der Server es gerendert hat – das Kennzeichen
+    // hängt am Benutzer. Der Standort selbst hängt nicht daran.
+    const allowRemote = picker.hasAttribute('data-allow-remote');
     picker.innerHTML = '';
-    [['onsite', 'Vor Ort'], ['remote', 'Remote']].forEach(([value, label]) => {
+    const fixed = allowRemote
+      ? [['onsite', 'Vor Ort'], ['remote', 'Remote']]
+      : [['onsite', 'Vor Ort']];
+    fixed.forEach(([value, label]) => {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = label;
@@ -128,5 +134,26 @@ window.addEventListener('DOMContentLoaded', () => {
     const catalogue = readCatalogue();
     if (!catalogue) return;
     document.querySelectorAll('form').forEach((form) => wire(form, catalogue));
+  });
+})();
+
+// ── Ablehnen braucht eine Begründung ──────────────────────────────────────
+//
+// Der Server verlangt sie ohnehin und weist die Ablehnung sonst ab. Hier wird
+// nur früher darauf hingewiesen, damit die Seite nicht mit einer Fehlermeldung
+// neu lädt. Ohne JavaScript bleibt es bei der Prüfung auf dem Server.
+(function () {
+  window.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('[data-requires-reason]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        const form = button.closest('form');
+        const reason = form && form.querySelector('input[name="reason"]');
+        if (!reason || reason.value.trim()) return;
+        event.preventDefault();
+        reason.setCustomValidity(button.getAttribute('data-requires-reason') || '');
+        reason.reportValidity();
+        reason.addEventListener('input', () => reason.setCustomValidity(''), { once: true });
+      });
+    });
   });
 })();

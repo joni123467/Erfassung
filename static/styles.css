@@ -1923,6 +1923,25 @@ body.modal-open {
     font-weight: 500;
 }
 
+/* Freigabe/Ablehnung: Das Begründungsfeld steht über den Knöpfen, damit die
+   Spalte in der Tabelle schmal bleibt und die Knöpfe nebeneinander stehen. */
+.approval-form {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
+}
+
+.approval-form__reason {
+    min-width: 0;
+    width: 100%;
+}
+
+.approval-form__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
 .time-entry-form {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -2225,12 +2244,37 @@ body.modal-open {
     color: var(--danger);
 }
 
+/* Storniert ist kein Fehler, sondern eine zurückgenommene Buchung: gedämpft
+   statt alarmierend, die Zeiten durchgestrichen, damit auf einen Blick klar
+   ist, dass sie nicht mehr zählen. */
+.status-label.status-cancelled {
+    color: var(--text-muted);
+}
+
+.status-note {
+    display: block;
+    font-weight: 400;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
 tr.status-pending td {
     background: var(--warning-soft);
 }
 
 tr.status-rejected td {
     background: var(--danger-soft);
+}
+
+tr.status-cancelled td {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
+
+tr.status-cancelled td.status-label,
+tr.status-cancelled td .status-note,
+tr.status-cancelled td a {
+    text-decoration: none;
 }
 
 tr.company-deleted td {

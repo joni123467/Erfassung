@@ -375,7 +375,17 @@ TIME_ENTRY_STATUS_LABELS = {
     models.TimeEntryStatus.APPROVED: "Freigegeben",
     models.TimeEntryStatus.PENDING: "Wartet auf Freigabe",
     models.TimeEntryStatus.REJECTED: "Abgelehnt",
+    # Storniert heißt: rückgängig gemacht, aber nicht gelöscht. Die Buchung
+    # zählt nirgends mehr mit, bleibt aber sichtbar – sonst wäre die
+    # Revisionssicherheit für den Anwender nicht nachvollziehbar.
+    models.TimeEntryStatus.CANCELLED: "Storniert",
 }
+
+#: Stände, die in keiner Summe auftauchen dürfen. Abgelehnt heißt „nie gültig
+#: gewesen", storniert heißt „zurückgenommen" – beide sind keine Arbeitszeit.
+_UNCOUNTED_STATUSES = frozenset(
+    {models.TimeEntryStatus.REJECTED, models.TimeEntryStatus.CANCELLED}
+)
 
 
 
@@ -904,7 +914,7 @@ def _build_time_report_data(
     if view not in {"month", "week", "range"}:
         view = "month"
     status_param = params.get("status", "approved")
-    if status_param not in {"approved", "pending", "rejected", "all"}:
+    if status_param not in {"approved", "pending", "rejected", "cancelled", "all"}:
         status_param = "approved"
     sort_param = params.get("sort", "name")
     if sort_param not in {"name", "minutes_desc", "entries_desc", "company"}:
@@ -932,6 +942,7 @@ def _build_time_report_data(
         "approved": [models.TimeEntryStatus.APPROVED],
         "pending": [models.TimeEntryStatus.PENDING],
         "rejected": [models.TimeEntryStatus.REJECTED],
+        "cancelled": [models.TimeEntryStatus.CANCELLED],
         "all": None,
     }
     statuses = status_filters[status_param]
@@ -1068,6 +1079,7 @@ def _build_time_report_data(
         {"value": "approved", "label": TIME_ENTRY_STATUS_LABELS[models.TimeEntryStatus.APPROVED]},
         {"value": "pending", "label": TIME_ENTRY_STATUS_LABELS[models.TimeEntryStatus.PENDING]},
         {"value": "rejected", "label": TIME_ENTRY_STATUS_LABELS[models.TimeEntryStatus.REJECTED]},
+        {"value": "cancelled", "label": TIME_ENTRY_STATUS_LABELS[models.TimeEntryStatus.CANCELLED]},
         {"value": "all", "label": "Alle Stände"},
     ]
     sort_options = [
@@ -1606,7 +1618,10 @@ def account_password_update(
 
 def _build_daily_overview(db: Session, user_id: int, target_date: date) -> dict[str, object]:
     entries = crud.get_time_entries_for_user(db, user_id, start=target_date, end=target_date)
-    entries = [entry for entry in entries if entry.status != models.TimeEntryStatus.REJECTED]
+    # Abgelehnt und storniert zählen nicht: Eine stornierte Buchung ist
+    # rückgängig gemacht. Stünde sie hier, würde nach einer Korrektur die
+    # gleiche Zeit doppelt erscheinen – einmal storniert, einmal als Ersatz.
+    entries = [entry for entry in entries if entry.status not in _UNCOUNTED_STATUSES]
     # Anzeige-Reihenfolge: neueste Buchung zuerst. Reine Sortierung – Zeitstempel,
     # Arbeits-/Pausenzeiten und die Summenberechnung bleiben unverändert.
     entries = sorted(entries, key=lambda entry: (entry.start_time, entry.id), reverse=True)
@@ -1629,7 +1644,7 @@ def _build_weekly_overview(
     week_end = week_start + timedelta(days=6)
     weekly_entries = crud.get_time_entries_for_user(db, user.id, start=week_start, end=week_end)
     weekly_entries = [
-        entry for entry in weekly_entries if entry.status != models.TimeEntryStatus.REJECTED
+        entry for entry in weekly_entries if entry.status not in _UNCOUNTED_STATUSES
     ]
     weekly_vacations = crud.get_vacations_in_range(
         db,
@@ -1943,14 +1958,14 @@ def submit_time_entry(
         except (TypeError, ValueError):
             redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Firmenauswahl")
             return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    remote_value, location_value = (False, None)
-    if _can_flag_remote(user):
-        remote_value, location_value = _resolve_work_location(
-            db,
-            work_location,
-            fallback_remote=_parse_checkbox(is_remote),
-            company_id=company_value,
-        )
+    # Der Standort wird immer aufgelöst; nur „Remote" hängt am Kennzeichen.
+    remote_value, location_value = _resolve_work_location(
+        db,
+        work_location,
+        fallback_remote=_parse_checkbox(is_remote),
+        company_id=company_value,
+        allow_remote=_can_flag_remote(user),
+    )
     try:
         entry = schemas.TimeEntryCreate(
             user_id=user.id,
@@ -2259,8 +2274,8 @@ def punch_action(
     now = _parse_event_time(event_time)
     message = ""
     error = ""
-    # Einsatzort nur berücksichtigen, wenn das Feld für den Benutzer
-    # freigeschaltet ist – sonst bleibt es bei „vor Ort".
+    # Remote nur, wenn das Kennzeichen für den Benutzer gesetzt ist. Der
+    # Standort einer Firma hängt nicht daran – er wird immer aufgelöst.
     remote_allowed = _can_flag_remote(user)
 
     def _work_location(company_id: Optional[int]) -> tuple[bool, Optional[int]]:
@@ -2271,13 +2286,12 @@ def punch_action(
         wird der Einsatzort hier und nicht vorab bestimmt – sonst könnte ein
         Standort an einer Buchung landen, zu deren Firma er nicht gehört.
         """
-        if not remote_allowed:
-            return False, None
         return _resolve_work_location(
             db,
             work_location,
             fallback_remote=_parse_checkbox(is_remote),
             company_id=company_id,
+            allow_remote=remote_allowed,
         )
 
     remote_value, location_value = _work_location(None)
@@ -2296,6 +2310,12 @@ def punch_action(
                 location_id=entry_location,
             )
             return True
+        except crud.PeriodLocked as exc:
+            # Abgerechneter Zeitraum: eindeutig ablehnen statt 500. Ein
+            # Offline-Client würde einen Serverfehler sonst endlos wiederholen.
+            db.rollback()
+            error = str(exc)
+            return False
         except ValueError as exc:
             if str(exc) == "OVERLAPPING_TIME_ENTRY":
                 overlapping_active = crud.get_open_time_entry(db, user.id)
@@ -2452,17 +2472,23 @@ def punch_action(
         else:
             # Der Einsatzort gehört zur Firma **dieser** Buchung.
             notes_remote, notes_location = _work_location(target_entry.company_id)
-            crud.update_time_entry_notes(
-                db,
-                target_entry,
-                notes.strip(),
-                is_remote=notes_remote if remote_allowed else None,
-                location_id=notes_location,
-                # Nur wenn der Einsatzort überhaupt mitgeschickt wurde; ein
-                # reiner Kommentar-Nachtrag lässt ihn unangetastet.
-                set_location=remote_allowed and bool((work_location or "").strip()),
-            )
-            message = "Kommentar gespeichert."
+            try:
+                crud.update_time_entry_notes(
+                    db,
+                    target_entry,
+                    notes.strip(),
+                    is_remote=notes_remote if remote_allowed else None,
+                    location_id=notes_location,
+                    # Nur wenn der Einsatzort überhaupt mitgeschickt wurde; ein
+                    # reiner Kommentar-Nachtrag lässt ihn unangetastet. Der
+                    # Standort hängt nicht am Remote-Kennzeichen.
+                    set_location=bool((work_location or "").strip()),
+                    actor=user,
+                )
+            except crud.PeriodLocked as exc:
+                error = str(exc)
+            else:
+                message = "Kommentar gespeichert."
     else:
         error = "Unbekannte Aktion."
 
@@ -2902,6 +2928,7 @@ def _resolve_work_location(
     *,
     fallback_remote: bool,
     company_id: Optional[int] = None,
+    allow_remote: bool = True,
 ) -> tuple[bool, Optional[int]]:
     """Formularwert des Einsatzorts zu ``(is_remote, location_id)`` auflösen.
 
@@ -2916,18 +2943,22 @@ def _resolve_work_location(
     Verworfen statt abgewiesen: Ein unbekannter, geschlossener, firmenfremder
     oder nicht lizenzierter Standort gilt als „vor Ort". Eine Stempelung darf
     nie an einer Stammdatenfrage scheitern.
+
+    ``allow_remote`` bildet das Benutzerkennzeichen ab und betrifft **nur**
+    Remote. Ein Firmenstandort ist keine Remote-Arbeit: Wer nie remote
+    arbeitet, soll trotzdem festhalten können, an welchem Standort er war.
     """
     raw = (value or "").strip()
     if not raw:
-        return bool(fallback_remote), None
+        return bool(fallback_remote) and allow_remote, None
     if raw == "remote":
-        return True, None
+        return bool(allow_remote), None
     if raw == "onsite":
         return False, None
     try:
         location_id = int(raw)
     except ValueError:
-        return bool(fallback_remote), None
+        return bool(fallback_remote) and allow_remote, None
     if not _can_clock_on_orders() or company_id is None:
         return False, None
     location = crud.get_company_location(db, location_id)
@@ -4944,22 +4975,24 @@ def update_time_entry_html(
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     company_value = int(company_id) if company_id else None
-    # Einsatzort nur übernehmen, wenn das Feld für den betroffenen Benutzer
-    # freigeschaltet ist (oder die Buchung bereits als Remote erfasst wurde).
-    # Andernfalls bleibt der bisherige Wert erhalten, statt still gelöscht zu
-    # werden.
+    # Der Standort ist immer bearbeitbar – er ist keine Remote-Arbeit. Nur das
+    # Remote-Kennzeichen hängt am Benutzer; hat er es nicht (und war die
+    # Buchung bisher nicht remote), bleibt der bisherige Wert erhalten, statt
+    # still gelöscht zu werden.
     remote_current = bool(existing_entry.is_remote) if existing_entry else False
     location_current = existing_entry.location_id if existing_entry else None
     remote_editable = _can_flag_remote(crud.get_user(db, user_id)) or remote_current
-    if remote_editable:
+    if work_location is None and not remote_editable:
+        # Formular ohne Einsatzortfeld: nichts anfassen.
+        remote_value, location_value = remote_current, location_current
+    else:
         remote_value, location_value = _resolve_work_location(
             db,
             work_location,
             fallback_remote=_parse_checkbox(is_remote),
             company_id=company_value,
+            allow_remote=remote_editable,
         )
-    else:
-        remote_value, location_value = remote_current, location_current
     payload = schemas.TimeEntryCreate(
         user_id=user_id,
         company_id=company_value,
@@ -5648,6 +5681,10 @@ def create_time_entry(entry: schemas.TimeEntryCreate, db: Session = Depends(data
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
     try:
         db_entry = crud.create_time_entry(db, entry)
+    except crud.PeriodLocked as exc:
+        # Gesperrte Abrechnungsperiode: kein Serverfehler, sondern eine
+        # bewusste Ablehnung – mit dem Grund im Klartext.
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         detail = "Ungültige Zeiterfassung"
         if str(exc) == "OVERLAPPING_TIME_ENTRY":
@@ -5658,9 +5695,14 @@ def create_time_entry(entry: schemas.TimeEntryCreate, db: Session = Depends(data
 
 @app.delete("/api/time-entries/{entry_id}")
 def delete_time_entry(entry_id: int, db: Session = Depends(database.get_db)):
-    if not crud.delete_time_entry(db, entry_id):
+    """Storniert die Buchung – seit 0.14.0 wird nichts mehr physisch gelöscht."""
+    try:
+        removed = crud.delete_time_entry(db, entry_id)
+    except crud.PeriodLocked as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not removed:
         raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
-    return {"detail": "Zeitbuchung gelöscht"}
+    return {"detail": "Zeitbuchung storniert"}
 
 
 @app.post("/api/vacations", response_model=schemas.VacationRequest)
@@ -5703,7 +5745,14 @@ def export_user_time_entries(user_id: int, db: Session = Depends(database.get_db
     user = crud.get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
-    entries = crud.get_time_entries_for_user(db, user_id)
+    # Abgelehnte und stornierte Buchungen gehören nicht in den Export – sie
+    # sind keine Arbeitszeit. Nachvollziehbar bleiben sie über die Historie
+    # und den Auskunftsexport.
+    entries = [
+        entry
+        for entry in crud.get_time_entries_for_user(db, user_id)
+        if entry.status not in _UNCOUNTED_STATUSES
+    ]
     vacations = [
         vacation
         for vacation in crud.get_vacations_for_user(db, user_id)

@@ -758,6 +758,7 @@ def update_time_entry_notes(
     is_remote: Optional[bool] = None,
     location_id: Optional[int] = None,
     set_location: bool = False,
+    actor: Optional[models.User] = None,
 ) -> models.TimeEntry:
     """Kommentar (und optional den Einsatzort) einer Buchung nachtragen.
 
@@ -765,7 +766,15 @@ def update_time_entry_notes(
     Kommentar-Nachtrag die Angabe nicht versehentlich. Für den Standort gilt
     dasselbe über ``set_location``: Nur wenn er ausdrücklich mitgeschickt
     wurde, wird er gesetzt (``None`` heißt dann „kein Standort").
+
+    Auch dieser Nachtrag ist eine Änderung und wird historisiert. Nach einer
+    Begründung wird hier bewusst **nicht** gefragt: Der Nachtrag gehört zum
+    Stempeln dazu, die Person bearbeitet ihre eigene Buchung, und der Anlass
+    steht im Vorher/Nachher. Die Historie hält deshalb fest, worüber die
+    Änderung lief.
     """
+    ensure_period_open(db, entry.work_date)
+    before = revision_log.snapshot(entry)
     entry.notes = (notes or "")[:255]
     if is_remote is not None:
         entry.is_remote = bool(is_remote)
@@ -773,6 +782,16 @@ def update_time_entry_notes(
         entry.location_id = location_id
         if location_id is not None:
             entry.deleted_location_name = None
+    if revision_log.diff(before, revision_log.snapshot(entry)):
+        revision_log.record(
+            db,
+            entry,
+            models.RevisionAction.UPDATED,
+            actor=actor,
+            reason="Nachtrag über die Stempelansicht",
+            source="self_service",
+            before=before,
+        )
     db.commit()
     db.refresh(entry)
     return entry
@@ -814,14 +833,27 @@ def start_running_entry(
 
 
 def finish_running_entry(db: Session, entry: models.TimeEntry, finished_at: datetime) -> models.TimeEntry:
+    """Laufende Buchung beenden.
+
+    Bewusst **ohne** Periodenprüfung: Eine laufende Buchung muss sich immer
+    schließen lassen. Wäre das gesperrt, bliebe sie für immer offen – das wäre
+    das Gegenteil einer sauberen Erfassung.
+
+    Das Beenden wird historisiert, damit der Sprung von „läuft" auf eine
+    fertige Arbeitszeit nachvollziehbar bleibt.
+    """
     normalized = _normalize_time(finished_at)
     if entry.break_started_at or entry.running_break is not None:
         end_break(db, entry, normalized)
         db.refresh(entry)
+    before = revision_log.snapshot(entry)
     entry.end_time = normalized.time()
     entry.is_open = False
     entry.break_started_at = None
     entry.ended_at_utc = _to_utc(normalized)
+    revision_log.record(
+        db, entry, models.RevisionAction.CLOSED, before=before, source=entry.source
+    )
     db.commit()
     db.refresh(entry)
     return entry

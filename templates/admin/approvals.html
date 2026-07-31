@@ -33,10 +33,20 @@
                         {% if admin_permissions.edit_time_entries %}
                             <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/edit?next=/admin/approvals&user={{ entry.user_id }}">Bearbeiten</a>
                         {% endif %}
-                        <form method="post" action="/admin/time-entries/{{ entry.id }}/status" class="inline-form">
+                        <form method="post" action="/admin/time-entries/{{ entry.id }}/status" class="inline-form approval-form">
                             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                            <button type="submit" name="action" value="approve" class="button small">Freigeben</button>
-                            <button type="submit" name="action" value="reject" class="button danger small">Ablehnen</button>
+                            {# Eine Ablehnung braucht seit 0.14.0 eine Begründung – sie
+                               landet in der Historie der Buchung. Für die Freigabe ist
+                               das Feld optional, deshalb steht es ohne „required" hier
+                               und wird erst beim Ablehnen erzwungen. #}
+                            <input type="text" name="reason" maxlength="500" class="approval-form__reason"
+                                   placeholder="Begründung (bei Ablehnung erforderlich)"
+                                   aria-label="Begründung der Entscheidung">
+                            <span class="approval-form__actions">
+                                <button type="submit" name="action" value="approve" class="button small">Freigeben</button>
+                                <button type="submit" name="action" value="reject" class="button danger small"
+                                        data-requires-reason="Bitte eine Begründung für die Ablehnung angeben.">Ablehnen</button>
+                            </span>
                         </form>
                     </td>
                 </tr>
