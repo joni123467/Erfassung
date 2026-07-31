@@ -46,6 +46,13 @@ def _format_minutes(value: int) -> str:
     return f"{hours:02d}:{minutes:02d}"
 
 
+def _format_days(value: float) -> str:
+    """Urlaubstage deutsch: ganze Tage ohne Nachkomma, halbe mit Komma."""
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:.1f}".replace(".", ",")
+
+
 def _format_signed_minutes(value: int) -> str:
     minutes = int(value)
     sign = "-" if minutes < 0 else ""
@@ -74,16 +81,6 @@ _VACATION_STATUS_LABELS = {
 
 def _vacation_status_label(status: str) -> str:
     return _VACATION_STATUS_LABELS.get(status, str(status).title())
-
-
-def _workdays(start: date, end: date) -> int:
-    current = start
-    total = 0
-    while current <= end:
-        if current.weekday() < 5:
-            total += 1
-        current += timedelta(days=1)
-    return total
 
 
 # ── Shared layout system ─────────────────────────────────────────────────────
@@ -243,11 +240,13 @@ def _vacation_overview_rows(
         overlap_end = min(end, vacation.end_date)
         if overlap_start > overlap_end:
             continue
-        days = _workdays(overlap_start, overlap_end)
+        # Halbe Tage zählen halb – sowohl in der Tagesspalte als auch in der
+        # Anrechnung (korrigiert in 0.14.2, vorher standen dort ganze Tage).
+        days = services.vacation_days_in_range(vacation, overlap_start, overlap_end)
         vacation_type = "Überstundenabbau" if vacation.use_overtime else "Urlaub"
         if vacation.status == VacationStatus.APPROVED:
-            credited = services.calculate_required_vacation_minutes(
-                vacation.user, overlap_start, overlap_end
+            credited = services.vacation_minutes_in_range(
+                vacation.user, vacation, overlap_start, overlap_end
             )
             credited_label = f"{_format_minutes(credited)} Std"
         else:
@@ -260,7 +259,7 @@ def _vacation_overview_rows(
                 f"{overlap_start.strftime('%d.%m.%Y')} – {overlap_end.strftime('%d.%m.%Y')}",
                 vacation_type,
                 _vacation_status_label(vacation.status),
-                str(days),
+                _format_days(days),
                 credited_label,
                 vacation.comment or "–",
             ]
@@ -378,7 +377,8 @@ def export_time_overview_pdf(
     total_work_minutes: int,
     target_minutes: int,
     vacation_minutes: int,
-    overtime_taken_minutes: int,
+    holiday_minutes: int = 0,
+    overtime_taken_minutes: int = 0,
     total_overtime_minutes: int,
     total_undertime_minutes: int,
     vacation_summary: VacationSummary,
@@ -416,6 +416,9 @@ def export_time_overview_pdf(
         ["Monatliches Soll", f"{_format_minutes(target_minutes)} Std"],
         ["Ist-Stunden", f"{_format_minutes(total_work_minutes)} Std"],
         ["Urlaubsstunden", f"{_format_minutes(vacation_minutes)} Std"],
+        # Feiertage sind bezahlte Ausfalltage – getrennt ausgewiesen, damit
+        # nachvollziehbar bleibt, woher die Stunden kommen.
+        ["Feiertagsstunden", f"{_format_minutes(holiday_minutes)} Std"],
         ["Überstundenabbau", f"{_format_minutes(overtime_taken_minutes)} Std"],
         ["Überstunden (Monat)", f"{_format_minutes(total_overtime_minutes)} Std"],
     ]
@@ -548,6 +551,7 @@ def export_user_summary_pdf(
                 f"{_format_minutes(int(row.get('break_minutes', 0)))} Std",
                 f"{_format_minutes(int(row.get('target_minutes', 0)))} Std",
                 f"{_format_minutes(int(row.get('vacation_minutes', 0)))} Std",
+                f"{_format_minutes(int(row.get('holiday_minutes', 0)))} Std",
                 f"{_format_signed_minutes(int(row.get('balance_minutes', 0)))} Std",
             ]
         )
@@ -555,10 +559,13 @@ def export_user_summary_pdf(
     story.append(
         _data_table(
             styles,
-            header=["Benutzer", "Buchungen", "Arbeitszeit", "Pausen", "Soll", "Urlaub", "Über-/Minusstd."],
+            header=[
+                "Benutzer", "Buchungen", "Arbeitszeit", "Pausen", "Soll",
+                "Urlaub", "Feiertag", "Über-/Minusstd.",
+            ],
             rows=table_rows,
-            fractions=[0.285, 0.105, 0.13, 0.11, 0.12, 0.11, 0.14],
-            aligns=["L", "R", "R", "R", "R", "R", "R"],
+            fractions=[0.25, 0.09, 0.115, 0.1, 0.105, 0.1, 0.1, 0.14],
+            aligns=["L", "R", "R", "R", "R", "R", "R", "R"],
             doc_width=doc.width,
             total_row=[
                 "Summe",
@@ -567,6 +574,7 @@ def export_user_summary_pdf(
                 f"{_format_minutes(int(totals.get('break_minutes', 0)))} Std",
                 f"{_format_minutes(int(totals.get('target_minutes', 0)))} Std",
                 f"{_format_minutes(int(totals.get('vacation_minutes', 0)))} Std",
+                f"{_format_minutes(int(totals.get('holiday_minutes', 0)))} Std",
                 f"{_format_signed_minutes(int(totals.get('balance_minutes', 0)))} Std",
             ],
             total_span=1,

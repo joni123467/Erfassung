@@ -4,7 +4,9 @@
 {% block content %}
 {{ location_catalogue(location_catalogue_data) }}
 {% set vacation_minutes = metrics.vacation_minutes %}
-{% set ist_minutes = metrics.total_work_minutes + vacation_minutes %}
+{# Feiertage zählen wie Urlaub in die Ist-Zeit: bezahlte Ausfalltage. #}
+{% set holiday_minutes = metrics.holiday_minutes %}
+{% set ist_minutes = metrics.total_work_minutes + vacation_minutes + holiday_minutes %}
 {% set soll_minutes = metrics.target_minutes %}
 {% set overtime_taken_minutes = metrics.overtime_taken_minutes %}
 {% set total_overtime_minutes = metrics.total_overtime_minutes %}
@@ -262,6 +264,9 @@
                     {% if weekly_summary.vacation_minutes %}
                         <span class="dashboard-week-card__total-note">davon Urlaub {{ weekly_summary.vacation_minutes|format_minutes }} Std</span>
                     {% endif %}
+                    {% if weekly_summary.holiday_minutes %}
+                        <span class="dashboard-week-card__total-note">davon Feiertag {{ weekly_summary.holiday_minutes|format_minutes }} Std</span>
+                    {% endif %}
                 </div>
             </header>
             <div class="dashboard-week-card__progress" role="presentation">
@@ -291,6 +296,9 @@
                             {{ day.minutes|format_minutes }} Std
                             {% if day.vacation_minutes %}
                                 <span class="dashboard-week-card__day-actual-note">inkl. Urlaub {{ day.vacation_minutes|format_minutes }} Std</span>
+                            {% endif %}
+                            {% if day.holiday_minutes %}
+                                <span class="dashboard-week-card__day-actual-note">Feiertag {{ day.holiday_minutes|format_minutes }} Std</span>
                             {% endif %}
                         </span>
                         <span class="dashboard-week-card__day-target">

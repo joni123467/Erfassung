@@ -130,6 +130,7 @@ _AREA_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "integrations": ("System.Terminals",),
     "approvals_manual": ("Time.Approve",),
     "approvals_vacations": ("Vacation.Manage",),
+    "vacation_overview": ("Vacation.Overview",),
     "reports": ("Time.View",),
     "edit_time_entries": ("Time.Edit",),
     "system": ("System.Settings",),
@@ -148,7 +149,8 @@ def area_permissions(user: Optional[models.User]) -> dict[str, bool]:
         result[area]
         for area in (
             "users", "groups", "roles", "companies", "holidays", "approvals",
-            "reports", "edit_time_entries", "integrations", "system", "backup",
+            "vacation_overview", "reports", "edit_time_entries", "integrations",
+            "system", "backup",
         )
     )
     return result
@@ -158,6 +160,7 @@ def area_permissions(user: Optional[models.User]) -> dict[str, bool]:
 ADMIN_ENTRY_PAGES: tuple[tuple[str, str], ...] = (
     ("users", "/admin/users"),
     ("approvals", "/admin/approvals"),
+    ("vacation_overview", "/admin/reports/vacations"),
     ("reports", "/admin/reports/time"),
     ("groups", "/admin/groups"),
     ("roles", "/admin/roles"),

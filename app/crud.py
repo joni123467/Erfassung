@@ -1475,6 +1475,28 @@ def get_holidays_for_year(db: Session, year: int, region: str = "DE") -> List[mo
     )
 
 
+def get_holiday_dates_in_range(
+    db: Session, start: date, end: date, region: Optional[str] = None
+) -> set[date]:
+    """Feiertage eines Zeitraums als Datumsmenge – Grundlage der Gutschrift.
+
+    Ohne ``region`` gilt die Standardregion der Installation. Eine Menge statt
+    einer Liste, weil ausschließlich die Frage „ist dieser Tag ein Feiertag?"
+    interessiert.
+    """
+    if start > end:
+        return set()
+    selected = region or get_default_holiday_region(db)
+    rows = (
+        db.query(models.Holiday.date)
+        .filter(models.Holiday.region == selected)
+        .filter(models.Holiday.date >= start)
+        .filter(models.Holiday.date <= end)
+        .all()
+    )
+    return {row[0] for row in rows if row[0] is not None}
+
+
 def upsert_holidays(db: Session, holidays: Iterable[schemas.HolidayCreate]) -> List[models.Holiday]:
     stored: List[models.Holiday] = []
     for holiday in holidays:

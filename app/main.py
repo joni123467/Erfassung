@@ -967,6 +967,9 @@ def _build_time_report_data(
     if allowed_user_ids is not None:
         entries = [entry for entry in entries if entry.user_id in allowed_user_ids]
         vacations = [vacation for vacation in vacations if vacation.user_id in allowed_user_ids]
+    # Feiertage des Zeitraums: Sie werden gutgeschrieben und verbrauchen
+    # zugleich keinen Urlaubstag.
+    report_holidays = crud.get_holiday_dates_in_range(db, start_date, end_date)
     vacation_minutes_total = 0
     vacation_minutes_by_user: dict[int, int] = {}
     vacation_records: list[dict[str, object]] = []
@@ -975,10 +978,15 @@ def _build_time_report_data(
             continue
         overlap_start = max(start_date, vacation.start_date)
         overlap_end = min(end_date, vacation.end_date)
-        credited = services.calculate_required_vacation_minutes(
+        # Halbe Tage zählen halb. ``calculate_required_vacation_minutes`` zählt
+        # nur ganze Werktage und stand hier bis 0.14.2 – ein Antrag über zwei
+        # halbe Tage erschien deshalb mit 16:00 statt 8:00 Stunden.
+        credited = services.vacation_minutes_in_range(
             vacation.user,
-            overlap_start,
-            overlap_end,
+            vacation,
+            start_date,
+            end_date,
+            report_holidays,
         )
         if credited <= 0:
             continue
@@ -1025,7 +1033,13 @@ def _build_time_report_data(
     )
 
     total_minutes = sum(entry.worked_minutes for entry in entries)
-    effective_minutes = total_minutes + vacation_minutes_total
+    # Feiertagsgutschrift je betroffener Person: bezahlte Ausfalltage zählen
+    # wie Urlaub in die Ist-Zeit.
+    holiday_minutes_total = sum(
+        services.holiday_credit_minutes(person, report_holidays, start_date, end_date)
+        for person in {entry.user for entry in entries if entry.user}
+    )
+    effective_minutes = total_minutes + vacation_minutes_total + holiday_minutes_total
     total_entries = len(entries)
     unique_users = len({entry.user_id for entry in entries})
 
@@ -1625,11 +1639,22 @@ def _build_daily_overview(db: Session, user_id: int, target_date: date) -> dict[
     # Anzeige-Reihenfolge: neueste Buchung zuerst. Reine Sortierung – Zeitstempel,
     # Arbeits-/Pausenzeiten und die Summenberechnung bleiben unverändert.
     entries = sorted(entries, key=lambda entry: (entry.start_time, entry.id), reverse=True)
-    total_minutes = sum(entry.worked_minutes for entry in entries)
+    worked_minutes = sum(entry.worked_minutes for entry in entries)
+    # Ein Feiertag an einem Werktag schreibt die Tagessollzeit gut. Wer an dem
+    # Tag zusätzlich arbeitet, bekommt beides – die Arbeit ist echte
+    # Mehrarbeit und wird von der Regelprüfung ohnehin gekennzeichnet.
+    user = crud.get_user(db, user_id)
+    is_holiday = bool(crud.get_holiday_dates_in_range(db, target_date, target_date))
+    holiday_minutes = services.holiday_credit_minutes(
+        user, {target_date} if is_holiday else None, target_date, target_date
+    )
     return {
         "date": target_date,
         "entries": entries,
-        "total_minutes": total_minutes,
+        "total_minutes": worked_minutes + holiday_minutes,
+        "worked_minutes": worked_minutes,
+        "holiday_minutes": holiday_minutes,
+        "is_holiday": is_holiday,
     }
 
 
@@ -1653,14 +1678,26 @@ def _build_weekly_overview(
         user_id=user.id,
         statuses=[models.VacationStatus.APPROVED],
     )
+    # Feiertage der Woche: Sie schreiben die Tagessollzeit gut und verbrauchen
+    # zugleich keinen Urlaubstag.
+    week_holidays = crud.get_holiday_dates_in_range(db, week_start, week_end)
     vacation_minutes_by_day = services.calculate_vacation_minutes_by_day(
         user,
         weekly_vacations,
         week_start,
         week_end,
+        week_holidays,
+    )
+    holiday_minutes_by_day = services.holiday_credit_by_day(
+        user, week_holidays, week_start, week_end
     )
     weekly_vacation_minutes = sum(vacation_minutes_by_day.values())
-    weekly_total_minutes = sum(entry.worked_minutes for entry in weekly_entries) + weekly_vacation_minutes
+    weekly_holiday_minutes = sum(holiday_minutes_by_day.values())
+    weekly_total_minutes = (
+        sum(entry.worked_minutes for entry in weekly_entries)
+        + weekly_vacation_minutes
+        + weekly_holiday_minutes
+    )
     weekly_target_minutes = int(round(user.weekly_target_minutes or 0)) if user else 0
     daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
 
@@ -1696,7 +1733,8 @@ def _build_weekly_overview(
             entry.worked_minutes for entry in weekly_entries if entry.work_date == current_day
         )
         vacation_minutes = vacation_minutes_by_day.get(current_day, 0)
-        day_minutes = work_minutes + vacation_minutes
+        holiday_minutes = holiday_minutes_by_day.get(current_day, 0)
+        day_minutes = work_minutes + vacation_minutes + holiday_minutes
         target_for_day = daily_target_minutes if current_day.weekday() < 5 else 0
         week_days.append(
             {
@@ -1704,6 +1742,8 @@ def _build_weekly_overview(
                 "minutes": day_minutes,
                 "worked_minutes": work_minutes,
                 "vacation_minutes": vacation_minutes,
+                "holiday_minutes": holiday_minutes,
+                "is_holiday": current_day in week_holidays,
                 "target_minutes": target_for_day,
                 "is_today": current_day == reference_today,
             }
@@ -1721,6 +1761,7 @@ def _build_weekly_overview(
         "progress_to_date_percent": progress_to_date_percent,
         "days": week_days,
         "vacation_minutes": weekly_vacation_minutes,
+        "holiday_minutes": weekly_holiday_minutes,
     }
 
 
@@ -2138,10 +2179,19 @@ def mobile_sync_data(
             "flag_remote": _can_flag_remote(user),
         },
         "metrics": {
-            "worked_minutes": metrics.total_work_minutes + metrics.vacation_minutes,
+            "worked_minutes": (
+                metrics.total_work_minutes
+                + metrics.vacation_minutes
+                + metrics.holiday_minutes
+            ),
             "target_minutes": metrics.target_minutes,
-            "balance_minutes": (metrics.total_work_minutes + metrics.vacation_minutes) - metrics.target_minutes,
+            "balance_minutes": (
+                metrics.total_work_minutes
+                + metrics.vacation_minutes
+                + metrics.holiday_minutes
+            ) - metrics.target_minutes,
             "vacation_minutes": metrics.vacation_minutes,
+            "holiday_minutes": metrics.holiday_minutes,
             # Ohne Lizenz kein Urlaubskonto in der Offline-Ansicht; die
             # Mobilansicht blendet den Block dann von selbst aus.
             "vacation_summary": {
@@ -2597,8 +2647,14 @@ def submit_vacation(
     if use_overtime_value:
         # Überstundenurlaub bucht genau die Minuten ab, die er kostet –
         # halbe Tage entsprechend nur zur Hälfte.
+        # Feiertage im Zeitraum kosten nichts – sie werden ohnehin
+        # gutgeschrieben und dürfen das Zeitkonto nicht zusätzlich belasten.
         pending.overtime_minutes = services.vacation_minutes_in_range(
-            user, models.VacationRequest(**pending.model_dump()), start_date, end_date
+            user,
+            models.VacationRequest(**pending.model_dump()),
+            start_date,
+            end_date,
+            crud.get_holiday_dates_in_range(db, start_date, end_date),
         )
     try:
         crud.create_vacation_request(db, pending)
@@ -2692,17 +2748,28 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
         user, selected_month.year, selected_month.month
     )
     vacations = crud.get_vacations_for_user(db, user.id)
+    period_holidays = crud.get_holiday_dates_in_range(db, start_date, end_date)
+    holiday_minutes = services.holiday_credit_minutes(
+        user, period_holidays, start_date, end_date
+    )
     vacation_minutes = services.calculate_approved_vacation_minutes(
-        user, vacations, start_date, end_date
+        user, vacations, start_date, end_date, period_holidays
     )
     overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
-        user, vacations, start_date, end_date
+        user, vacations, start_date, end_date, period_holidays
     )
-    effective_minutes = total_work_minutes + vacation_minutes
+    effective_minutes = total_work_minutes + vacation_minutes + holiday_minutes
     balance_minutes = effective_minutes - target_minutes
     total_overtime_minutes = max(balance_minutes, 0)
     total_undertime_minutes = max(-balance_minutes, 0)
-    vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
+    vacation_summary = services.calculate_vacation_summary(
+        user,
+        vacations,
+        selected_month.year,
+        crud.get_holiday_dates_in_range(
+            db, date(selected_month.year, 1, 1), date(selected_month.year, 12, 31)
+        ),
+    )
 
     company_totals_all = _aggregate_company_totals(approved_month_entries)
     company_totals_filtered = _aggregate_company_totals(approved_entries)
@@ -2720,6 +2787,7 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
             "approved_entries": approved_entries,
             "total_work_minutes": total_work_minutes,
             "vacation_minutes": vacation_minutes,
+            "holiday_minutes": holiday_minutes,
             "total_overtime_minutes": total_overtime_minutes,
             "total_undertime_minutes": total_undertime_minutes,
             "target_minutes": target_minutes,
@@ -2791,17 +2859,28 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         user, selected_month.year, selected_month.month
     )
     vacations = crud.get_vacations_for_user(db, user.id)
+    period_holidays = crud.get_holiday_dates_in_range(db, start_date, end_date)
+    holiday_minutes = services.holiday_credit_minutes(
+        user, period_holidays, start_date, end_date
+    )
     vacation_minutes = services.calculate_approved_vacation_minutes(
-        user, vacations, start_date, end_date
+        user, vacations, start_date, end_date, period_holidays
     )
     overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
-        user, vacations, start_date, end_date
+        user, vacations, start_date, end_date, period_holidays
     )
-    effective_minutes = total_work_minutes + vacation_minutes
+    effective_minutes = total_work_minutes + vacation_minutes + holiday_minutes
     balance_minutes = effective_minutes - target_minutes
     total_overtime_minutes = max(balance_minutes, 0)
     total_undertime_minutes = max(-balance_minutes, 0)
-    vacation_summary = services.calculate_vacation_summary(user, vacations, selected_month.year)
+    vacation_summary = services.calculate_vacation_summary(
+        user,
+        vacations,
+        selected_month.year,
+        crud.get_holiday_dates_in_range(
+            db, date(selected_month.year, 1, 1), date(selected_month.year, 12, 31)
+        ),
+    )
     company_totals_all = _aggregate_company_totals(approved_month_entries)
     overtime_limit_minutes = int(user.monthly_overtime_limit_minutes or 0)
     overtime_limit_exceeded = bool(
@@ -2830,6 +2909,7 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
             total_work_minutes=total_work_minutes,
             target_minutes=target_minutes,
             vacation_minutes=vacation_minutes,
+            holiday_minutes=holiday_minutes,
             overtime_taken_minutes=overtime_taken_minutes,
             total_overtime_minutes=total_overtime_minutes,
             total_undertime_minutes=total_undertime_minutes,
@@ -3927,6 +4007,139 @@ def admin_subject_export(
     )
 
 
+@app.get("/admin/reports/vacations", response_class=HTMLResponse)
+def admin_vacation_overview(
+    request: Request,
+    year: Optional[int] = None,
+    db: Session = Depends(database.get_db),
+):
+    """Resturlaub aller Mitarbeitenden auf einen Blick.
+
+    Bis 0.14.1 gab es den Urlaubsstand nur für die eigene Person. Wer
+    Vertretungen plant oder eine Häufung zum Jahresende sehen will, brauchte
+    ihn aber für das ganze Team.
+
+    Gerechnet wird mit derselben Funktion wie in der eigenen Übersicht
+    (``services.calculate_vacation_summary``) – halbe Tage inklusive. Zwei
+    Zahlen dürfen nicht auseinanderlaufen, die für die Person und die für die
+    Verwaltung.
+    """
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not permission_service.has(user, "Vacation.Overview"):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+
+    selected_year = year or date.today().year
+    scope_ids = _scoped_user_ids(db, user, "Vacation.Overview")
+    people = crud.get_users(db)
+    if scope_ids is not None:
+        people = [item for item in people if item.id in scope_ids]
+
+    # Feiertage einmal je Jahr: Ein Feiertag im Urlaub verbraucht keinen
+    # Urlaubstag, sonst schrumpfte der Anspruch zu Unrecht.
+    year_holidays = crud.get_holiday_dates_in_range(
+        db, date(selected_year, 1, 1), date(selected_year, 12, 31)
+    )
+    rows: list[dict[str, object]] = []
+    for person in people:
+        vacations = crud.get_vacations_for_user(db, person.id)
+        summary = services.calculate_vacation_summary(
+            person, vacations, selected_year, year_holidays
+        )
+        # Überstundenurlaub steht bewusst daneben statt im Resturlaub: Er zehrt
+        # vom Zeitkonto, nicht vom Urlaubsanspruch.
+        overtime_minutes = services.calculate_vacation_overtime_in_range(
+            person,
+            vacations,
+            date(selected_year, 1, 1),
+            date(selected_year, 12, 31),
+            year_holidays,
+        )
+        rows.append(
+            {
+                "user": person,
+                "summary": summary,
+                "overtime_minutes": overtime_minutes,
+                "pending": sum(
+                    1
+                    for vacation in vacations
+                    if vacation.status == models.VacationStatus.PENDING
+                ),
+            }
+        )
+        _log_data_access(
+            db, actor=user, subject_id=person.id, scope="vacation_overview",
+            detail=f"Urlaubsübersicht {selected_year}",
+        )
+    rows.sort(key=lambda row: row["user"].full_name.lower())
+
+    totals = {
+        "total_days": round(sum(row["summary"].total_days for row in rows), 2),
+        "used_days": round(sum(row["summary"].used_days for row in rows), 2),
+        "planned_days": round(sum(row["summary"].planned_days for row in rows), 2),
+        "remaining_days": round(sum(row["summary"].remaining_days for row in rows), 2),
+    }
+    current_year = date.today().year
+    return _admin_template(
+        "admin/vacation_overview.html",
+        request,
+        user,
+        rows=rows,
+        totals=totals,
+        selected_year=selected_year,
+        year_options=list(range(current_year - 2, current_year + 2)),
+        admin_active="vacation_overview",
+        active_tab="reports",
+    )
+
+
+@app.get("/admin/time-entries/changes", response_class=HTMLResponse)
+def admin_entry_changes(
+    request: Request,
+    action: Optional[str] = None,
+    days: int = 30,
+    db: Session = Depends(database.get_db),
+):
+    """Änderungsprotokoll aller Stempelungen.
+
+    Die Historie je Buchung beantwortet „was ist mit *dieser* Buchung
+    passiert?". Diese Seite beantwortet die andere Frage: „was wurde in den
+    letzten Wochen überhaupt angefasst?" – ohne die Buchung schon zu kennen.
+    """
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+
+    window = max(1, min(int(days or 30), 365))
+    scope_ids = _scoped_user_ids(db, user, "Time.View")
+    selected_action = action if action in revisions.ACTION_LABELS else None
+    entries = revisions.recent(
+        db,
+        user_ids=sorted(scope_ids) if scope_ids is not None else None,
+        actions=[selected_action] if selected_action else None,
+        since=date.today() - timedelta(days=window),
+        limit=300,
+    )
+    return _admin_template(
+        "admin/entry_changes.html",
+        request,
+        user,
+        revisions=entries,
+        action_labels=revisions.ACTION_LABELS,
+        field_labels=revisions.FIELD_LABELS,
+        parse_revision=revisions.parse,
+        revision_diff=revisions.diff,
+        selected_action=selected_action,
+        selected_days=window,
+        day_options=[7, 30, 90, 365],
+        admin_active="entry_changes",
+        active_tab="reports",
+    )
+
+
 @app.get("/admin/compliance", response_class=HTMLResponse)
 def admin_compliance_page(request: Request, db: Session = Depends(database.get_db)):
     """Offene Regelverstöße – Kennzeichnungen aus ArbZG/ArbSchG."""
@@ -4089,9 +4302,12 @@ def _build_user_report_data(
         "break_minutes": 0,
         "target_minutes": 0,
         "vacation_minutes": 0,
+        "holiday_minutes": 0,
         "overtime_taken_minutes": 0,
         "balance_minutes": 0,
     }
+    # Einmal für den ganzen Bericht: Feiertage gelten für alle gleich.
+    report_holidays = crud.get_holiday_dates_in_range(db, start_date, end_date)
     for report_user in report_users:
         entries = list(
             crud.get_time_entries(
@@ -4113,12 +4329,17 @@ def _build_user_report_data(
             statuses=[models.VacationStatus.APPROVED],
         )
         vacation_minutes = services.calculate_approved_vacation_minutes(
-            report_user, user_vacations, start_date, end_date
+            report_user, user_vacations, start_date, end_date, report_holidays
         )
         overtime_taken_minutes = services.calculate_vacation_overtime_in_range(
-            report_user, user_vacations, start_date, end_date
+            report_user, user_vacations, start_date, end_date, report_holidays
         )
-        balance_minutes = work_minutes + vacation_minutes - target_minutes
+        holiday_minutes = services.holiday_credit_minutes(
+            report_user, report_holidays, start_date, end_date
+        )
+        balance_minutes = (
+            work_minutes + vacation_minutes + holiday_minutes - target_minutes
+        )
         rows.append(
             {
                 "user": report_user,
@@ -4128,6 +4349,7 @@ def _build_user_report_data(
                 "break_minutes": break_minutes,
                 "target_minutes": target_minutes,
                 "vacation_minutes": vacation_minutes,
+                "holiday_minutes": holiday_minutes,
                 "overtime_taken_minutes": overtime_taken_minutes,
                 "balance_minutes": balance_minutes,
             }
@@ -4137,6 +4359,7 @@ def _build_user_report_data(
         totals["break_minutes"] += break_minutes
         totals["target_minutes"] += target_minutes
         totals["vacation_minutes"] += vacation_minutes
+        totals["holiday_minutes"] += holiday_minutes
         totals["overtime_taken_minutes"] += overtime_taken_minutes
         totals["balance_minutes"] += balance_minutes
 
@@ -5711,8 +5934,18 @@ def create_vacation(vacation: schemas.VacationRequestCreate, db: Session = Depen
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
     use_overtime = bool(vacation.use_overtime and user.overtime_vacation_enabled)
+    # Halbe Tage zählen halb – sonst würde vom Zeitkonto zu viel abgezogen.
+    # Derselbe Weg wie im Formular (siehe ``create_vacation_html``).
     overtime_minutes = (
-        services.calculate_required_vacation_minutes(user, vacation.start_date, vacation.end_date)
+        services.vacation_minutes_in_range(
+            user,
+            vacation,
+            vacation.start_date,
+            vacation.end_date,
+            crud.get_holiday_dates_in_range(
+                db, vacation.start_date, vacation.end_date
+            ),
+        )
         if use_overtime
         else 0
     )

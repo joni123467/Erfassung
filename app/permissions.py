@@ -172,6 +172,19 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
                 description="Anträge genehmigen, ablehnen und zurücknehmen.",
                 scoped=True,
             ),
+            # Bewusst getrennt von ``Vacation.Manage``: Den Resturlaub eines
+            # Teams zu sehen ist etwas anderes, als über Anträge zu
+            # entscheiden. Wer plant, braucht den Überblick; wer genehmigt,
+            # nicht zwingend umgekehrt.
+            Permission(
+                key="Vacation.Overview",
+                label="Urlaubsübersicht einsehen",
+                description=(
+                    "Anspruch, genommenen und verbleibenden Urlaub der "
+                    "Mitarbeitenden einsehen."
+                ),
+                scoped=True,
+            ),
         ),
     ),
     PermissionCategory(

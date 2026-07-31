@@ -5,6 +5,88 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.14.2] – 2026-07-31
+
+### Fixed – halbe Urlaubstage wurden ganz angerechnet
+
+- Ein Antrag über **zwei halbe Tage** stand in der Adminauswertung mit
+  *16:00 Std* statt *8:00 Std*. Ursache ist
+  `services.calculate_required_vacation_minutes`: Sie sieht nur einen Zeitraum,
+  nie den Antrag, und kann halbe Tage deshalb gar nicht kennen. Vier Stellen
+  benutzten sie trotzdem für die Anrechnung – Adminauswertung, Excel-Export,
+  PDF-Export und `POST /api/vacations`. Alle rechnen jetzt über
+  `services.vacation_minutes_in_range`.
+- Besonders schwer wog `/api/vacations`: Dort landete bei Überstundenurlaub ein
+  **falscher Wert in der Datenbank**; vom Zeitkonto wäre zu viel abgezogen
+  worden.
+- Der PDF-Export zeigte zusätzlich **ganze statt halber Tage** in der
+  Tagesspalte. Neu ist `services.vacation_days_in_range`; halbe Tage werden
+  deutsch mit Komma dargestellt.
+- `calculate_required_vacation_minutes` trägt jetzt einen ausdrücklichen
+  Hinweis, dass sie nicht für die Urlaubsanrechnung taugt. Als
+  Sollzeitrechnung bleibt sie unverändert richtig.
+- Ganze Tage rechnen exakt wie bisher.
+
+### Added – Urlaubsübersicht für die Administration
+
+- Neue Seite `/admin/reports/vacations`: Anspruch, Übertrag, genommener,
+  beantragter und verbleibender Urlaub je Mitarbeitendem, mit Jahresauswahl
+  und Summenzeile. Überstundenabbau steht getrennt daneben – er zehrt vom
+  Zeitkonto, nicht vom Urlaubsanspruch.
+- Gerechnet wird mit derselben Funktion wie in der Ansicht der Person, damit
+  beide Zahlen nicht auseinanderlaufen.
+- Neues Recht **`Vacation.Overview`** (scoped), bewusst getrennt von
+  `Vacation.Manage`. Bestehende Rollen erhalten es **nicht** automatisch.
+- Fremdzugriffe landen im Zugriffsprotokoll.
+
+### Added – Änderungsprotokoll für Stempelungen
+
+- Neue Seite `/admin/time-entries/changes`: alle Vorgänge über alle Buchungen
+  mit Vorher/Nachher, Bearbeiter, Zeitpunkt und Begründung; Filter nach
+  Vorgang und Zeitraum. Die Historie je Buchung gab es seit 0.14.0, eine
+  Gesamtansicht bisher nicht.
+- Gefiltert wird nach **Buchungsdatum**, damit späte Korrekturen an alten
+  Buchungen dort bleiben, wo man sie sucht. Sichtbar mit `Time.View`.
+
+### Added – Feiertage werden gutgeschrieben
+
+Bis 0.14.2 wurde ein gesetzlicher Feiertag **nirgends** angerechnet: Der
+Kalender existierte und die Tage wurden angezeigt, aber in die Sollzeit ging
+jeder Werktag Mo–Fr ein, auch der Feiertag. Wer an dem Tag nicht arbeitete und
+keinen Urlaub buchte, hatte ein Minus von einer Tagessollzeit – obwohl er
+nichts versäumt hatte.
+
+- Ein Feiertag ist ein bezahlter Ausfalltag und wird mit der **individuellen
+  Tagessollzeit** gutgeschrieben, genau wie ein Urlaubstag:
+  `Ist = gestempelte Zeit + Urlaub + Feiertag`.
+- Umgesetzt als **Gutschrift**, nicht als Kürzung der Sollzeit – gleicher
+  Saldo, aber sichtbar, woher die Stunden kommen.
+- Feiertage am **Wochenende** bringen nichts (kein Arbeitstag, kein Ausfall).
+- Ein **Feiertag im Urlaub verbraucht keinen Urlaubstag** und wird trotzdem
+  gutgeschrieben. Ohne diese Regel zählte der Tag doppelt und der
+  Urlaubsanspruch schrumpfte zu Unrecht; dasselbe gilt für den gespeicherten
+  Wert beim Überstundenurlaub.
+- **Arbeit am Feiertag** zählt zusätzlich – sie ist echte Mehrarbeit und wird
+  von der Regelprüfung ohnehin gekennzeichnet (§9 ArbZG).
+- Wirksam in Dashboard, Wochen- und Tagesansicht, eigenen Buchungen,
+  Admin- und Benutzerauswertung, PDF- und Excel-Export sowie im
+  Offline-Snapshot der Stempel-App. Maßgeblich ist die Feiertagsregion der
+  Installation.
+
+**Bestehende Salden ändern sich**: Für jeden vergangenen Feiertag steht nach
+dem Update eine Tagessollzeit mehr auf der Habenseite. Das ist die Korrektur
+eines Minus, das nie hätte entstehen dürfen.
+
+### Datenbank
+
+Keine Migration – 0.14.2 ändert kein Schema. Die Feiertagsgutschrift wird bei
+jeder Abfrage aus dem vorhandenen Feiertagskalender gerechnet.
+
+### Tests
+
+`tests/test_v0142.py` – 34 Tests. Details in
+[`docs/RELEASE_NOTES_0.14.2.md`](docs/RELEASE_NOTES_0.14.2.md).
+
 ## [0.14.1] – 2026-07-31
 
 ### Fixed – die Lücken aus 0.14.0

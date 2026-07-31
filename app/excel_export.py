@@ -36,6 +36,7 @@ def export_user_summary_excel(
         "Pausen (Std)",
         "Soll (Std)",
         "Urlaub (Std)",
+        "Feiertag (Std)",
         "Überstundenabbau (Std)",
         "Über-/Minusstunden (Std)",
     ]
@@ -61,6 +62,7 @@ def export_user_summary_excel(
                 _hours(row.get("break_minutes")),
                 _hours(row.get("target_minutes")),
                 _hours(row.get("vacation_minutes")),
+                _hours(row.get("holiday_minutes")),
                 _hours(row.get("overtime_taken_minutes")),
                 _hours(row.get("balance_minutes")),
             ]
@@ -77,6 +79,7 @@ def export_user_summary_excel(
             _hours(totals.get("break_minutes")),
             _hours(totals.get("target_minutes")),
             _hours(totals.get("vacation_minutes")),
+            _hours(totals.get("holiday_minutes")),
             _hours(totals.get("overtime_taken_minutes")),
             _hours(totals.get("balance_minutes")),
         ]
@@ -172,8 +175,10 @@ def export_time_entries(
         for vacation in vacation_list:
             start_date = max(period_start or vacation.start_date, vacation.start_date)
             end_date = min(period_end or vacation.end_date, vacation.end_date)
-            credited = services.calculate_required_vacation_minutes(
+            # Halbe Tage zählen halb (korrigiert in 0.14.2).
+            credited = services.vacation_minutes_in_range(
                 vacation.user,
+                vacation,
                 start_date,
                 end_date,
             )

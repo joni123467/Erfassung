@@ -44,6 +44,15 @@
             <dt>Urlaubsstunden (Monat)</dt>
             <dd>{{ vacation_minutes|format_minutes }} Stunden</dd>
         </div>
+        {# Feiertage sind bezahlte Ausfalltage und zählen wie Urlaub in die
+           Ist-Zeit. Sie stehen getrennt, damit nachvollziehbar bleibt, woher
+           die Stunden kommen. #}
+        {% if holiday_minutes %}
+            <div class="dashboard-summary-list__item">
+                <dt>Feiertagsstunden (Monat)</dt>
+                <dd>{{ holiday_minutes|format_minutes }} Stunden</dd>
+            </div>
+        {% endif %}
         {% if user.time_account_enabled or user.overtime_vacation_enabled %}
             <div class="dashboard-summary-list__item">
                 <dt>Überstunden (Monat)</dt>
