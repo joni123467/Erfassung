@@ -18,7 +18,9 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote_plus
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -163,6 +165,17 @@ def _store(licensing, document: dict, **extra) -> None:
     }
     values.update(extra)
     licensing.save_config(licensing.LicenseConfig(**values))
+
+
+class _Response:
+    """Minimale Antwort für die Zustandsabfrage."""
+
+    def __init__(self, status_code: int, payload: dict | None = None) -> None:
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self) -> dict:
+        return self._payload
 
 
 GATED = [
@@ -560,3 +573,160 @@ def test_license_page_explains_the_lock(client):
     page = client.get("/admin/system/license").text
     assert "Ohne gültige Lizenz ist kein zubuchbarer Bereich nutzbar" in page
     assert "nicht enthalten" in page
+
+
+# --- Schneller nachfragen --------------------------------------------------
+
+def test_the_default_interval_is_hourly(licensing):
+    assert licensing.check_interval_minutes() == 60
+    assert licensing.check_interval_label() == "1 Stunde"
+
+
+def test_the_interval_is_configurable_but_bounded(licensing, monkeypatch):
+    """Verstellbar für Betreiber – aber nie so eng, dass es zum Fluten wird."""
+    monkeypatch.setenv(licensing.CHECK_INTERVAL_ENV, "15")
+    assert licensing.check_interval_minutes() == 15
+    assert licensing.check_interval_label() == "15 Minuten"
+
+    monkeypatch.setenv(licensing.CHECK_INTERVAL_ENV, "180")
+    assert licensing.check_interval_label() == "3 Stunden"
+
+    # Untergrenze und Unsinn führen nie zu einem Fehler.
+    monkeypatch.setenv(licensing.CHECK_INTERVAL_ENV, "0")
+    assert licensing.check_interval_minutes() == licensing.MIN_CHECK_INTERVAL_MINUTES
+    monkeypatch.setenv(licensing.CHECK_INTERVAL_ENV, "bald")
+    assert licensing.check_interval_minutes() == licensing.DEFAULT_CHECK_INTERVAL_MINUTES
+
+
+def test_a_check_is_due_again_after_an_hour(licensing, keypair):
+    _store(
+        licensing,
+        _document(keypair[0], licensing.deployment_id()),
+        last_contact_at=datetime.now(tz=timezone.utc).isoformat(),
+    )
+    assert licensing.due_for_check() is False
+
+    stale = datetime.now(tz=timezone.utc) - timedelta(minutes=61)
+    _store(
+        licensing,
+        _document(keypair[0], licensing.deployment_id()),
+        last_contact_at=stale.isoformat(),
+    )
+    assert licensing.due_for_check() is True
+
+
+def test_the_scheduler_checks_once_on_startup(main, licensing, keypair, monkeypatch):
+    """Ein Neustart fragt ungefragt nach – unabhängig vom Intervall."""
+    from app import license_scheduler
+
+    _store(
+        licensing,
+        _document(keypair[0], licensing.deployment_id()),
+        last_contact_at=datetime.now(tz=timezone.utc).isoformat(),
+    )
+    assert licensing.due_for_check() is False  # regulär wäre nichts zu tun
+
+    calls: list[int] = []
+    monkeypatch.setattr(
+        licensing, "refresh_from_server", lambda: (calls.append(1), (True, "ok"))[1]
+    )
+    monkeypatch.setattr(license_scheduler, "INITIAL_DELAY_SECONDS", 0)
+    monkeypatch.setattr(license_scheduler, "WAKE_INTERVAL_SECONDS", 30)
+
+    license_scheduler.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.05)
+    finally:
+        license_scheduler.stop()
+    assert calls, "beim Start wurde nicht nachgefragt"
+
+
+# --- Lizenz aktualisieren --------------------------------------------------
+
+def test_refresh_button_applies_changes_at_once(client, licensing, keypair, monkeypatch):
+    """Der Knopf holt das frische Dokument und nennt, was sich geändert hat."""
+    deployment = licensing.deployment_id()
+    _store(licensing, _document(keypair[0], deployment, features=[], max_users=5))
+    assert licensing.has_feature("vacation") is False
+
+    erweitert = _document(keypair[0], deployment, features=["vacation"], max_users=25)
+    monkeypatch.setattr(
+        licensing, "_post",
+        lambda url, payload: _Response(200, {"status": "active", "license": erweitert}),
+    )
+
+    _login(client)
+    token = _csrf(client, "/admin/system/license")
+    response = client.post(
+        "/admin/system/license/refresh",
+        data={"csrf_token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert "error=" not in location
+    assert "Urlaubsplanung" in unquote_plus(location)
+    assert "5" in unquote_plus(location) and "25" in unquote_plus(location)
+
+    # Sofort wirksam, ohne Neustart und ohne Warten auf das Intervall.
+    assert licensing.has_feature("vacation") is True
+    assert client.get("/records/vacations", follow_redirects=False).status_code == 200
+
+
+def test_refresh_button_keeps_the_license_when_the_server_is_down(
+    client, licensing, keypair, monkeypatch
+):
+    """Der wichtigste Fall: Ausfall darf nie etwas wegnehmen."""
+    _store(licensing, _document(keypair[0], licensing.deployment_id(), features=["vacation"]))
+
+    def boom(url, payload):
+        raise licensing.LicenseError("Der Lizenzserver ist nicht erreichbar: timeout")
+
+    monkeypatch.setattr(licensing, "_post", boom)
+
+    _login(client)
+    token = _csrf(client, "/admin/system/license")
+    response = client.post(
+        "/admin/system/license/refresh",
+        data={"csrf_token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]
+    assert "unver" in unquote_plus(response.headers["location"])  # „unverändert weiter“
+
+    state = licensing.current_status()
+    assert state.is_valid
+    assert state.has_feature("vacation") is True
+
+
+def test_refresh_reports_a_lifted_block(licensing, keypair, monkeypatch):
+    deployment = licensing.deployment_id()
+    _store(
+        licensing,
+        _document(keypair[0], deployment, features=["orders"]),
+        blocked_status="suspended",
+        blocked_since=(datetime.now(tz=timezone.utc) - timedelta(days=2)).isoformat(),
+        blocked_reason="gesperrt",
+    )
+    fresh = _document(keypair[0], deployment, features=["orders"])
+    monkeypatch.setattr(
+        licensing, "_post",
+        lambda url, payload: _Response(200, {"status": "active", "license": fresh}),
+    )
+
+    reached, message = licensing.refresh_now()
+    assert reached is True
+    assert "Sperre aufgehoben" in message
+    assert licensing.current_status().is_blocked is False
+
+
+def test_license_page_offers_the_refresh_button(client, licensing, keypair):
+    _store(licensing, _document(keypair[0], licensing.deployment_id()))
+    _login(client)
+    page = client.get("/admin/system/license").text
+    assert "Lizenz aktualisieren" in page
+    assert "/admin/system/license/refresh" in page
+    assert "bei jedem Start" in page

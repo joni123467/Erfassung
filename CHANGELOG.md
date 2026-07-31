@@ -39,6 +39,28 @@ Ab sofort entscheidet ausschließlich das Lizenzdokument.
   melden; die Lizenzseite erklärt, was offen bleibt und warum.
 - Der Startlauf protokolliert „nicht lizenziert“ als Warnung.
 
+### Added – Änderungen wirken schnell
+
+- Die selbsttätige Nachfrage läuft **stündlich statt täglich** und zusätzlich
+  **bei jedem Start**. Eine Änderung am Lizenzserver wirkt damit spätestens
+  nach einer Stunde, nach einem Neustart des Containers sofort. Verstellbar
+  über `ERFASSUNG_LICENSE_CHECK_MINUTES` (Untergrenze 5 Minuten; unbrauchbare
+  Werte werden ignoriert statt den Start zu verhindern).
+- Neuer Knopf **„Lizenz aktualisieren"** auf der Lizenzseite
+  (`POST /admin/system/license/refresh`): holt den Stand sofort vom
+  Lizenzserver und nennt in der Rückmeldung, **was sich geändert hat** –
+  Zustand, Benutzerzahl, Laufzeit, hinzugekommene und entfallene Bausteine,
+  aufgehobene Sperre. Der bisherige Knopf heißt jetzt **„Neu aktivieren"** und
+  wiederholt weiterhin die vollständige Aktivierung.
+- `licensing.refresh_now()` fällt auf die vollständige Aktivierung zurück,
+  wenn ein älterer Lizenzserver die Zustandsabfrage nicht kennt.
+
+**Unverändert:** Ist der Lizenzserver nicht erreichbar, ändert sich nichts.
+Weder die häufigere Nachfrage noch die Prüfung beim Start noch der neue Knopf
+können etwas wegnehmen – die hinterlegte Lizenz bleibt in vollem Umfang gültig,
+bis sie abläuft. Nur eine ausdrückliche Sperrmeldung startet die
+Übergangsfrist.
+
 ### Fixed
 
 - **Auftragsbezogenes Stempeln lief ohne Lizenz weiter.** Firmen- und
@@ -70,11 +92,14 @@ aktivierte Installation lässt sich also einrichten und aktivieren.
 
 ### Tests
 
-`tests/test_v0121.py` – 33 Tests: jeder zubuchbare Bereich ohne Lizenz zu
+`tests/test_v0121.py` – 41 Tests: jeder zubuchbare Bereich ohne Lizenz zu
 (Oberfläche und API), Basis offen, Navigation ohne die gesperrten Punkte,
 Benutzeranlage abgewiesen, Stempeln und Anmelden weiterhin möglich,
 abgelaufene und ungültige Lizenz schalten nichts frei, gültige Lizenz öffnet
-weiterhin genau das Genannte, `feature_access` in der API.
+weiterhin genau das Genannte, `feature_access` in der API. Dazu Auftragsstart
+gesperrt und Auftragsende offen, stündliches Intervall samt Grenzen der
+Umgebungsvariablen, Nachfrage beim Start, und „Lizenz aktualisieren“ – wirkt
+sofort, nennt die Änderung, lässt bei unerreichbarem Server alles unangetastet.
 Neu ist außerdem `tests/licensed_env.py`: Die Fachtests der zubuchbaren
 Bereiche liefen bisher ohne Lizenz, weil ohne Lizenz alles offen war. Sie
 aktivieren ihre Testinstanz jetzt mit einem selbst signierten Dokument mit

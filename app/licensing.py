@@ -94,8 +94,47 @@ _LICENSE_PATH = paths.CONFIG_DIR / "license.json"
 #: Zeitlimit für jeden Aufruf des Lizenzservers (Verbindung + Antwort).
 HTTP_TIMEOUT_SECONDS = 15.0
 
-#: Abstand der selbsttätigen Nachfrage beim Lizenzserver.
-CHECK_INTERVAL_HOURS = 24
+#: Abstand der selbsttätigen Nachfrage beim Lizenzserver, in Minuten.
+#: Stündlich ist ein guter Kompromiss: Änderungen an Benutzerzahl, Laufzeit und
+#: Bausteinen wirken binnen einer Stunde, und eine Installation erzeugt dabei
+#: 24 Anfragen am Tag – für den Lizenzserver nichts.
+DEFAULT_CHECK_INTERVAL_MINUTES = 60
+
+#: Untergrenze, damit eine Fehlkonfiguration den Lizenzserver nicht flutet.
+MIN_CHECK_INTERVAL_MINUTES = 5
+
+#: Umgebungsvariable für Betreiber, die seltener (oder häufiger) fragen wollen.
+CHECK_INTERVAL_ENV = "ERFASSUNG_LICENSE_CHECK_MINUTES"
+
+
+def check_interval_minutes() -> int:
+    """Abstand der selbsttätigen Nachfrage – zur Laufzeit gelesen.
+
+    Unbrauchbare Werte werden ignoriert statt zu einem Startfehler zu führen:
+    Eine Lizenzeinstellung darf eine Installation nicht lahmlegen.
+    """
+    raw = os.environ.get(CHECK_INTERVAL_ENV, "").strip()
+    if not raw:
+        return DEFAULT_CHECK_INTERVAL_MINUTES
+    try:
+        value = int(raw)
+    except ValueError:
+        _log(
+            f"{CHECK_INTERVAL_ENV}={raw!r} ist keine Zahl – es gilt der Standard "
+            f"von {DEFAULT_CHECK_INTERVAL_MINUTES} Minuten.",
+            level=logging.WARNING,
+        )
+        return DEFAULT_CHECK_INTERVAL_MINUTES
+    return max(value, MIN_CHECK_INTERVAL_MINUTES)
+
+
+def check_interval_label() -> str:
+    """Für die Oberfläche: „alle 60 Minuten" bzw. „alle 2 Stunden"."""
+    minutes = check_interval_minutes()
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} Stunde" if hours == 1 else f"{hours} Stunden"
+    return f"{minutes} Minute" if minutes == 1 else f"{minutes} Minuten"
 
 #: Übergangsfrist nach einer gemeldeten Sperre. Erst danach werden die
 #: lizenzpflichtigen Bereiche geschlossen – Stempeln bleibt immer möglich,
@@ -968,7 +1007,67 @@ def due_for_check(status: Optional[LicenseStatus] = None) -> bool:
     last = state.last_contact_at or state.last_checked_at
     if last is None:
         return True
-    return (_utcnow() - last).total_seconds() >= CHECK_INTERVAL_HOURS * 3600
+    return (_utcnow() - last).total_seconds() >= check_interval_minutes() * 60
+
+
+def describe_changes(before: LicenseStatus, after: LicenseStatus) -> str:
+    """Was hat sich zwischen zwei Zuständen geändert? Leer, wenn nichts.
+
+    Damit „Lizenz aktualisieren" nicht nur „fertig" meldet, sondern zeigt, ob
+    der Griff zum Lizenzserver tatsächlich etwas bewirkt hat.
+    """
+    changes: list[str] = []
+    if before.status != after.status:
+        changes.append(f"Zustand {before.label} → {after.label}")
+    if before.max_users != after.max_users:
+        old = "unbegrenzt" if before.unlimited_users else str(before.max_users)
+        new = "unbegrenzt" if after.unlimited_users else str(after.max_users)
+        changes.append(f"Benutzer {old} → {new}")
+    if before.expires_at != after.expires_at:
+        old = before.expires_at.strftime("%d.%m.%Y") if before.expires_at else "unbefristet"
+        new = after.expires_at.strftime("%d.%m.%Y") if after.expires_at else "unbefristet"
+        changes.append(f"Laufzeit {old} → {new}")
+
+    gained = [name for name in after.features if name not in before.features]
+    lost = [name for name in before.features if name not in after.features]
+    if gained:
+        changes.append("neu: " + ", ".join(FEATURES.get(key, key) for key in gained))
+    if lost:
+        changes.append("entfallen: " + ", ".join(FEATURES.get(key, key) for key in lost))
+
+    if before.is_blocked and not after.is_blocked:
+        changes.append("Sperre aufgehoben")
+    elif not before.is_blocked and after.is_blocked:
+        changes.append("Lizenz gesperrt")
+    return "; ".join(changes)
+
+
+def refresh_now() -> tuple[bool, str]:
+    """Lizenz sofort vom Lizenzserver holen. Gibt ``(erreicht, Meldung)``.
+
+    Hinter „Lizenz aktualisieren". Zuerst die Zustandsabfrage – sie liefert bei
+    gültiger Lizenz ein frisches Dokument und meldet zusätzlich eine Sperre
+    oder deren Aufhebung. Kennt der Server diesen Endpunkt nicht (ältere
+    Ausgabe), wird auf die vollständige Aktivierung zurückgefallen; die ist
+    idempotent und verbraucht keinen weiteren Aktivierungsplatz.
+
+    Ist der Server nicht erreichbar, bleibt alles wie es ist – hier gilt
+    derselbe Grundsatz wie bei der selbsttätigen Nachfrage.
+    """
+    before = current_status()
+    reached, message = refresh_from_server()
+    if not reached:
+        # Kein Zustandsendpunkt? Dann über die reguläre Aktivierung versuchen.
+        try:
+            recheck()
+            reached = True
+            message = "Lizenz vom Lizenzserver geholt."
+        except LicenseError as exc:
+            return False, message or str(exc)
+
+    after = current_status()
+    changes = describe_changes(before, after)
+    return True, f"{message} {changes}." if changes else message
 
 
 def recheck() -> LicenseStatus:
@@ -1035,9 +1134,12 @@ __all__ = [
     "STATUS_VALID",
     "activate",
     "canonical_json",
+    "check_interval_label",
+    "check_interval_minutes",
     "count_users",
     "current_status",
     "deactivate",
+    "describe_changes",
     "due_for_check",
     "adopt_public_keys",
     "deployment_id",
@@ -1053,6 +1155,7 @@ __all__ = [
     "public_keys",
     "recheck",
     "refresh_from_server",
+    "refresh_now",
     "save_config",
     "signing_payload",
     "user_limit_error",
