@@ -231,9 +231,10 @@
                                 Kommentar (optional)
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
-                            {% if can_flag_remote %}
-                                {{ location_picker(catalogue=location_catalogue_data, block=True) }}
-                            {% endif %}
+                            {# Kein can_flag_remote hier – siehe templates/dashboard.html:
+                               der Standort einer Firma ist keine Remote-Arbeit. #}
+                            {{ location_picker(catalogue=location_catalogue_data, block=True,
+                                               allow_remote=can_flag_remote) }}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
                                     <span class="modal-action__icon" aria-hidden="true">✕</span>

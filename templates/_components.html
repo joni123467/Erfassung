@@ -7,7 +7,13 @@
    Sind Standorte hinterlegt, wird daraus eine Auswahlliste im selben Gewand –
    gleiche Pille, gleicher Punkt, gleiche Beschriftung „Einsatzort“. Bewusst
    ein einziges Bedienelement statt Schalter *und* Liste: Auf dem Handy ist
-   jeder zusätzliche Griff einer zu viel. #}
+   jeder zusätzliche Griff einer zu viel.
+
+   ``allow_remote`` steuert nur die Option „Remote“ – sie hängt am
+   Benutzerkennzeichen. Der Standort selbst hängt nicht daran: Wer nie remote
+   arbeitet, muss trotzdem sagen können, an welchem Standort er war. Ohne
+   Standorte *und* ohne Remote-Kennzeichen gibt es nichts zu wählen, dann
+   bleibt das Feld weg. #}
 
 {% macro location_toggle(checked=False, block=False) -%}
 <label class="location-toggle{% if block %} location-toggle--block{% endif %}">
@@ -24,7 +30,7 @@
 </label>
 {%- endmacro %}
 
-{% macro location_picker(locations=None, catalogue=None, checked=False, selected=None, block=False) -%}
+{% macro location_picker(locations=None, catalogue=None, checked=False, selected=None, block=False, allow_remote=True) -%}
 {% if catalogue %}
 {# Firmengebunden: Angeboten werden ausschließlich die Standorte der gewählten
    Firma. ``data-location-picker`` verbindet die Liste mit der Firmenauswahl
@@ -37,16 +43,18 @@
     <span class="location-toggle__face">
         <span class="location-toggle__dot" aria-hidden="true"></span>
         <span class="location-toggle__caption" aria-hidden="true">Einsatzort</span>
-        <select class="location-toggle__select" name="work_location" data-location-picker>
+        <select class="location-toggle__select" name="work_location" data-location-picker{% if allow_remote %} data-allow-remote="1"{% endif %}>
             <option value="onsite"{% if not selected and not checked %} selected{% endif %}>Vor Ort</option>
-            <option value="remote"{% if not selected and checked %} selected{% endif %}>Remote</option>
+            {% if allow_remote %}
+                <option value="remote"{% if not selected and checked %} selected{% endif %}>Remote</option>
+            {% endif %}
             {% for location in (locations or []) %}
                 <option value="{{ location.id }}"{% if selected == location.id %} selected{% endif %}>{{ location.name }}{% if location.city %} · {{ location.city }}{% endif %}</option>
             {% endfor %}
         </select>
     </span>
 </label>
-{% else %}
+{% elif allow_remote %}
 {{ location_toggle(checked=checked, block=block) }}
 {% endif %}
 {%- endmacro %}

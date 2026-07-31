@@ -2,7 +2,18 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.14.0`
+**Version:** `0.14.1`
+
+> Seit 0.14.1: **Der Einsatzort ist zurück.** Die Standortauswahl hing am
+> Benutzerkennzeichen „Remote/vor Ort" und verschwand ohne es komplett – ein
+> Firmenstandort ist aber das Gegenteil von Remote-Arbeit. Standorte sind
+> jetzt unabhängig davon wählbar, nur die Option „Remote" hängt weiter am
+> Kennzeichen. Außerdem: **stornierte Buchungen** heißen jetzt „Storniert",
+> haben einen eigenen Filter, zeigen Grund und Ersatzbuchung – und zählen in
+> keiner Summe mehr mit (vorher stand die Zeit nach einer Korrektur doppelt in
+> der Tages- und Wochensumme). **Ablehnen** funktioniert wieder: Das Formular
+> hat das seit 0.14.0 verlangte Begründungsfeld. Details in
+> [`docs/RELEASE_NOTES_0.14.1.md`](docs/RELEASE_NOTES_0.14.1.md).
 
 > Seit 0.14.0: **Revisionssichere Erfassung.** Buchungen werden nicht mehr
 > überschrieben oder gelöscht, sondern **storniert und ersetzt**; jede Änderung
@@ -539,6 +550,13 @@ tauscht die Liste, und der **Hauptstandort** ist vorausgewählt. Beim
 **Schnellstempeln** ohne Auftrag gibt es keine Firma und damit nur „Vor Ort"
 und „Remote".
 
+Der Standort hängt **nicht** am Benutzerkennzeichen „Einsatzort (Remote/vor
+Ort)" (korrigiert in 0.14.1 – vorher verschwand ohne das Kennzeichen die ganze
+Auswahl). Ein Firmenstandort ist das Gegenteil von Remote-Arbeit: Wer nie
+remote arbeitet, muss trotzdem sagen können, wo er war. Nur die **Option
+„Remote"** hängt am Kennzeichen und fehlt ohne es – auf der Seite wie im
+Server.
+
 Eine Firma kann als **eigener Betrieb** markiert werden. Das trennt interne
 Zeit in Auswertungen von Kundenzeit; wer im eigenen Büro arbeitet, startet
 einen Auftrag auf den eigenen Betrieb.
@@ -600,8 +618,26 @@ sie nur – sie verschwindet aus den Summen, nicht aus den Daten.
 Jede Änderung, Freigabe, Ablehnung und Stornierung landet in der Tabelle
 `time_entry_revisions` mit **Vorher- und Nachher-Stand, Zeitpunkt, Urheber und
 Begründung**. Für Änderung, Ablehnung und Stornierung ist die Begründung
-**Pflicht** – ohne sie lehnt der Server ab. Die Historie einer Buchung steht
-unter Administration → Buchungen → *Historie*.
+**Pflicht** – ohne sie lehnt der Server ab; das Formular unter *Freigaben* hat
+dafür ein eigenes Feld. Historisiert werden auch das **Beenden** einer
+laufenden Buchung („Beendet" – kein Korrekturvorgang, deshalb ohne
+Begründung) und der **Kommentar-Nachtrag** aus der Stempelansicht. Die
+Historie einer Buchung steht unter Administration → Auswertungen →
+*Historie*.
+
+### Wo stornierte Buchungen stehen
+
+Eine stornierte Buchung ist zurückgenommen, nicht gelöscht. Sie zählt in
+**keiner** Summe und in keinem Export mehr mit, bleibt aber sichtbar:
+
+| Ort | Was zu sehen ist |
+|-----|------------------|
+| Administration → Auswertungen, Filter **Storniert** | alle Stornos des Zeitraums, gedämpft und durchgestrichen |
+| Eigene Buchungen (`/records`) | Stand „Storniert" mit **Grund** und Hinweis auf die Ersatzbuchung |
+| Historie der Buchung | Vorher/Nachher, Urheber, Begründung und der Verweis auf die Ersatzbuchung |
+
+Bearbeiten lässt sich eine stornierte Buchung nicht mehr – der Weg führt über
+die Historie zur Ersatzbuchung.
 
 ### Pausen: tatsächlich statt pauschal
 

@@ -265,6 +265,10 @@ class RevisionAction:
     """Was mit einer Buchung geschehen ist – Werte der Revisionshistorie."""
 
     CREATED = "created"
+    #: Laufende Buchung beendet. Bewusst nicht ``UPDATED``: Das Beenden ist
+    #: keine Korrektur, sondern der zweite Stempel derselben Buchung – und
+    #: braucht deshalb auch keine Begründung.
+    CLOSED = "closed"
     UPDATED = "updated"
     APPROVED = "approved"
     REJECTED = "rejected"

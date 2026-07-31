@@ -121,7 +121,21 @@
                     </td>
                     <td>{{ entry.worked_minutes|format_minutes }} Std</td>
                     <td class="status-label status-{{ entry.status }}">
-                        {% if entry.status == 'approved' %}Freigegeben{% elif entry.status == 'pending' %}Wartet auf Freigabe{% else %}Abgelehnt{% endif %}
+                        {% if entry.status == 'approved' %}Freigegeben
+                        {%- elif entry.status == 'pending' %}Wartet auf Freigabe
+                        {%- elif entry.status == 'cancelled' %}Storniert
+                        {%- else %}Abgelehnt{% endif %}
+                        {# Storniert heißt zurückgenommen, nicht gelöscht: Grund und
+                           Ersatzbuchung stehen direkt daneben, sonst bliebe für den
+                           Anwender unklar, warum die Zeit nicht mehr zählt. #}
+                        {% if entry.status == 'cancelled' %}
+                            {% if entry.cancel_reason %}
+                                <span class="status-note">{{ entry.cancel_reason }}</span>
+                            {% endif %}
+                            {% if entry.replaced_by_id %}
+                                <span class="status-note">Ersetzt durch eine spätere Buchung</span>
+                            {% endif %}
+                        {% endif %}
                     </td>
                     <td>{{ 'Manuell' if entry.is_manual else 'Automatisch' }}</td>
                     <td>{{ entry.notes or '-' }}</td>

@@ -256,8 +256,14 @@
                         <td>{{ entry.notes or '-' }}</td>
                         {% if admin_permissions.edit_time_entries %}
                             <td>
-                                {% if not entry.is_open %}
+                                {# Eine stornierte Buchung wird nicht mehr bearbeitet –
+                                   sie ist zurückgenommen. Der Weg zu ihr führt über
+                                   die Historie, dort steht auch die Ersatzbuchung. #}
+                                {% if entry.status == 'cancelled' %}
+                                    <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/history">Historie</a>
+                                {% elif not entry.is_open %}
                                     <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/edit?next={{ report_next | urlencode }}&user={{ entry.user_id }}">Bearbeiten</a>
+                                    <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/history">Historie</a>
                                 {% else %}
                                     <span class="text-muted">läuft</span>
                                 {% endif %}

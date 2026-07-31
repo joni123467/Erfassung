@@ -5,6 +5,59 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.14.1] – 2026-07-31
+
+### Fixed – die Lücken aus 0.14.0
+
+- **Die Standortauswahl fehlte beim Stempeln komplett.** Sie hing seit 0.13.0
+  am Benutzerkennzeichen „Einsatzort (Remote/vor Ort)", weil sie an der Stelle
+  des alten Umschalters saß und dessen Bedingung mitgeerbt hatte – in der
+  Oberfläche *und* im Server. Ein Firmenstandort ist aber das Gegenteil von
+  Remote-Arbeit: Wer nie remote arbeitet, muss trotzdem sagen können, wo er
+  war. Standorte sind jetzt unabhängig davon wählbar; **nur** die Option
+  „Remote" hängt weiter am Kennzeichen. Betrifft Web, Mobilansicht,
+  Buchungsbearbeitung und den Kommentar-Nachtrag.
+- **Stornierte Buchungen waren nicht auffindbar.** Kein deutsches Label (die
+  Oberfläche zeigte `Cancelled`, die eigene Buchungsliste sogar „Abgelehnt"),
+  kein Filter in den Auswertungen, und `?status=cancelled` fiel still auf
+  „Freigegeben" zurück. Jetzt: Stand **„Storniert"**, eigener Filter,
+  gedämpfte und durchgestrichene Darstellung, **Grund** und Hinweis auf die
+  Ersatzbuchung in der eigenen Liste sowie ein Weg zur **Historie** aus jeder
+  Zeile.
+- **Stornierte Buchungen zählten mit.** Tages- und Wochensumme filterten nur
+  `rejected`. Nach einer Korrektur stand dieselbe Zeit **doppelt** in der
+  Summe – einmal storniert, einmal als Ersatz. Der Excel-Export je Benutzer
+  filterte gar nichts. Storniert und abgelehnt zählen jetzt nirgends mehr.
+  (Monatswerte und Auswertungen waren nicht betroffen, die rechnen mit
+  `approved`.)
+- **Ablehnen war nicht durchführbar.** 0.14.0 verlangt eine Begründung, das
+  Formular unter *Freigaben* hatte kein Feld dafür – jede Ablehnung lief in
+  die Fehlermeldung. Das Feld ist ergänzt: für die Freigabe optional, für die
+  Ablehnung Pflicht.
+- **Kommentar-Nachtrag ohne Historie.** `update_time_entry_notes` änderte
+  Kommentar und Einsatzort ohne Eintrag – ein Loch in der Revisionssicherheit.
+  Wird jetzt historisiert (ohne Begründungspflicht, die Person bearbeitet ihre
+  eigene Buchung) und respektiert gesperrte Perioden.
+- **Beenden einer laufenden Buchung ohne Historie.** Neuer Vorgang
+  **„Beendet"** (`RevisionAction.CLOSED`) – bewusst nicht „Geändert": Das
+  Beenden ist keine Korrektur, sondern der zweite Stempel derselben Buchung.
+  Es bleibt auch in gesperrten Perioden möglich, sonst bliebe die Buchung für
+  immer offen.
+- **Gesperrte Periode ergab einen 500.** `PeriodLocked` war beim Stempeln und
+  unter `/api/time-entries` nicht abgefangen; ein Offline-Client hätte den
+  Serverfehler endlos wiederholt. Die API antwortet jetzt mit **409** und dem
+  Grund im Klartext.
+
+### Datenbank
+
+Keine Migration – 0.14.1 ändert kein Schema. `CLOSED` ist ein neuer Wert in
+der bestehenden Textspalte `time_entry_revisions.action`.
+
+### Tests
+
+`tests/test_v0141.py` – 22 Tests. Details in
+[`docs/RELEASE_NOTES_0.14.1.md`](docs/RELEASE_NOTES_0.14.1.md).
+
 ## [0.14.0] – 2026-07-31
 
 ### Added – Revisionssichere Erfassung nach ArbZG, MiLoG und DSGVO
