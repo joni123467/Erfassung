@@ -3,7 +3,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, timedelta
 
-from typing import List
+from typing import Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -61,6 +61,49 @@ def calculate_required_vacation_minutes(
     return total
 
 
+def holiday_credit_minutes(
+    user: models.User | None, holidays: Iterable[date] | None, start: date, end: date
+) -> int:
+    """Gutschrift für gesetzliche Feiertage im Zeitraum.
+
+    Ein Feiertag ist ein bezahlter Ausfalltag: Er wird mit der **individuellen
+    Tagessollzeit** gutgeschrieben, genau wie ein Urlaubstag. Ohne diese
+    Gutschrift entstünde für jeden Feiertag ein Minus in Höhe eines
+    Arbeitstages, obwohl niemand etwas versäumt hat.
+
+    Gezählt werden nur Feiertage von **Montag bis Freitag** – die Sollzeit
+    kennt ohnehin nur diese Tage, ein Feiertag am Wochenende fällt also auf
+    keinen Arbeitstag und ist nichts gutzuschreiben.
+    """
+    if not user or not holidays:
+        return 0
+    daily_minutes = int(round(user.daily_target_minutes or 0))
+    if daily_minutes <= 0:
+        return 0
+    relevant = {
+        day
+        for day in holidays
+        if start <= day <= end and day.weekday() < 5
+    }
+    return len(relevant) * daily_minutes
+
+
+def holiday_credit_by_day(
+    user: models.User | None, holidays: Iterable[date] | None, start: date, end: date
+) -> dict[date, int]:
+    """Feiertagsgutschrift je Tag – für Tages- und Wochenansichten."""
+    if not user or not holidays:
+        return {}
+    daily_minutes = int(round(user.daily_target_minutes or 0))
+    if daily_minutes <= 0:
+        return {}
+    return {
+        day: daily_minutes
+        for day in holidays
+        if start <= day <= end and day.weekday() < 5
+    }
+
+
 def half_day_factor(vacation: models.VacationRequest, day: date) -> float:
     """Anteil, mit dem ``day`` in diesen Urlaubsantrag eingeht.
 
@@ -77,16 +120,34 @@ def half_day_factor(vacation: models.VacationRequest, day: date) -> float:
     return 1.0
 
 
+def _counts_as_vacation_day(
+    day: date, holidays: Optional[frozenset[date]]
+) -> bool:
+    """Zählt ``day`` als Urlaubstag?
+
+    Nein an Wochenenden – und nein an gesetzlichen Feiertagen: Ein Feiertag
+    im Urlaub verbraucht **keinen** Urlaubstag. Er wird ohnehin über
+    :func:`holiday_credit_minutes` gutgeschrieben; würde er zusätzlich vom
+    Urlaubsanspruch abgehen, wäre der Tag doppelt gezählt und der Anspruch zu
+    Unrecht kleiner.
+    """
+    if day.weekday() >= 5:
+        return False
+    return not (holidays and day in holidays)
+
+
 def vacation_minutes_in_range(
     user: models.User | None,
     vacation: models.VacationRequest,
     start: date,
     end: date,
+    holidays: Optional[Iterable[date]] = None,
 ) -> int:
     """Urlaubsminuten dieses Antrags im Zeitraum – halbe Tage eingerechnet.
 
     Zählt wie die Sollzeit nur Montag bis Freitag; halbe Tage gehen mit der
-    Hälfte der Tagessollzeit ein.
+    Hälfte der Tagessollzeit ein. Gesetzliche Feiertage bleiben außen vor –
+    sie werden getrennt gutgeschrieben (siehe :func:`_counts_as_vacation_day`).
     """
     if not user:
         return 0
@@ -97,28 +158,39 @@ def vacation_minutes_in_range(
     overlap_end = min(end, vacation.end_date)
     if overlap_start > overlap_end:
         return 0
+    holiday_set = frozenset(holidays) if holidays else None
     total = 0.0
     current = overlap_start
     while current <= overlap_end:
-        if current.weekday() < 5:
+        if _counts_as_vacation_day(current, holiday_set):
             total += daily_minutes * half_day_factor(vacation, current)
         current += timedelta(days=1)
     return int(round(total))
 
 
-def vacation_days(vacation: models.VacationRequest) -> float:
-    """Angerechnete Urlaubstage eines Antrags (Mo–Fr, halbe Tage als 0,5)."""
+def vacation_days(
+    vacation: models.VacationRequest,
+    holidays: Optional[Iterable[date]] = None,
+) -> float:
+    """Angerechnete Urlaubstage eines Antrags (Mo–Fr, halbe Tage als 0,5).
+
+    Gesetzliche Feiertage verbrauchen keinen Urlaubstag.
+    """
+    holiday_set = frozenset(holidays) if holidays else None
     total = 0.0
     current = vacation.start_date
     while current <= vacation.end_date:
-        if current.weekday() < 5:
+        if _counts_as_vacation_day(current, holiday_set):
             total += half_day_factor(vacation, current)
         current += timedelta(days=1)
     return total
 
 
 def vacation_days_in_range(
-    vacation: models.VacationRequest, start: date, end: date
+    vacation: models.VacationRequest,
+    start: date,
+    end: date,
+    holidays: Optional[Iterable[date]] = None,
 ) -> float:
     """Urlaubstage dieses Antrags **im Zeitraum** – halbe Tage als 0,5.
 
@@ -129,10 +201,11 @@ def vacation_days_in_range(
     overlap_end = min(end, vacation.end_date)
     if overlap_start > overlap_end:
         return 0.0
+    holiday_set = frozenset(holidays) if holidays else None
     total = 0.0
     current = overlap_start
     while current <= overlap_end:
-        if current.weekday() < 5:
+        if _counts_as_vacation_day(current, holiday_set):
             total += half_day_factor(vacation, current)
         current += timedelta(days=1)
     return total
@@ -154,6 +227,7 @@ def calculate_vacation_overtime_in_range(
     vacations: list[models.VacationRequest],
     start: date,
     end: date,
+    holidays: Optional[Iterable[date]] = None,
 ) -> int:
     if not user or not vacations:
         return 0
@@ -163,7 +237,7 @@ def calculate_vacation_overtime_in_range(
             continue
         if vacation.status != models.VacationStatus.APPROVED:
             continue
-        total += vacation_minutes_in_range(user, vacation, start, end)
+        total += vacation_minutes_in_range(user, vacation, start, end, holidays)
     return total
 
 
@@ -172,6 +246,7 @@ def calculate_approved_vacation_minutes(
     vacations: list[models.VacationRequest],
     start: date,
     end: date,
+    holidays: Optional[Iterable[date]] = None,
 ) -> int:
     if not user or not vacations:
         return 0
@@ -179,7 +254,7 @@ def calculate_approved_vacation_minutes(
     for vacation in vacations:
         if vacation.status != models.VacationStatus.APPROVED:
             continue
-        total += vacation_minutes_in_range(user, vacation, start, end)
+        total += vacation_minutes_in_range(user, vacation, start, end, holidays)
     return total
 
 
@@ -188,12 +263,14 @@ def calculate_vacation_minutes_by_day(
     vacations: list[models.VacationRequest],
     start: date,
     end: date,
+    holidays: Optional[Iterable[date]] = None,
 ) -> dict[date, int]:
     if not user or not vacations:
         return {}
     daily_minutes = int(round(user.daily_target_minutes or 0))
     if daily_minutes <= 0:
         return {}
+    holiday_set = frozenset(holidays) if holidays else None
     totals: dict[date, int] = {}
     for vacation in vacations:
         if vacation.status != models.VacationStatus.APPROVED:
@@ -204,7 +281,7 @@ def calculate_vacation_minutes_by_day(
             continue
         current = overlap_start
         while current <= overlap_end:
-            if current.weekday() < 5:
+            if _counts_as_vacation_day(current, holiday_set):
                 share = int(round(daily_minutes * half_day_factor(vacation, current)))
                 totals[current] = totals.get(current, 0) + share
             current += timedelta(days=1)
@@ -215,7 +292,14 @@ def calculate_vacation_summary(
     user: models.User | None,
     vacations: List[models.VacationRequest],
     year: int,
+    holidays: Optional[Iterable[date]] = None,
 ) -> schemas.VacationSummary:
+    """Urlaubskonto eines Jahres.
+
+    ``holidays`` sorgt dafür, dass ein Feiertag im Urlaub keinen Urlaubstag
+    verbraucht. Wird nichts übergeben, zählt jeder Werktag – dann fehlt diese
+    Verrechnung.
+    """
     if not user:
         return schemas.VacationSummary(
             total_days=0.0,
@@ -252,7 +336,9 @@ def calculate_vacation_summary(
         overlap_end = min(period_end, vacation.end_date)
         if overlap_start > overlap_end:
             continue
-        minutes = vacation_minutes_in_range(user, vacation, period_start, period_end)
+        minutes = vacation_minutes_in_range(
+            user, vacation, period_start, period_end, holidays
+        )
         if vacation.status == models.VacationStatus.APPROVED:
             used_minutes += minutes
         elif vacation.status == models.VacationStatus.PENDING:
@@ -286,10 +372,18 @@ def calculate_dashboard_metrics(
     user = crud.get_user(db, user_id)
     total_work = sum(entry.worked_minutes for entry in entries)
     vacations = crud.get_vacations_for_user(db, user_id)
-    overtime_taken = calculate_vacation_overtime_in_range(user, vacations, month_start, month_end)
-    vacation_minutes = calculate_approved_vacation_minutes(user, vacations, month_start, month_end)
+    # Feiertage einmal je Monat holen und überall durchreichen: Sie schreiben
+    # die Tagessollzeit gut und verbrauchen zugleich keinen Urlaubstag.
+    holidays = crud.get_holiday_dates_in_range(db, month_start, month_end)
+    holiday_minutes = holiday_credit_minutes(user, holidays, month_start, month_end)
+    overtime_taken = calculate_vacation_overtime_in_range(
+        user, vacations, month_start, month_end, holidays
+    )
+    vacation_minutes = calculate_approved_vacation_minutes(
+        user, vacations, month_start, month_end, holidays
+    )
     target_minutes = calculate_monthly_target_minutes(user, reference.year, reference.month)
-    effective_minutes = total_work + vacation_minutes
+    effective_minutes = total_work + vacation_minutes + holiday_minutes
     balance = effective_minutes - target_minutes
     total_overtime = max(balance, 0)
     total_undertime = max(-balance, 0) if user and user.time_account_enabled else 0
@@ -317,10 +411,16 @@ def calculate_dashboard_metrics(
     )
     region = crud.get_default_holiday_region(db)
     upcoming_holidays = crud.get_upcoming_holidays(db, region, limit=5)
-    vacation_summary = calculate_vacation_summary(user, vacations, reference.year)
+    year_holidays = crud.get_holiday_dates_in_range(
+        db, date(reference.year, 1, 1), date(reference.year, 12, 31)
+    )
+    vacation_summary = calculate_vacation_summary(
+        user, vacations, reference.year, year_holidays
+    )
     return schemas.DashboardMetrics(
         total_work_minutes=total_work,
         vacation_minutes=vacation_minutes,
+        holiday_minutes=holiday_minutes,
         total_overtime_minutes=total_overtime,
         total_undertime_minutes=total_undertime,
         target_minutes=target_minutes,

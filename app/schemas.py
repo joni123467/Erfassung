@@ -270,6 +270,9 @@ class VacationSummary(BaseModel):
 class DashboardMetrics(BaseModel):
     total_work_minutes: int
     vacation_minutes: int
+    #: Gutschrift für gesetzliche Feiertage an Werktagen (seit 0.14.2).
+    #: Vorgabe 0, damit ältere Aufrufer und Offline-Snapshots gültig bleiben.
+    holiday_minutes: int = 0
     total_overtime_minutes: int
     total_undertime_minutes: int
     target_minutes: int

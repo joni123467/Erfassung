@@ -48,23 +48,43 @@ die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Gefiltert wird nach **Buchungsdatum**, damit späte Korrekturen an alten
   Buchungen dort bleiben, wo man sie sucht. Sichtbar mit `Time.View`.
 
-### Befund ohne Änderung
+### Added – Feiertage werden gutgeschrieben
 
-**Gesetzliche Feiertage zählen in die Sollzeit.**
-`calculate_monthly_target_minutes` zählt jeden Werktag Mo–Fr, auch Feiertage –
-wer an einem Feiertag nicht arbeitet und keinen Urlaub bucht, bekommt ein
-Minus. Bewusst nicht geändert: Eine Umstellung würde alle bestehenden Salden
-rückwirkend verschieben, und ob ein Feiertag die Sollzeit senkt oder getrennt
-gutgeschrieben wird, ist eine betriebliche Entscheidung. Ein Test hält den
-heutigen Stand fest.
+Bis 0.14.2 wurde ein gesetzlicher Feiertag **nirgends** angerechnet: Der
+Kalender existierte und die Tage wurden angezeigt, aber in die Sollzeit ging
+jeder Werktag Mo–Fr ein, auch der Feiertag. Wer an dem Tag nicht arbeitete und
+keinen Urlaub buchte, hatte ein Minus von einer Tagessollzeit – obwohl er
+nichts versäumt hatte.
+
+- Ein Feiertag ist ein bezahlter Ausfalltag und wird mit der **individuellen
+  Tagessollzeit** gutgeschrieben, genau wie ein Urlaubstag:
+  `Ist = gestempelte Zeit + Urlaub + Feiertag`.
+- Umgesetzt als **Gutschrift**, nicht als Kürzung der Sollzeit – gleicher
+  Saldo, aber sichtbar, woher die Stunden kommen.
+- Feiertage am **Wochenende** bringen nichts (kein Arbeitstag, kein Ausfall).
+- Ein **Feiertag im Urlaub verbraucht keinen Urlaubstag** und wird trotzdem
+  gutgeschrieben. Ohne diese Regel zählte der Tag doppelt und der
+  Urlaubsanspruch schrumpfte zu Unrecht; dasselbe gilt für den gespeicherten
+  Wert beim Überstundenurlaub.
+- **Arbeit am Feiertag** zählt zusätzlich – sie ist echte Mehrarbeit und wird
+  von der Regelprüfung ohnehin gekennzeichnet (§9 ArbZG).
+- Wirksam in Dashboard, Wochen- und Tagesansicht, eigenen Buchungen,
+  Admin- und Benutzerauswertung, PDF- und Excel-Export sowie im
+  Offline-Snapshot der Stempel-App. Maßgeblich ist die Feiertagsregion der
+  Installation.
+
+**Bestehende Salden ändern sich**: Für jeden vergangenen Feiertag steht nach
+dem Update eine Tagessollzeit mehr auf der Habenseite. Das ist die Korrektur
+eines Minus, das nie hätte entstehen dürfen.
 
 ### Datenbank
 
-Keine Migration – 0.14.2 ändert kein Schema.
+Keine Migration – 0.14.2 ändert kein Schema. Die Feiertagsgutschrift wird bei
+jeder Abfrage aus dem vorhandenen Feiertagskalender gerechnet.
 
 ### Tests
 
-`tests/test_v0142.py` – 22 Tests. Details in
+`tests/test_v0142.py` – 34 Tests. Details in
 [`docs/RELEASE_NOTES_0.14.2.md`](docs/RELEASE_NOTES_0.14.2.md).
 
 ## [0.14.1] – 2026-07-31

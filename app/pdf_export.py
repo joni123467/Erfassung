@@ -377,7 +377,8 @@ def export_time_overview_pdf(
     total_work_minutes: int,
     target_minutes: int,
     vacation_minutes: int,
-    overtime_taken_minutes: int,
+    holiday_minutes: int = 0,
+    overtime_taken_minutes: int = 0,
     total_overtime_minutes: int,
     total_undertime_minutes: int,
     vacation_summary: VacationSummary,
@@ -415,6 +416,9 @@ def export_time_overview_pdf(
         ["Monatliches Soll", f"{_format_minutes(target_minutes)} Std"],
         ["Ist-Stunden", f"{_format_minutes(total_work_minutes)} Std"],
         ["Urlaubsstunden", f"{_format_minutes(vacation_minutes)} Std"],
+        # Feiertage sind bezahlte Ausfalltage – getrennt ausgewiesen, damit
+        # nachvollziehbar bleibt, woher die Stunden kommen.
+        ["Feiertagsstunden", f"{_format_minutes(holiday_minutes)} Std"],
         ["Überstundenabbau", f"{_format_minutes(overtime_taken_minutes)} Std"],
         ["Überstunden (Monat)", f"{_format_minutes(total_overtime_minutes)} Std"],
     ]
@@ -547,6 +551,7 @@ def export_user_summary_pdf(
                 f"{_format_minutes(int(row.get('break_minutes', 0)))} Std",
                 f"{_format_minutes(int(row.get('target_minutes', 0)))} Std",
                 f"{_format_minutes(int(row.get('vacation_minutes', 0)))} Std",
+                f"{_format_minutes(int(row.get('holiday_minutes', 0)))} Std",
                 f"{_format_signed_minutes(int(row.get('balance_minutes', 0)))} Std",
             ]
         )
@@ -554,10 +559,13 @@ def export_user_summary_pdf(
     story.append(
         _data_table(
             styles,
-            header=["Benutzer", "Buchungen", "Arbeitszeit", "Pausen", "Soll", "Urlaub", "Über-/Minusstd."],
+            header=[
+                "Benutzer", "Buchungen", "Arbeitszeit", "Pausen", "Soll",
+                "Urlaub", "Feiertag", "Über-/Minusstd.",
+            ],
             rows=table_rows,
-            fractions=[0.285, 0.105, 0.13, 0.11, 0.12, 0.11, 0.14],
-            aligns=["L", "R", "R", "R", "R", "R", "R"],
+            fractions=[0.25, 0.09, 0.115, 0.1, 0.105, 0.1, 0.1, 0.14],
+            aligns=["L", "R", "R", "R", "R", "R", "R", "R"],
             doc_width=doc.width,
             total_row=[
                 "Summe",
@@ -566,6 +574,7 @@ def export_user_summary_pdf(
                 f"{_format_minutes(int(totals.get('break_minutes', 0)))} Std",
                 f"{_format_minutes(int(totals.get('target_minutes', 0)))} Std",
                 f"{_format_minutes(int(totals.get('vacation_minutes', 0)))} Std",
+                f"{_format_minutes(int(totals.get('holiday_minutes', 0)))} Std",
                 f"{_format_signed_minutes(int(totals.get('balance_minutes', 0)))} Std",
             ],
             total_span=1,

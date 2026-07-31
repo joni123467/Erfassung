@@ -81,44 +81,88 @@ man sie sucht.
 
 Sichtbar mit `Time.View`, begrenzt auf den Geltungsbereich dieses Rechts.
 
-## 4. Durchsicht der übrigen Zeitberechnungen
+## 4. Feiertage werden gutgeschrieben
+
+Bis 0.14.2 wurde ein gesetzlicher Feiertag **nirgends** angerechnet. Der
+Feiertagskalender existierte, die Tage wurden angezeigt, seit 0.14.0 wurde
+Feiertagsarbeit sogar gekennzeichnet – aber in die Sollzeit ging jeder Werktag
+Mo–Fr ein, auch der Feiertag. Wer an dem Tag nicht arbeitete und keinen Urlaub
+buchte, hatte am Monatsende ein Minus von einer Tagessollzeit, obwohl er
+nichts versäumt hatte.
+
+Ein Feiertag ist ein bezahlter Ausfalltag. Er wird jetzt mit der
+**individuellen Tagessollzeit** gutgeschrieben – genau wie ein Urlaubstag, und
+mit derselben Wirkung auf den Saldo:
+
+```
+Ist = gestempelte Zeit + Urlaub + Feiertag
+Saldo = Ist − Soll
+```
+
+Umgesetzt als **Gutschrift**, nicht als Kürzung der Sollzeit. Beides ergibt
+denselben Saldo, aber die Gutschrift bleibt sichtbar: In Auswertung und Export
+steht, wie viele Stunden aus Feiertagen stammen. Die Sollzeit bleibt die
+Sollzeit.
+
+**Regeln im Einzelnen:**
+
+| Fall | Verhalten |
+|------|-----------|
+| Feiertag Mo–Fr | Gutschrift in Höhe der Tagessollzeit |
+| Feiertag Sa/So | keine Gutschrift – kein Arbeitstag, kein Ausfall |
+| Teilzeit | Gutschrift nach **individueller** Tagessollzeit (4 Std → 4 Std) |
+| Feiertag **im Urlaub** | verbraucht **keinen** Urlaubstag, wird trotzdem gutgeschrieben |
+| Feiertag im **Überstundenurlaub** | belastet das Zeitkonto nicht |
+| **Arbeit** am Feiertag | zählt zusätzlich – Feiertagsarbeit ist echte Mehrarbeit und wird von der Regelprüfung ohnehin gekennzeichnet (§9 ArbZG) |
+
+Der Punkt „Feiertag im Urlaub" ist kein Detail: Ohne ihn zählte der Tag
+doppelt (einmal als Gutschrift, einmal als verbrauchter Urlaubstag) und der
+Urlaubsanspruch schrumpfte zu Unrecht. Betroffen sind Urlaubsübersicht,
+Resturlaub, Anrechnung und der gespeicherte Wert beim Überstundenurlaub.
+
+Maßgeblich ist die **Feiertagsregion** der Installation (Administration →
+Feiertage) – die Anwendung legt die gesetzlichen Feiertage beim Start selbst
+an. Wirksam wird die Gutschrift überall: Dashboard, Wochenansicht,
+Tagesübersicht, eigene Buchungen, Adminauswertung, Benutzerauswertung,
+PDF- und Excel-Export sowie im Offline-Snapshot der Stempel-App.
+
+## 5. Durchsicht der übrigen Zeitberechnungen
 
 Geprüft: Monats- und Zeitraumsollzeit, Ist-Zeit, Über- und Unterstunden,
 Urlaubsanrechnung über Monatsgrenzen, Pausen, stornierte Buchungen und
-Überstundenurlaub. Ergebnis:
-
-* **Richtig:** Monatswerte, Auswertungen und Dashboard rechnen mit
-  `status = approved` und lassen stornierte wie abgelehnte Buchungen
-  konsequent draußen (in 0.14.1 korrigiert). Ein Antrag über den Monatswechsel
-  wird korrekt anteilig aufgeteilt. Ein stornierter Urlaubsantrag gibt den
-  Anspruch zurück. Überstundenurlaub belastet den Urlaubsanspruch nicht.
-* **Befund ohne Änderung – gesetzliche Feiertage zählen in die Sollzeit.**
-  `calculate_monthly_target_minutes` zählt jeden Werktag Mo–Fr, auch wenn er
-  ein Feiertag ist. Wer an einem Feiertag nicht arbeitet und keinen Urlaub
-  bucht, bekommt dadurch ein Minus von einer Tagessollzeit – obwohl die
-  Anwendung einen Feiertagskalender führt und die Tage anzeigt.
-
-  Das ist **nicht** geändert worden, und zwar bewusst: Ob ein Feiertag die
-  Sollzeit senkt oder getrennt gutgeschrieben wird, ist eine betriebliche
-  Entscheidung, und eine Umstellung würde **alle bestehenden Salden
-  rückwirkend verschieben** – genau das, was 0.14.0 mit `legacy_auto`
-  vermeiden wollte. Ein Test hält den heutigen Stand fest, damit eine
-  Umstellung eine bewusste ist und nicht unbemerkt passiert. Wenn das anders
-  sein soll, bitte kurz Bescheid geben – die Umstellung selbst ist klein, die
-  Frage nach dem Umgang mit Bestandsdaten ist es nicht.
+Überstundenurlaub. Alles unauffällig: Monatswerte, Auswertungen und Dashboard
+rechnen mit `status = approved` und lassen stornierte wie abgelehnte Buchungen
+konsequent draußen (in 0.14.1 korrigiert). Ein Antrag über den Monatswechsel
+wird korrekt anteilig aufgeteilt, ein stornierter Urlaubsantrag gibt den
+Anspruch zurück, Überstundenurlaub belastet den Urlaubsanspruch nicht.
 
 ## Datenbank
 
 **Keine Migration.** 0.14.2 ändert kein Schema. Das neue Recht
-`Vacation.Overview` lebt im Rechtekatalog, nicht in einer Tabelle.
+`Vacation.Overview` lebt im Rechtekatalog, nicht in einer Tabelle, und die
+Feiertagsgutschrift wird bei jeder Abfrage aus dem vorhandenen
+Feiertagskalender gerechnet – gespeichert wird dafür nichts.
+
+**Bestehende Salden ändern sich.** Wer die Anwendung schon nutzt, sieht nach
+dem Update für jeden vergangenen Feiertag eine Tagessollzeit mehr auf der
+Habenseite. Das ist beabsichtigt – es ist die Korrektur eines Minus, das nie
+hätte entstehen dürfen.
 
 ## Tests
 
-`tests/test_v0142.py` – 22 Tests: der gemeldete Fall (zwei halbe Tage = 8:00
+`tests/test_v0142.py` – 34 Tests: der gemeldete Fall (zwei halbe Tage = 8:00
 Std) direkt und über die Adminauswertung, ganze Tage unverändert, einzelner
 halber Tag, korrekter Wert in der Datenbank über die API, PDF-Formatierung,
 Erreichbarkeit und Rechnung der Urlaubsübersicht, Gleichstand mit der Ansicht
 der Person, eigene Berechtigung samt Registrierung im Katalog,
 Zugriffsprotokoll, Erreichbarkeit und Inhalt des Änderungsprotokolls samt
 Filtern, Sollzeit nur an Werktagen, Urlaub über die Monatsgrenze, stornierter
-Urlaub, Überstundenurlaub – und der festgehaltene Feiertagsbefund.
+Urlaub und Überstundenurlaub.
+
+Zur Feiertagsgutschrift: Gutschrift in Höhe der Tagessollzeit, individuelle
+Tagessollzeit bei Teilzeit, keine Gutschrift am Wochenende, ausgeglichener
+Saldo im Feiertagsmonat, Feiertag im Urlaub verbraucht keinen Urlaubstag und
+wird trotzdem gutgeschrieben, Arbeit am Feiertag zählt obendrauf und wird
+gekennzeichnet, Tagesübersicht, normaler Tag unverändert, eigene Buchungen,
+Benutzerauswertung, Offline-Snapshot und Überstundenurlaub über einen
+Feiertag.

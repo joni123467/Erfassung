@@ -541,24 +541,253 @@ def test_overtime_vacation_does_not_touch_the_vacation_entitlement(client):
     assert summary.used_days == 0.0
 
 
-def test_public_holidays_still_count_towards_the_target(main):
-    """**Befund, kein Fix.** Die Sollzeit zählt jeden Werktag – auch Feiertage.
+# ── Feiertagsgutschrift ───────────────────────────────────────────────────
 
-    Der 1. Mai 2026 ist ein Freitag und gesetzlicher Feiertag. Er geht
-    trotzdem in die Monatssollzeit ein. Wer an dem Tag nicht arbeitet und
-    keinen Urlaub bucht, bekommt dadurch ein Minus von einer Tagessollzeit.
 
-    Ob ein Feiertag die Sollzeit senkt oder getrennt gutgeschrieben wird, ist
-    eine betriebliche Entscheidung – und eine Änderung würde **alle**
-    bestehenden Salden rückwirkend verschieben. Dieser Test hält deshalb den
-    heutigen Stand fest, damit eine Umstellung eine bewusste ist und nicht
-    unbemerkt passiert.
-    """
+def _holiday(day: date, name: str = "Testfeiertag", region: str = "DE") -> None:
+    from app import crud, schemas
+
+    db = _db()
+    try:
+        crud.upsert_holidays(
+            db, [schemas.HolidayCreate(name=name, date=day, region=region)]
+        )
+    finally:
+        db.close()
+
+
+def test_a_public_holiday_credits_the_daily_target(main):
+    """Ein Feiertag ist ein bezahlter Ausfalltag – er bringt die Tagessollzeit."""
     from app import services
 
     class _User:
-        weekly_target_minutes = 2400   # 40 Stunden
+        daily_target_minutes = 480
 
-    # Mai 2026 hat 21 Werktage (Mo–Fr), darunter den 1. Mai.
-    minutes = services.calculate_monthly_target_minutes(_User(), 2026, 5)
-    assert minutes == 21 * 480
+    # 01.05.2026 ist ein Freitag.
+    labour_day = date(2026, 5, 1)
+    assert services.holiday_credit_minutes(
+        _User(), {labour_day}, date(2026, 5, 1), date(2026, 5, 31)
+    ) == 480
+
+
+def test_the_credit_follows_the_individual_daily_target(main):
+    """„Jeweils korrekte Tagesarbeitszeit" heißt: die des Benutzers."""
+    from app import services
+
+    class _HalfTime:
+        daily_target_minutes = 240
+
+    assert services.holiday_credit_minutes(
+        _HalfTime(), {date(2026, 5, 1)}, date(2026, 5, 1), date(2026, 5, 31)
+    ) == 240
+
+
+def test_a_holiday_on_a_weekend_credits_nothing(main):
+    """Kein Arbeitstag, kein Ausfall, keine Gutschrift."""
+    from app import services
+
+    class _User:
+        daily_target_minutes = 480
+
+    # 03.10.2026 ist ein Samstag.
+    saturday = date(2026, 10, 3)
+    assert saturday.weekday() == 5
+    assert services.holiday_credit_minutes(
+        _User(), {saturday}, date(2026, 10, 1), date(2026, 10, 31)
+    ) == 0
+
+
+def test_the_balance_evens_out_on_a_holiday_month(client):
+    """Der eigentliche Zweck: kein Minus mehr für einen Feiertag.
+
+    Die gesetzlichen Feiertage legt die Anwendung beim Start selbst an, im Mai
+    sind das mehrere. Erwartet wird deshalb nicht eine feste Zahl, sondern
+    genau eine Tagessollzeit je Feiertag, der auf einen Werktag fällt.
+    """
+    from app import crud, services
+
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    db = _db()
+    try:
+        holidays = crud.get_holiday_dates_in_range(db, date(2026, 5, 1), date(2026, 5, 31))
+        metrics = services.calculate_dashboard_metrics(db, _admin_id(), date(2026, 5, 15))
+    finally:
+        db.close()
+
+    werktags = [day for day in holidays if day.weekday() < 5]
+    assert date(2026, 5, 1) in werktags
+    assert metrics.holiday_minutes == len(werktags) * 480
+    assert metrics.target_minutes == 21 * 480
+    # Ohne gestempelte Zeit bleibt ein Minus – aber um die Feiertage kleiner.
+    fehlend = metrics.target_minutes - metrics.holiday_minutes
+    assert fehlend == (21 - len(werktags)) * 480
+
+
+def test_a_holiday_during_leave_does_not_consume_a_vacation_day(client):
+    """Sonst zählte der Tag doppelt und der Urlaubsanspruch schrumpfte."""
+    from app import crud, services
+
+    # 01.05.2026 (Fr) ist Feiertag, der Urlaub läuft Mo–Fr darüber.
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    _vacation(
+        start=date(2026, 4, 27), end=date(2026, 5, 1),
+        half_start=False, half_end=False,
+    )
+
+    db = _db()
+    try:
+        person = crud.get_user_by_username(db, "admin")
+        holidays = crud.get_holiday_dates_in_range(db, date(2026, 1, 1), date(2026, 12, 31))
+        summary = services.calculate_vacation_summary(
+            person, crud.get_vacations_for_user(db, person.id), 2026, holidays
+        )
+    finally:
+        db.close()
+    # Mo–Fr sind fünf Werktage, einer davon Feiertag → vier Urlaubstage.
+    assert summary.used_days == 4.0
+
+
+def test_the_holiday_is_credited_even_during_leave(client):
+    """Der Feiertag verschwindet nicht – er wechselt nur den Topf."""
+    from app import crud, services
+
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    _vacation(
+        start=date(2026, 4, 27), end=date(2026, 5, 1),
+        half_start=False, half_end=False,
+    )
+    db = _db()
+    try:
+        holidays = crud.get_holiday_dates_in_range(db, date(2026, 5, 1), date(2026, 5, 31))
+        metrics = services.calculate_dashboard_metrics(db, _admin_id(), date(2026, 5, 15))
+    finally:
+        db.close()
+    werktags = [day for day in holidays if day.weekday() < 5]
+    assert date(2026, 5, 1) in werktags
+    assert metrics.holiday_minutes == len(werktags) * 480
+
+
+def test_working_on_a_holiday_counts_on_top(client):
+    """Feiertagsarbeit ist echte Mehrarbeit – und wird ohnehin gekennzeichnet."""
+    from app import compliance, crud, models, schemas, services
+
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    db = _db()
+    try:
+        crud.create_time_entry(
+            db,
+            schemas.TimeEntryCreate(
+                user_id=_admin_id(),
+                work_date=date(2026, 5, 1),
+                start_time=time(8, 0),
+                end_time=time(12, 0),
+                break_minutes=0,
+            ),
+        )
+        holidays = crud.get_holiday_dates_in_range(db, date(2026, 5, 1), date(2026, 5, 31))
+        metrics = services.calculate_dashboard_metrics(db, _admin_id(), date(2026, 5, 15))
+        findings = compliance.evaluate_day(db, _admin_id(), date(2026, 5, 1))
+    finally:
+        db.close()
+
+    werktags = [day for day in holidays if day.weekday() < 5]
+    # Die Gutschrift bleibt vollständig – die Arbeit kommt obendrauf.
+    assert metrics.holiday_minutes == len(werktags) * 480
+    assert metrics.total_work_minutes == 240
+    assert any(
+        finding["code"] == models.ComplianceCode.HOLIDAY_WORK for finding in findings
+    ), "Feiertagsarbeit muss gekennzeichnet werden"
+
+
+def test_the_daily_overview_shows_the_credit(client):
+    from app import main as main_module
+
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    db = _db()
+    try:
+        overview = main_module._build_daily_overview(db, _admin_id(), date(2026, 5, 1))
+    finally:
+        db.close()
+    assert overview["is_holiday"] is True
+    assert overview["holiday_minutes"] == 480
+    assert overview["total_minutes"] == 480
+
+
+def test_a_normal_day_is_unaffected(client):
+    """Die Gutschrift darf nur an Feiertagen greifen."""
+    from app import main as main_module
+
+    db = _db()
+    try:
+        overview = main_module._build_daily_overview(db, _admin_id(), date(2026, 5, 4))
+    finally:
+        db.close()
+    assert overview["is_holiday"] is False
+    assert overview["holiday_minutes"] == 0
+    assert overview["total_minutes"] == 0
+
+
+def test_the_records_page_shows_the_holiday_credit(client):
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    _login(client)
+    page = client.get("/records?month=2026-05").text
+    assert "Feiertagsstunden" in page
+
+
+def test_the_user_report_carries_a_holiday_column(client):
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    _login(client)
+    page = client.get(
+        "/admin/reports/users?start=2026-05-01&end=2026-05-31"
+    ).text
+    assert "Feiertag" in page
+
+
+def test_the_offline_snapshot_carries_the_credit(client):
+    """Die Stempel-App rechnet offline mit denselben Zahlen."""
+    _holiday(date.today().replace(day=1), "Testfeiertag")
+    _login(client)
+    payload = client.get("/mobile/sync-data").json()
+    assert "holiday_minutes" in payload["metrics"]
+
+
+def test_overtime_vacation_over_a_holiday_costs_less(client):
+    """Ein Feiertag im Überstundenurlaub belastet das Zeitkonto nicht."""
+    from app import crud, models
+
+    db = _db()
+    try:
+        admin = crud.get_user_by_username(db, "admin")
+        admin.overtime_vacation_enabled = True
+        db.commit()
+    finally:
+        db.close()
+    _holiday(date(2026, 5, 1), "Tag der Arbeit")
+    _login(client)
+
+    response = client.post(
+        "/api/vacations",
+        json={
+            "user_id": _admin_id(),
+            "start_date": date(2026, 4, 27).isoformat(),
+            "end_date": date(2026, 5, 1).isoformat(),
+            "comment": "",
+            "use_overtime": True,
+            "half_day_start": False,
+            "half_day_end": False,
+        },
+        headers={"x-csrf-token": client.get("/api/csrf").json()["csrf_token"]},
+    )
+    assert response.status_code == 200, response.text
+
+    db = _db()
+    try:
+        stored = (
+            db.query(models.VacationRequest)
+            .filter(models.VacationRequest.id == response.json()["id"])
+            .first()
+        )
+        # Mo–Fr sind fünf Werktage, einer davon Feiertag → vier Tage à 8 Std.
+        assert stored.overtime_minutes == 4 * 480
+    finally:
+        db.close()

@@ -783,14 +783,34 @@ Der Zeitraum bezieht sich auf das **Buchungsdatum**, nicht auf den Zeitpunkt
 der Änderung: So bleibt eine späte Korrektur an einer alten Buchung dort, wo
 man sie sucht. Sichtbar mit `Time.View`.
 
-### Feiertage und Sollzeit
+### Feiertage (seit 0.14.2)
 
-Die Monatssollzeit zählt **jeden Werktag Mo–Fr**, auch gesetzliche Feiertage.
-Wer an einem Feiertag nicht arbeitet und keinen Urlaub bucht, bekommt dadurch
-ein Minus von einer Tagessollzeit. Das ist der Stand seit jeher und wurde
-bewusst nicht geändert: Ob ein Feiertag die Sollzeit senkt oder getrennt
-gutgeschrieben wird, ist eine betriebliche Entscheidung, und eine Umstellung
-würde alle bestehenden Salden rückwirkend verschieben.
+Ein gesetzlicher Feiertag ist ein **bezahlter Ausfalltag** und wird mit der
+individuellen Tagessollzeit gutgeschrieben – genau wie ein Urlaubstag:
+
+```
+Ist = gestempelte Zeit + Urlaub + Feiertag
+Saldo = Ist − Soll
+```
+
+Die Sollzeit bleibt unverändert (jeder Werktag Mo–Fr); die Gutschrift kommt
+auf der Habenseite dazu. Das ergibt denselben Saldo wie eine Kürzung der
+Sollzeit, macht aber sichtbar, woher die Stunden kommen.
+
+| Fall | Verhalten |
+|------|-----------|
+| Feiertag Mo–Fr | Gutschrift in Höhe der Tagessollzeit |
+| Feiertag Sa/So | keine Gutschrift – kein Arbeitstag, kein Ausfall |
+| Teilzeit | nach **individueller** Tagessollzeit (4 Std → 4 Std) |
+| Feiertag **im Urlaub** | verbraucht **keinen** Urlaubstag, wird trotzdem gutgeschrieben |
+| Feiertag im **Überstundenurlaub** | belastet das Zeitkonto nicht |
+| **Arbeit** am Feiertag | zählt zusätzlich – und wird als Feiertagsarbeit gekennzeichnet (§9 ArbZG) |
+
+Maßgeblich ist die eingestellte **Feiertagsregion** (Administration →
+Feiertage). Die gesetzlichen Feiertage legt die Anwendung beim Start selbst
+an. Die Gutschrift erscheint getrennt ausgewiesen in Dashboard, Wochen- und
+Tagesansicht, eigenen Buchungen, Admin- und Benutzerauswertung, PDF- und
+Excel-Export sowie im Offline-Snapshot der Stempel-App.
 
 ## Funktionsbausteine
 

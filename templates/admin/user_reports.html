@@ -58,6 +58,7 @@
                 <th>Pausen</th>
                 <th>Soll</th>
                 <th>Urlaub</th>
+                <th>Feiertag</th>
                 <th>Überstundenabbau</th>
                 <th>Über-/Minusstunden</th>
             </tr>
@@ -71,11 +72,12 @@
                     <td>{{ row.break_minutes|format_minutes }} Std</td>
                     <td>{{ row.target_minutes|format_minutes }} Std</td>
                     <td>{{ row.vacation_minutes|format_minutes }} Std</td>
+                    <td>{{ row.holiday_minutes|format_minutes }} Std</td>
                     <td>{{ row.overtime_taken_minutes|format_minutes }} Std</td>
                     <td class="{% if row.balance_minutes < 0 %}status-label status-rejected{% endif %}">{{ row.balance_minutes|format_minutes }} Std</td>
                 </tr>
             {% else %}
-                <tr><td colspan="8">Keine Benutzer für diese Auswahl gefunden.</td></tr>
+                <tr><td colspan="9">Keine Benutzer für diese Auswahl gefunden.</td></tr>
             {% endfor %}
             </tbody>
             {% if report_rows %}
@@ -87,6 +89,7 @@
                 <th>{{ report_totals.break_minutes|format_minutes }} Std</th>
                 <th>{{ report_totals.target_minutes|format_minutes }} Std</th>
                 <th>{{ report_totals.vacation_minutes|format_minutes }} Std</th>
+                <th>{{ report_totals.holiday_minutes|format_minutes }} Std</th>
                 <th>{{ report_totals.overtime_taken_minutes|format_minutes }} Std</th>
                 <th>{{ report_totals.balance_minutes|format_minutes }} Std</th>
             </tr>

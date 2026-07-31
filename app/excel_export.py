@@ -36,6 +36,7 @@ def export_user_summary_excel(
         "Pausen (Std)",
         "Soll (Std)",
         "Urlaub (Std)",
+        "Feiertag (Std)",
         "Überstundenabbau (Std)",
         "Über-/Minusstunden (Std)",
     ]
@@ -61,6 +62,7 @@ def export_user_summary_excel(
                 _hours(row.get("break_minutes")),
                 _hours(row.get("target_minutes")),
                 _hours(row.get("vacation_minutes")),
+                _hours(row.get("holiday_minutes")),
                 _hours(row.get("overtime_taken_minutes")),
                 _hours(row.get("balance_minutes")),
             ]
@@ -77,6 +79,7 @@ def export_user_summary_excel(
             _hours(totals.get("break_minutes")),
             _hours(totals.get("target_minutes")),
             _hours(totals.get("vacation_minutes")),
+            _hours(totals.get("holiday_minutes")),
             _hours(totals.get("overtime_taken_minutes")),
             _hours(totals.get("balance_minutes")),
         ]
