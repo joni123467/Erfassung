@@ -17,6 +17,11 @@ Repository. Er ergänzt `README.md` und `CHANGELOG.md`.
   `CHANGELOG.md`, `README.md` und – sofern vorhanden – die Release Notes unter
   `docs/RELEASE_NOTES_<version>.md`. Siehe Abschnitt „Dokumentation &
   Versionspflege“.
+- **Branchname ist immer `version-<version>`** – also derselbe Stand wie in
+  `VERSION`, zum Beispiel `version-0.12.2`. Jede Änderung hebt die Version an
+  und bekommt einen eigenen Branch; von dort geht der Pull Request nach `main`.
+  Erst ein Merge nach `main` (oder ein `v*`-Tag) baut ein Container-Image,
+  siehe `.github/workflows/container-publish.yml`.
 
 ## Datenbankschema prüfen (verpflichtend)
 

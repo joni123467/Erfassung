@@ -2,7 +2,16 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.12.1`
+**Version:** `0.12.2`
+
+> Seit 0.12.2: **Lizenzänderungen wirken schnell.** Die Nachfrage läuft
+> **stündlich** statt täglich und zusätzlich **bei jedem Start**; der neue
+> Knopf **„Lizenz aktualisieren"** holt den Stand sofort und nennt, was sich
+> geändert hat. Behoben: Auftragsbezogenes Stempeln lief ohne den Baustein
+> `orders` weiter – Firmen- und Auftragsauswahl sind jetzt gesperrt, „Auftrag
+> beenden" und das reine Stempeln bleiben offen. Ein unerreichbarer
+> Lizenzserver nimmt weiterhin **nichts** weg. Details in
+> [`docs/RELEASE_NOTES_0.12.2.md`](docs/RELEASE_NOTES_0.12.2.md).
 
 > Seit 0.12.1: **Ohne Lizenz keine zubuchbare Funktion.** 0.12.0 hatte eine
 > unlizenzierte Installation offen gelassen – damit war die Lizenz folgenlos,
@@ -10,10 +19,6 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 > ausschließlich das Lizenzdokument frei, und ohne gültige Lizenz lassen sich
 > auch keine neuen Benutzer anlegen. Die Basis – Stempeln, eigene
 > Zeitübersicht, vorhandene Benutzer, Sicherungen – bleibt in jedem Fall offen.
-> Dazu wirken Lizenzänderungen jetzt schnell: Nachfrage **stündlich** statt
-> täglich, zusätzlich **bei jedem Start**, und ein Knopf **„Lizenz
-> aktualisieren"** holt den Stand sofort. Ein unerreichbarer Lizenzserver
-> nimmt weiterhin **nichts** weg.
 > Details in [`docs/RELEASE_NOTES_0.12.1.md`](docs/RELEASE_NOTES_0.12.1.md).
 
 > Seit 0.12.0: **Funktionsbausteine und regelmäßige Lizenzprüfung** – eine
