@@ -160,8 +160,8 @@ def _insert(user_id, payload):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.13.1"
-    assert client.get("/health").json()["version"] == "0.13.1"
+    assert client.main.APP_VERSION == "0.14.0"
+    assert client.get("/health").json()["version"] == "0.14.0"
 
 
 # --- split a closed entry ----------------------------------------------------------
@@ -229,7 +229,15 @@ def test_manual_entry_covers_closed_entry_exactly(client):
     _, split = _insert(uid, _manual_payload(uid, time(8, 0), time(9, 0)))
     assert split is True
     entries = _entries(uid)
-    # Bestandsbuchung ersetzt durch den Nachtrag
+    # Seit 0.14.0 wird die Bestandsbuchung storniert statt gelöscht: Sie bleibt
+    # mit ihrer Historie erhalten und verweist auf den Nachtrag.
+    from app import models as _models
+
+    assert len(entries) == 2
+    cancelled = [e for e in entries if e.status == _models.TimeEntryStatus.CANCELLED]
+    assert len(cancelled) == 1
+    assert cancelled[0].replaced_by_id is not None
+    entries = [e for e in entries if e.status != _models.TimeEntryStatus.CANCELLED]
     assert len(entries) == 1
     assert entries[0].is_manual and entries[0].status == models.TimeEntryStatus.PENDING
 
@@ -336,6 +344,7 @@ def test_admin_can_open_and_update_entry(client):
         f"/admin/time-entries/{entry_id}/update",
         data={
             "csrf_token": token,
+            "change_reason": "Test: Korrektur",
             "user_id": str(uid),
             "work_date": DAY.isoformat(),
             "start_time": "08:00",

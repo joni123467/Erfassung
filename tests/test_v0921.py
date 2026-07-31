@@ -148,8 +148,8 @@ def _closed_entry(user_id, start, end, *, is_remote=False, notes="Büro", day=DA
 # --- version & schema ------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.13.1"
-    assert client.get("/health").json()["version"] == "0.13.1"
+    assert client.main.APP_VERSION == "0.14.0"
+    assert client.get("/health").json()["version"] == "0.14.0"
 
 
 def test_columns_exist(client):
@@ -353,12 +353,14 @@ def test_admin_update_sets_and_clears_location(client):
     }
 
     client.post(f"/admin/time-entries/{entry_id}/update",
-                data={**base, "csrf_token": _csrf(client, url), "is_remote": "1"},
+                data={**base, "csrf_token": _csrf(client, url), "is_remote": "1",
+                      "change_reason": "Test: Korrektur"},
                 follow_redirects=False)
     assert _entry(entry_id).is_remote is True
 
     client.post(f"/admin/time-entries/{entry_id}/update",
-                data={**base, "csrf_token": _csrf(client, url)},
+                data={**base, "csrf_token": _csrf(client, url),
+                      "change_reason": "Test: Korrektur"},
                 follow_redirects=False)
     assert _entry(entry_id).is_remote is False
 
@@ -372,6 +374,7 @@ def test_admin_update_keeps_location_when_not_enabled(client):
     client.post(
         f"/admin/time-entries/{entry_id}/update",
         data={"csrf_token": _csrf(client, url), "user_id": str(uid),
+              "change_reason": "Test: Korrektur",
               "work_date": DAY.isoformat(), "start_time": "08:00", "end_time": "11:00",
               "break_minutes": "0", "notes": "Büro", "is_remote": "1",
               "next_url": "/admin/reports/time"},

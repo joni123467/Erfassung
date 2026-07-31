@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Buchungshistorie – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'reports' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Historie der Buchung</h1>
+            <p class="card-header__hint">
+                {{ entry.work_date.strftime('%d.%m.%Y') }},
+                {{ entry.start_time.strftime('%H:%M') }}–{{ entry.end_time.strftime('%H:%M') }} Uhr
+                · {{ entry.user.full_name if entry.user else '–' }}
+                {% if entry.is_cancelled %}
+                    <span class="license-state license-state--invalid">storniert</span>
+                {% endif %}
+            </p>
+        </div>
+        <a class="button ghost" href="/admin/users">Zur Übersicht</a>
+    </div>
+
+    <p class="card-header__hint">
+        Jede Anlage, Änderung, Freigabe, Ablehnung und Stornierung steht hier mit
+        Vorher- und Nachher-Stand. Einträge dieser Liste werden nie geändert oder
+        gelöscht; eine Korrektur erfolgt über Storno und Ersatzbuchung.
+    </p>
+
+    {% if entry.replaces_id %}
+        <p class="card-header__hint">
+            Diese Buchung ersetzt
+            <a href="/admin/time-entries/{{ entry.replaces_id }}/history">Buchung {{ entry.replaces_id }}</a>.
+        </p>
+    {% endif %}
+    {% if entry.replaced_by_id %}
+        <p class="card-header__hint">
+            Ersetzt durch
+            <a href="/admin/time-entries/{{ entry.replaced_by_id }}/history">Buchung {{ entry.replaced_by_id }}</a>.
+        </p>
+    {% endif %}
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>#</th>
+                <th>Vorgang</th>
+                <th>Zeitpunkt (UTC)</th>
+                <th>Bearbeiter</th>
+                <th>Begründung</th>
+                <th>Änderungen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+                {% set revision = row.revision %}
+                <tr>
+                    <td>{{ revision.revision_no }}</td>
+                    <td><strong>{{ action_label(revision.action) }}</strong></td>
+                    <td>{{ revision.changed_at_utc.strftime('%d.%m.%Y %H:%M') }}</td>
+                    <td>{{ revision.actor_label or '–' }}</td>
+                    <td>{{ revision.reason or '–' }}</td>
+                    <td>
+                        {% if row.changes %}
+                            <ul class="revision-changes">
+                                {% for field, change in row.changes.items() %}
+                                    <li>
+                                        <strong>{{ field_label(field) }}</strong>:
+                                        <span class="revision-changes__old">{{ change.vorher if change.vorher is not none else '–' }}</span>
+                                        →
+                                        <span class="revision-changes__new">{{ change.nachher if change.nachher is not none else '–' }}</span>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <span class="text-muted">–</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="6">Keine Historie vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

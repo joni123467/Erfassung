@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
@@ -198,6 +198,11 @@ class TimeEntryBase(BaseModel):
     location_id: Optional[int] = None
     source: Optional[str] = None
     external_id: Optional[str] = None
+    #: Vollständige Zeitstempel in UTC samt ursprünglicher Zeitzone. Optional,
+    #: damit Bestandsaufrufe und Terminalimporte unverändert funktionieren.
+    started_at_utc: Optional[datetime] = None
+    ended_at_utc: Optional[datetime] = None
+    tz_name: Optional[str] = None
 
 
 class TimeEntryCreate(TimeEntryBase):

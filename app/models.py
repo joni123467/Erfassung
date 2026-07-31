@@ -208,7 +208,15 @@ class User(Base):
 
     groups = relationship("Group", secondary=user_groups, back_populates="users", lazy="selectin")
     roles = relationship("Role", secondary=user_roles, back_populates="users", lazy="selectin")
-    time_entries = relationship("TimeEntry", back_populates="user", cascade="all, delete-orphan")
+    # ``foreign_keys`` ist nötig, seit ``time_entries`` einen zweiten Verweis
+    # auf ``users`` trägt (``cancelled_by_id``); sonst bliebe die Zuordnung
+    # mehrdeutig.
+    time_entries = relationship(
+        "TimeEntry",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="TimeEntry.user_id",
+    )
     vacation_requests = relationship(
         "VacationRequest", back_populates="user", cascade="all, delete-orphan"
     )
@@ -247,6 +255,87 @@ class TimeEntryStatus:
     APPROVED = "approved"
     PENDING = "pending"
     REJECTED = "rejected"
+    #: Storniert. Die Buchung bleibt vollständig erhalten und sichtbar, zählt
+    #: aber nicht mehr. Korrekturen laufen über Storno plus Ersatzbuchung –
+    #: ein Originaldatensatz wird nie überschrieben oder gelöscht.
+    CANCELLED = "cancelled"
+
+
+class RevisionAction:
+    """Was mit einer Buchung geschehen ist – Werte der Revisionshistorie."""
+
+    CREATED = "created"
+    UPDATED = "updated"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+    REPLACED = "replaced"
+    REOPENED = "reopened"
+
+
+#: Bei diesen Vorgängen ist eine Begründung Pflicht. Anlegen und Freigeben
+#: brauchen keine – der Vorgang selbst ist die Aussage.
+REVISION_REASON_REQUIRED = frozenset(
+    {RevisionAction.UPDATED, RevisionAction.REJECTED, RevisionAction.CANCELLED}
+)
+
+
+#: Kürzeste Unterbrechung, die als Ruhepause im Sinne des §4 ArbZG zählt.
+MIN_BREAK_SEGMENT_MINUTES = 15
+
+#: Regelarbeitszeit und absolute Höchstgrenze je Werktag (§3 ArbZG).
+MAX_DAILY_MINUTES = 8 * 60
+ABSOLUTE_MAX_DAILY_MINUTES = 10 * 60
+
+#: Ununterbrochene Ruhezeit zwischen zwei Arbeitstagen (§5 ArbZG).
+MIN_REST_MINUTES = 11 * 60
+
+
+class BreakRule:
+    """Wie die Pause in die Arbeitszeit eingerechnet wird.
+
+    Der Wert wird **je Buchung** festgehalten, nicht global ausgewertet. Nur so
+    bleiben Bestandsauswertungen stabil, während neue Buchungen der korrigierten
+    Regel folgen.
+    """
+
+    #: Seit 0.14.0 für neue Buchungen: Abgezogen wird ausschließlich die
+    #: tatsächlich gestempelte Pause. Eine nicht genommene gesetzliche Pause
+    #: wird als Verstoß gekennzeichnet, nicht stillschweigend verbucht.
+    ACTUAL = "actual"
+    #: Verhalten bis 0.13.x: Die gesetzliche Mindestpause wurde auch dann
+    #: abgezogen, wenn sie nicht gestempelt war. Bestandsdaten behalten das,
+    #: damit sich abgerechnete Monate nicht rückwirkend ändern.
+    LEGACY_AUTO = "legacy_auto"
+
+
+class ComplianceCode:
+    """Kennzeichnungen aus ArbZG/ArbSchG. Sie sperren nichts, sie warnen."""
+
+    OVER_8H = "over_8h"
+    OVER_10H = "over_10h"
+    REST_UNDER_11H = "rest_under_11h"
+    BREAK_MISSING = "break_missing"
+    SUNDAY_WORK = "sunday_work"
+    HOLIDAY_WORK = "holiday_work"
+
+
+class PeriodStatus:
+    """Zustände einer Abrechnungsperiode."""
+
+    OPEN = "open"
+    #: Mitarbeiter prüfen ihre Zeiten und bestätigen oder widersprechen.
+    REVIEW = "review"
+    #: Arbeitgeber hat freigegeben; Änderungen sind noch möglich.
+    APPROVED = "approved"
+    #: Gesperrt: keine Änderungen mehr an Buchungen dieses Zeitraums.
+    LOCKED = "locked"
+
+
+class ConfirmationStatus:
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    OBJECTED = "objected"
 
 
 class TimeEntry(Base):
@@ -284,15 +373,55 @@ class TimeEntry(Base):
     deleted_location_name = Column(String(255), nullable=True)
     source = Column(String(64), nullable=True)
     external_id = Column(String(191), nullable=True)
+    #: Vollständiger Beginn/Ende in UTC. ``work_date``/``start_time``/
+    #: ``end_time`` bleiben führend für Anzeige und Bestandsdaten; die
+    #: UTC-Stempel machen Nachtarbeit, Zeitumstellung und Auswertungen über
+    #: Zeitzonen hinweg eindeutig. Bei Bestandsbuchungen ``NULL``.
+    started_at_utc = Column(DateTime, nullable=True)
+    ended_at_utc = Column(DateTime, nullable=True)
+    #: Zeitzone, in der gestempelt wurde (z. B. ``Europe/Berlin``). Ohne sie
+    #: ließe sich ein UTC-Stempel nicht in die ursprüngliche Ortszeit
+    #: zurückrechnen.
+    tz_name = Column(String(64), nullable=True)
+    #: Schnappschuss der Pausenregel – siehe :class:`BreakRule`.
+    break_rule = Column(String(32), default=BreakRule.ACTUAL)
+    #: Storno statt Löschen.
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancel_reason = Column(String(500), nullable=True)
+    #: Ersatzbuchung, die diese Buchung ablöst, und die Gegenrichtung.
+    replaced_by_id = Column(Integer, ForeignKey("time_entries.id"), nullable=True)
+    replaces_id = Column(Integer, ForeignKey("time_entries.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    user = relationship("User", back_populates="time_entries")
+    user = relationship("User", back_populates="time_entries", foreign_keys=[user_id])
     company = relationship("Company", back_populates="time_entries")
     location = relationship("CompanyLocation", back_populates="time_entries")
+    breaks = relationship(
+        "BreakInterval",
+        back_populates="entry",
+        cascade="all, delete-orphan",
+        order_by="BreakInterval.started_at_utc",
+    )
+    # ``delete-orphan`` greift nur, wenn eine Buchung selbst verschwindet – und
+    # das passiert seit 0.14.0 ausschließlich beim Löschen des ganzen Benutzers
+    # (Art. 17 DSGVO). Dann soll auch dessen Änderungshistorie mitgehen; sie
+    # ohne Bezugsbuchung stehen zu lassen wäre weder nützlich noch zulässig.
+    revisions = relationship(
+        "TimeEntryRevision",
+        back_populates="entry",
+        cascade="all, delete-orphan",
+        order_by="TimeEntryRevision.revision_no",
+    )
 
     @property
-    def required_break_minutes(self) -> int:
+    def gross_minutes(self) -> int:
+        """Anwesenheit von Beginn bis Ende, ohne Pausenabzug.
+
+        Endet die Buchung vor ihrem Beginn, liegt das Ende am Folgetag –
+        Nachtarbeit über Mitternacht wird damit richtig gerechnet.
+        """
         start_dt = datetime.combine(self.work_date, self.start_time)
         if self.is_open:
             now_dt = datetime.now()
@@ -301,16 +430,74 @@ class TimeEntry(Base):
             end_dt = datetime.combine(self.work_date, self.end_time)
         if end_dt < start_dt:
             end_dt += timedelta(days=1)
-        duration = int((end_dt - start_dt).total_seconds() // 60)
-        if duration < 6 * 60:
-            return 0
-        if duration < 9 * 60:
+        return max(int((end_dt - start_dt).total_seconds() // 60), 0)
+
+    @property
+    def required_break_minutes(self) -> int:
+        """Gesetzliche Mindestpause nach §4 ArbZG.
+
+        **Mehr als** sechs Stunden: 30 Minuten. **Mehr als** neun Stunden:
+        45 Minuten. Die Grenzen sind echte Überschreitungen – bei glatt sechs
+        Stunden ist keine Pause vorgeschrieben. Bis 0.13.x rechnete die
+        Anwendung hier mit „ab sechs Stunden" und verlangte eine Pause zu früh.
+        """
+        duration = self.gross_minutes
+        if duration > 9 * 60:
+            return 45
+        if duration > 6 * 60:
             return 30
-        return 45
+        return 0
+
+    @property
+    def countable_break_minutes(self) -> int:
+        """Pausenminuten, die als Ruhepause im Sinne des §4 ArbZG zählen.
+
+        Nur Abschnitte von **mindestens 15 Minuten** – kürzere Unterbrechungen
+        sind keine Ruhepausen. Sie werden trotzdem gespeichert und von der
+        Arbeitszeit abgezogen; sie erfüllen nur die Pausenpflicht nicht.
+        """
+        intervals = self._break_intervals
+        if intervals:
+            return sum(
+                interval.minutes for interval in intervals
+                if interval.minutes >= MIN_BREAK_SEGMENT_MINUTES
+            )
+        # Bestandsbuchung ohne Intervalle: Die Summe lässt sich nicht in
+        # Abschnitte zerlegen, also wird sie als ein Abschnitt gewertet.
+        total = self.total_break_minutes
+        return total if total >= MIN_BREAK_SEGMENT_MINUTES else 0
+
+    @property
+    def break_shortfall_minutes(self) -> int:
+        """Wie viel Pause fehlt zur gesetzlichen Mindestpause?
+
+        Grundlage ist die *anrechenbare* Pause. Eine offene Buchung wird nicht
+        bewertet – sie läuft ja noch.
+        """
+        if self.is_open:
+            return 0
+        return max(self.required_break_minutes - self.countable_break_minutes, 0)
 
     @property
     def auto_break_enabled(self) -> bool:
-        """Whether statutory (ArbZG) breaks are deducted automatically."""
+        """Rechnet diese Buchung noch nach der alten Regel?
+
+        Nur Bestandsbuchungen (``break_rule = legacy_auto``) tun das. Neue
+        Buchungen ziehen ausschließlich tatsächlich gestempelte Pausen ab; eine
+        fehlende Pause wird gekennzeichnet, nicht verbucht.
+        """
+        if (self.break_rule or BreakRule.ACTUAL) != BreakRule.LEGACY_AUTO:
+            return False
+        from sqlalchemy import inspect as _inspect
+
+        try:
+            state = _inspect(self)
+            # Nicht nachladen, wenn die Buchung von ihrer Sitzung gelöst ist –
+            # dann gilt die alte Vorgabe (Abzug aktiv), wie vor 0.14.0.
+            if "user" in state.unloaded and state.session is None:
+                return True
+        except Exception:  # pragma: no cover - nicht persistiertes Objekt
+            pass
         if self.user is None:
             return True
         value = getattr(self.user, "auto_break_deduction", True)
@@ -318,24 +505,26 @@ class TimeEntry(Base):
 
     @property
     def applied_break_minutes(self) -> int:
-        """Break minutes actually deducted from the working time."""
+        """Pausenminuten, die von der Arbeitszeit abgezogen werden.
+
+        Für neue Buchungen ist das genau die gestempelte Pause. Eine nicht
+        genommene Pause wird **nicht** abgezogen: Das würde die tatsächlich
+        geleistete Arbeitszeit kleiner erscheinen lassen, als sie war.
+        """
         if self.auto_break_enabled:
             return max(self.total_break_minutes, self.required_break_minutes)
         return self.total_break_minutes
 
     @property
     def worked_minutes(self) -> int:
-        start_dt = datetime.combine(self.work_date, self.start_time)
-        if self.is_open:
-            now_dt = datetime.now()
-            end_dt = datetime.combine(now_dt.date(), now_dt.time())
-        else:
-            end_dt = datetime.combine(self.work_date, self.end_time)
-        if end_dt < start_dt:
-            end_dt += timedelta(days=1)
-        raw_minutes = int((end_dt - start_dt).total_seconds() // 60)
-        minutes = raw_minutes - self.applied_break_minutes
-        return max(minutes, 0)
+        """Tatsächlich geleistete Arbeitszeit.
+
+        Eine stornierte Buchung zählt nicht mehr; sie bleibt aber vollständig
+        gespeichert und sichtbar.
+        """
+        if self.status == TimeEntryStatus.CANCELLED:
+            return 0
+        return max(self.gross_minutes - self.applied_break_minutes, 0)
 
     @property
     def overtime_minutes(self) -> int:
@@ -346,8 +535,36 @@ class TimeEntry(Base):
         return 0
 
     @property
+    def _break_intervals(self) -> list["BreakInterval"]:
+        """Pausenintervalle, ohne dafür nachzuladen.
+
+        Ist die Beziehung nicht geladen und die Buchung von ihrer Sitzung
+        gelöst (etwa in einem Export nach ``db.close()``), wird eine leere
+        Liste geliefert statt eine Ausnahme ausgelöst. Es gilt dann die
+        Summenspalte – also genau das Verhalten vor 0.14.0.
+        """
+        from sqlalchemy import inspect as _inspect
+
+        try:
+            state = _inspect(self)
+        except Exception:  # pragma: no cover - nicht persistiertes Objekt
+            return list(self.__dict__.get("breaks") or [])
+        if "breaks" in state.unloaded and state.session is None:
+            return []
+        return list(self.breaks or [])
+
+    @property
     def total_break_minutes(self) -> int:
-        minutes = self.break_minutes
+        """Gestempelte Pause insgesamt.
+
+        Gibt es Pausenintervalle, sind sie die Wahrheit – die Summenspalte
+        ``break_minutes`` ist dann nur noch ein Bestandsfeld. Ohne Intervalle
+        (Buchungen vor 0.14.0, Terminalimporte) wird wie bisher gerechnet.
+        """
+        intervals = self._break_intervals
+        if intervals:
+            return sum(interval.minutes for interval in intervals)
+        minutes = self.break_minutes or 0
         if self.break_started_at:
             start_dt = datetime.combine(self.work_date, self.break_started_at)
             if self.is_open:
@@ -359,6 +576,18 @@ class TimeEntry(Base):
                 end_dt += timedelta(days=1)
             minutes += max(int((end_dt - start_dt).total_seconds() // 60), 0)
         return minutes
+
+    @property
+    def running_break(self) -> Optional["BreakInterval"]:
+        """Die gerade laufende Pause, falls eine läuft."""
+        for interval in self._break_intervals:
+            if interval.is_running:
+                return interval
+        return None
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self.status == TimeEntryStatus.CANCELLED
 
     @property
     def company_display_name(self) -> str:
@@ -393,6 +622,198 @@ class TimeEntry(Base):
         if self.location_id is None or self.location is None:
             return ""
         return self.location.address_line
+
+
+class BreakInterval(Base):
+    """Eine einzelne Pause mit Beginn und Ende.
+
+    Bis 0.13.x hielt die Buchung nur eine Summe (``break_minutes``) und den
+    Beginn der laufenden Pause. Damit ließ sich nicht mehr nachweisen, *wann*
+    eine Pause lag – für §4 ArbZG (Lage und Dauer im Voraus feststehend) und
+    für jede Prüfung ist genau das die Frage.
+
+    Die Summenspalte bleibt als Bestandsfeld erhalten; für Buchungen mit
+    Intervallen ist sie nur noch abgeleitet.
+    """
+
+    __tablename__ = "break_intervals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entry_id = Column(
+        Integer, ForeignKey("time_entries.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    started_at_utc = Column(DateTime, nullable=False)
+    #: ``NULL`` heißt: Pause läuft noch.
+    ended_at_utc = Column(DateTime, nullable=True)
+    tz_name = Column(String(64), nullable=True)
+    source = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    entry = relationship("TimeEntry", back_populates="breaks")
+
+    @property
+    def minutes(self) -> int:
+        """Dauer in vollen Minuten; eine laufende Pause zählt bis jetzt."""
+        end = self.ended_at_utc or datetime.utcnow()
+        if self.started_at_utc is None or end <= self.started_at_utc:
+            return 0
+        return int((end - self.started_at_utc).total_seconds() // 60)
+
+    @property
+    def is_running(self) -> bool:
+        return self.ended_at_utc is None
+
+
+class TimeEntryRevision(Base):
+    """Unveränderliche Historie einer Buchung.
+
+    Jede Anlage, Änderung, Freigabe, Ablehnung und Stornierung landet hier mit
+    Vorher- und Nachher-Stand, Zeitpunkt, Bearbeiter und – wo vorgeschrieben –
+    Begründung. Einträge dieser Tabelle werden nie geändert oder gelöscht.
+    """
+
+    __tablename__ = "time_entry_revisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entry_id = Column(Integer, ForeignKey("time_entries.id"), nullable=False, index=True)
+    #: Fortlaufend je Buchung, beginnend bei 1.
+    revision_no = Column(Integer, nullable=False, default=1)
+    action = Column(String(32), nullable=False)
+    changed_at_utc = Column(DateTime, nullable=False, default=datetime.utcnow)
+    tz_name = Column(String(64), nullable=True)
+    #: Wer die Änderung ausgelöst hat. ``NULL`` nur bei Systemvorgängen
+    #: (Terminalimport, Migration) – dann sagt ``actor_label`` wer.
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_label = Column(String(255), nullable=True)
+    reason = Column(String(500), nullable=True)
+    source = Column(String(64), nullable=True)
+    before_json = Column(Text, nullable=True)
+    after_json = Column(Text, nullable=True)
+
+    entry = relationship("TimeEntry", back_populates="revisions")
+
+
+class ComplianceFlag(Base):
+    """Kennzeichnung eines Regelverstoßes zu einer Buchung oder einem Tag.
+
+    Wichtig: Ein Verstoß verhindert nichts. Die tatsächlich geleistete Zeit
+    wird immer gespeichert – gekennzeichnet wird sie zusätzlich, damit sie
+    auffällt und bearbeitet werden kann.
+    """
+
+    __tablename__ = "compliance_flags"
+    __table_args__ = (
+        Index("ix_compliance_user_date", "user_id", "work_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    entry_id = Column(
+        Integer, ForeignKey("time_entries.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    work_date = Column(Date, nullable=False)
+    code = Column(String(32), nullable=False)
+    #: ``info``, ``warning`` oder ``critical`` – steuert nur die Darstellung.
+    severity = Column(String(16), nullable=False, default="warning")
+    detail = Column(String(500), default="")
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    acknowledged_at = Column(DateTime, nullable=True)
+    acknowledged_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    acknowledgement = Column(String(500), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+    @property
+    def is_open(self) -> bool:
+        return self.acknowledged_at is None
+
+
+class PayrollPeriod(Base):
+    """Abrechnungsperiode mit Abschluss- und Sperrzustand."""
+
+    __tablename__ = "payroll_periods"
+    __table_args__ = (
+        UniqueConstraint("period_start", "period_end", name="uq_payroll_period_range"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    label = Column(String(64), default="")
+    status = Column(String(32), nullable=False, default=PeriodStatus.OPEN)
+    opened_at = Column(DateTime, default=datetime.utcnow)
+    review_started_at = Column(DateTime, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    locked_at = Column(DateTime, nullable=True)
+    locked_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    note = Column(String(500), default="")
+
+    confirmations = relationship(
+        "PeriodConfirmation", back_populates="period", cascade="all, delete-orphan"
+    )
+
+    @property
+    def is_locked(self) -> bool:
+        return self.status == PeriodStatus.LOCKED
+
+    def covers(self, day: date) -> bool:
+        return self.period_start <= day <= self.period_end
+
+
+class PeriodConfirmation(Base):
+    """Bestätigung oder Widerspruch einer Person zu einer Periode."""
+
+    __tablename__ = "period_confirmations"
+    __table_args__ = (
+        UniqueConstraint("period_id", "user_id", name="uq_period_confirmation"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_id = Column(
+        Integer, ForeignKey("payroll_periods.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(32), nullable=False, default=ConfirmationStatus.PENDING)
+    submitted_at = Column(DateTime, nullable=True)
+    #: Bei Widerspruch Pflicht – sonst wüsste niemand, was zu prüfen ist.
+    note = Column(String(500), default="")
+    #: Antwort des Arbeitgebers auf einen Widerspruch.
+    response = Column(String(500), default="")
+    responded_at = Column(DateTime, nullable=True)
+    responded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    period = relationship("PayrollPeriod", back_populates="confirmations")
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class DataAccessLog(Base):
+    """Wer hat wessen Zeitdaten angesehen oder exportiert?
+
+    Art. 32 DSGVO verlangt nachvollziehbare Zugriffe auf personenbezogene
+    Daten. Protokolliert wird der Zugriff auf **fremde** Daten – die eigenen
+    einzusehen ist der Normalfall und erzeugt keinen Eintrag.
+
+    Bewusst ohne IP-Adresse: Sie wäre für den Zweck nicht erforderlich und
+    würde ihrerseits ein personenbezogenes Datum auf Vorrat speichern.
+    """
+
+    __tablename__ = "data_access_log"
+    __table_args__ = (
+        Index("ix_data_access_subject", "subject_user_id", "accessed_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    accessed_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_label = Column(String(255), nullable=True)
+    subject_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
+    subject_label = Column(String(255), nullable=True)
+    #: ``report``, ``export``, ``entry``, ``subject_export`` …
+    scope = Column(String(64), nullable=False)
+    detail = Column(String(500), default="")
 
 
 class VacationStatus:

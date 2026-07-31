@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Regelverstöße – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'compliance' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Regelverstöße</h1>
+            <p class="card-header__hint">
+                Kennzeichnungen nach ArbZG. Sie verhindern nichts: Die tatsächlich
+                geleistete Arbeitszeit ist immer gespeichert. Eine Einordnung hält
+                fest, wie der Fall bewertet wurde – der Verstoß selbst bleibt für
+                jede Prüfung erhalten.
+            </p>
+        </div>
+    </div>
+
+    {% if flags %}
+        <div class="table-scroll">
+            <table class="striped-table">
+                <thead>
+                <tr>
+                    <th>Datum</th>
+                    <th>Person</th>
+                    <th>Verstoß</th>
+                    <th>Beschreibung</th>
+                    <th>Einordnen</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for flag in flags %}
+                    <tr>
+                        <td>{{ flag.work_date.strftime('%d.%m.%Y') }}</td>
+                        <td>{{ flag.user.full_name if flag.user else '–' }}</td>
+                        <td>
+                            <span class="license-state {{ 'license-state--invalid' if flag.severity == 'critical' else '' }}">
+                                {{ compliance_label(flag.code) }}
+                            </span>
+                            <small class="text-muted">{{ compliance_reference(flag.code) }}</small>
+                        </td>
+                        <td>
+                            {{ flag.detail }}
+                            {% if flag.entry_id %}
+                                <a href="/admin/time-entries/{{ flag.entry_id }}/history">Historie</a>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <form method="post" action="/admin/compliance/{{ flag.id }}/acknowledge"
+                                  class="compliance-form">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <input type="text" name="note" required maxlength="500"
+                                       placeholder="Bewertung, z. B. Ausgleich in KW 12">
+                                <button type="submit" class="button small">Einordnen</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty-state">Keine offenen Kennzeichnungen.</p>
+    {% endif %}
+
+    <p class="card-health-hint card-header__hint">
+        Geprüft wird: mehr als 8 Stunden (§3 ArbZG, zulässig bei Ausgleich), mehr
+        als 10 Stunden (absolute Grenze), fehlende Ruhepause (§4), Ruhezeit unter
+        11 Stunden (§5) sowie Sonn- und Feiertagsarbeit (§9). Ausnahmen nach
+        Tarifvertrag oder §7 ArbZG kann die Anwendung nicht kennen – die
+        Bewertung des Einzelfalls bleibt Sache von Menschen.
+    </p>
+</section>
+{% endblock %}

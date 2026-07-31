@@ -34,6 +34,7 @@ from . import (
     app_config,
     backup_manager,
     backup_scheduler,
+    compliance,
     crud,
     database,
     db_migration_jobs,
@@ -45,10 +46,13 @@ from . import (
     logging_setup,
     models,
     paths,
+    periods,
     permission_service,
     permissions as group_permissions,
+    privacy,
     restore_jobs,
     restore_manager,
+    revisions,
     schemas,
     security,
     services,
@@ -454,6 +458,19 @@ def ensure_schema() -> None:
                 )
         if "company_locations" not in table_names:
             models.Base.metadata.tables["company_locations"].create(bind=connection)
+        # Revisionssicherheit, Pausenintervalle, Verstöße, Perioden, Zugriffe
+        # (ab 0.14.0). Fehlende Tabellen werden hier ergänzt; die Inhalte
+        # richtet die versionierte Migration 17 her.
+        for _table in (
+            "break_intervals",
+            "time_entry_revisions",
+            "compliance_flags",
+            "payroll_periods",
+            "period_confirmations",
+            "data_access_log",
+        ):
+            if _table not in table_names:
+                models.Base.metadata.tables[_table].create(bind=connection)
         if "time_entries" in table_names:
             columns = {column["name"] for column in inspector.get_columns("time_entries")}
             if "company_id" not in columns:
@@ -480,6 +497,30 @@ def ensure_schema() -> None:
                 connection.execute(
                     text("ALTER TABLE time_entries ADD COLUMN deleted_location_name VARCHAR")
                 )
+            if "break_rule" not in columns:
+                # Bestandsbuchungen behalten die bisherige Rechnung, damit sich
+                # abgerechnete Monate nicht rückwirkend ändern.
+                connection.execute(
+                    text("ALTER TABLE time_entries ADD COLUMN break_rule VARCHAR DEFAULT 'actual'")
+                )
+                connection.execute(text("UPDATE time_entries SET break_rule = 'legacy_auto'"))
+            for _column, _type in (
+                ("started_at_utc", "DATETIME"),
+                ("ended_at_utc", "DATETIME"),
+                ("tz_name", "VARCHAR"),
+                ("cancelled_at", "DATETIME"),
+                ("cancelled_by_id", "INTEGER"),
+                ("cancel_reason", "VARCHAR"),
+                ("replaced_by_id", "INTEGER"),
+                ("replaces_id", "INTEGER"),
+            ):
+                if _column not in columns:
+                    connection.execute(
+                        text(f"ALTER TABLE time_entries ADD COLUMN {_column} {_type}")
+                    )
+            connection.execute(
+                text("UPDATE time_entries SET break_rule = 'actual' WHERE break_rule IS NULL")
+            )
             connection.execute(text("UPDATE time_entries SET is_open = 0 WHERE is_open IS NULL"))
         if "users" in table_names:
             columns = {column["name"] for column in inspector.get_columns("users")}
@@ -2425,6 +2466,15 @@ def punch_action(
     else:
         error = "Unbekannte Aktion."
 
+    # Nach jedem Stempelvorgang die Regelprüfung auffrischen. Sie kennzeichnet
+    # nur – blockieren würde die Erfassung verfälschen.
+    if message and not error:
+        touched = crud.get_open_time_entry(db, user.id) or crud.get_last_finished_time_entry(
+            db, user.id
+        )
+        if touched is not None:
+            compliance.refresh_for_entry(db, touched)
+
     if message and not error and client_action_id:
         existing_action = crud.get_mobile_sync_action(db, user.id, client_action_id)
         if not existing_action:
@@ -3580,6 +3630,332 @@ def admin_holidays_apply(
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
 
 
+def _log_data_access(
+    db: Session,
+    *,
+    actor: Optional[models.User],
+    subject_id: Optional[int],
+    scope: str,
+    detail: str = "",
+) -> None:
+    """Lesezugriff auf **fremde** Zeitdaten protokollieren (Art. 32 DSGVO).
+
+    Die eigenen Daten einzusehen ist der Normalfall und erzeugt keinen Eintrag –
+    sonst bestünde das Protokoll fast nur aus Rauschen und wäre für den Zweck
+    (Nachvollziehbarkeit von Fremdzugriffen) wertlos.
+
+    Bewusst ohne IP-Adresse: für den Zweck nicht erforderlich.
+    """
+    try:
+        if actor is None:
+            return
+        if subject_id is not None and int(subject_id) == int(actor.id):
+            return
+        subject = crud.get_user(db, subject_id) if subject_id else None
+        db.add(models.DataAccessLog(
+            actor_id=actor.id,
+            actor_label=actor.full_name or actor.username,
+            subject_user_id=subject_id,
+            subject_label=(subject.full_name or subject.username) if subject else None,
+            scope=scope,
+            detail=(detail or "")[:500],
+        ))
+        db.commit()
+    except Exception:  # pragma: no cover - Protokoll darf keine Seite kippen
+        db.rollback()
+        logging_setup.log_error("Zugriffsprotokoll konnte nicht geschrieben werden")
+
+
+@app.get("/admin/time-entries/{entry_id}/history", response_class=HTMLResponse)
+def time_entry_history_page(
+    request: Request, entry_id: int, db: Session = Depends(database.get_db)
+):
+    """Vollständige Historie einer Buchung – wer wann was warum geändert hat."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    entry = crud.get_time_entry(db, entry_id)
+    if not entry:
+        return RedirectResponse(
+            url=_build_redirect("/admin/users", error="Buchung nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    own = entry.user_id == user.id
+    if not own and not _user_in_permission_scope(db, user, "Time.View", entry.user_id):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    if not own:
+        _log_data_access(
+            db, actor=user, subject_id=entry.user_id, scope="entry_history",
+            detail=f"Buchung {entry_id} vom {entry.work_date:%d.%m.%Y}",
+        )
+    entries = revisions.history(db, entry_id)
+    rows = [
+        {
+            "revision": revision,
+            "changes": revisions.diff(
+                revisions.parse(revision.before_json), revisions.parse(revision.after_json)
+            ),
+        }
+        for revision in entries
+    ]
+    return _admin_template(
+        "admin/time_entry_history.html",
+        request,
+        user,
+        entry=entry,
+        rows=rows,
+        action_label=revisions.action_label,
+        field_label=revisions.field_label,
+        active_tab="reports",
+    )
+
+
+@app.get("/admin/periods", response_class=HTMLResponse)
+def admin_periods_page(request: Request, db: Session = Depends(database.get_db)):
+    """Abrechnungsperioden: prüfen lassen, freigeben, sperren."""
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    today = date.today()
+    return _admin_template(
+        "admin/periods.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        periods=periods.list_periods(db),
+        status_label=periods.status_label,
+        confirmation_label=periods.confirmation_label,
+        suggested_start=today.replace(day=1),
+        admin_active="periods",
+    )
+
+
+@app.post("/admin/periods/create")
+def create_period_html(
+    request: Request,
+    period_start: date = Form(...),
+    period_end: date = Form(...),
+    label: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    try:
+        period = periods.create_period(
+            db, period_start=period_start, period_end=period_end, label=label.strip()
+        )
+    except ValueError:
+        return RedirectResponse(
+            url=_build_redirect("/admin/periods", error="Das Ende liegt vor dem Beginn"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit("Abrechnungsperiode angelegt", user=user, detail=period.label)
+    return RedirectResponse(
+        url=_build_redirect("/admin/periods", msg="Periode angelegt"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/periods/{period_id}/action")
+def period_action_html(
+    request: Request,
+    period_id: int,
+    action: str = Form(...),
+    note: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    period = periods.get_period(db, period_id)
+    if period is None:
+        return RedirectResponse(
+            url=_build_redirect("/admin/periods", error="Periode nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        if action == "review":
+            user_ids = [row.id for row in crud.get_users(db)]
+            periods.start_review(db, period, user_ids=user_ids)
+            message = "Periode zur Mitarbeiterprüfung gestellt"
+        elif action == "approve":
+            periods.approve(db, period, actor=user)
+            message = "Periode freigegeben"
+        elif action == "lock":
+            periods.lock(db, period, actor=user, note=note.strip())
+            message = "Periode gesperrt – Buchungen sind jetzt unveränderlich"
+        elif action == "reopen":
+            periods.reopen(db, period, actor=user, reason=note)
+            message = "Sperre aufgehoben – der Vorgang ist vermerkt"
+        else:
+            return RedirectResponse(
+                url=_build_redirect("/admin/periods", error="Unbekannte Aktion"),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+    except ValueError:
+        return RedirectResponse(
+            url=_build_redirect(
+                "/admin/periods", error="Für diesen Vorgang ist eine Begründung nötig"
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit(
+        f"Abrechnungsperiode: {action}", user=user, detail=period.label
+    )
+    return RedirectResponse(
+        url=_build_redirect("/admin/periods", msg=message),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/periods/{period_id}/confirm")
+def confirm_period(
+    request: Request,
+    period_id: int,
+    action: str = Form(...),
+    note: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    """Mitarbeiterprüfung: bestätigen oder mit Begründung widersprechen."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    period = periods.get_period(db, period_id)
+    if period is None:
+        return RedirectResponse(
+            url=_build_redirect("/records", error="Zeitraum nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        periods.submit_confirmation(
+            db, period, user, confirmed=action == "confirm", note=note
+        )
+    except ValueError:
+        return RedirectResponse(
+            url=_build_redirect(
+                "/records", error="Ein Widerspruch braucht eine Begründung"
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit(
+        "Zeitraum bestätigt" if action == "confirm" else "Zeitraum widersprochen",
+        user=user,
+        detail=period.label,
+    )
+    return RedirectResponse(
+        url=_build_redirect(
+            "/records",
+            msg="Zeiten bestätigt" if action == "confirm"
+            else "Widerspruch übermittelt – die Verwaltung prüft ihn",
+        ),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.get("/api/me/export")
+def subject_access_export(request: Request, db: Session = Depends(database.get_db)):
+    """Auskunft über die eigenen Daten nach Art. 15 DSGVO."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
+    payload = privacy.subject_export(db, user)
+    filename = f"auskunft_{user.username}_{date.today():%Y%m%d}.json"
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/admin/users/{user_id}/export")
+def admin_subject_export(
+    request: Request, user_id: int, db: Session = Depends(database.get_db)
+):
+    """Prüf- und Auskunftsexport für eine Person – protokolliert."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
+    if not _user_in_permission_scope(db, user, "User.View", user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Berechtigung")
+    subject = crud.get_user(db, user_id)
+    if subject is None:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
+    _log_data_access(
+        db, actor=user, subject_id=user_id, scope="subject_export",
+        detail="Vollständiger Auskunfts- und Prüfexport",
+    )
+    logging_setup.log_audit(
+        "Auskunftsexport erstellt", user=user, detail=subject.username
+    )
+    payload = privacy.subject_export(db, subject)
+    filename = f"pruefexport_{subject.username}_{date.today():%Y%m%d}.json"
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/admin/compliance", response_class=HTMLResponse)
+def admin_compliance_page(request: Request, db: Session = Depends(database.get_db)):
+    """Offene Regelverstöße – Kennzeichnungen aus ArbZG/ArbSchG."""
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    # ``None`` heißt „alle Benutzer" – dann bleibt der Filter weg.
+    scope_users = permission_service.allowed_user_ids(db, user, "Time.View")
+    flags = compliance.open_flags(db, user_ids=scope_users)
+    return _admin_template(
+        "admin/compliance.html",
+        request,
+        user,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+        flags=flags,
+        compliance_label=compliance.label,
+        compliance_reference=compliance.reference,
+        admin_active="compliance",
+        active_tab="reports",
+    )
+
+
+@app.post("/admin/compliance/{flag_id}/acknowledge")
+def acknowledge_compliance_flag(
+    request: Request,
+    flag_id: int,
+    note: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_view_time_reports(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        flag = compliance.acknowledge(db, flag_id, user=user, note=note)
+    except ValueError:
+        return RedirectResponse(
+            url=_build_redirect(
+                "/admin/compliance", error="Bitte eine Einordnung angeben"
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if flag is None:
+        return RedirectResponse(
+            url=_build_redirect("/admin/compliance", error="Kennzeichnung nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    logging_setup.log_audit(
+        "Regelverstoß eingeordnet", user=user, detail=f"{flag.code} am {flag.work_date}"
+    )
+    return RedirectResponse(
+        url=_build_redirect("/admin/compliance", msg="Kennzeichnung eingeordnet"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @app.get("/admin/approvals", response_class=HTMLResponse)
 def admin_approvals_page(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
@@ -4538,6 +4914,7 @@ def update_time_entry_html(
     notes: str = Form(""),
     is_remote: Optional[str] = Form(None),
     work_location: Optional[str] = Form(None),
+    change_reason: str = Form(""),
     redirect_user: Optional[str] = Form(None),
     next_url: Optional[str] = Form(None),
     confirm_overwrite: Optional[str] = Form(None),
@@ -4615,6 +4992,7 @@ def update_time_entry_html(
                     "break_minutes": max(break_minutes, 0),
                     "company_id": company_id or "",
                     "notes": notes,
+                    "change_reason": change_reason,
                     "is_remote": remote_value,
                     # Der Einsatzort muss die Rückfrage überstehen, sonst
                     # fiele die Buchung beim Bestätigen auf „vor Ort" zurück.
@@ -4630,7 +5008,21 @@ def update_time_entry_html(
     try:
         updated = crud.update_time_entry(
             db, entry_id, payload, overwrite=confirm_overwrite == "1",
+            actor=user, reason=change_reason,
         )
+    except crud.PeriodLocked as exc:
+        redirect = _build_redirect_with_next(
+            "/admin/users", next_url, error=str(exc), user=redirect_user
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    except revisions.ReasonRequired:
+        redirect = _build_redirect_with_next(
+            "/admin/users",
+            next_url,
+            error="Bitte eine Begründung für die Änderung angeben",
+            user=redirect_user,
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     except ValueError as exc:
         error_message = "Ungültige Angaben"
         exc_text = str(exc)
@@ -4665,6 +5057,7 @@ def update_time_entry_html(
 def delete_time_entry_html(
     request: Request,
     entry_id: int,
+    cancel_reason: str = Form(""),
     redirect_user: Optional[str] = Form(None),
     next_url: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
@@ -4683,18 +5076,44 @@ def delete_time_entry_html(
             user=redirect_user,
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    if not crud.delete_time_entry(db, entry_id):
+    # Seit 0.14.0 wird storniert statt gelöscht: Die Buchung bleibt mit ihrer
+    # Historie vollständig erhalten, zählt aber nicht mehr.
+    try:
+        cancelled = crud.cancel_time_entry(
+            db,
+            entry_id,
+            actor=user,
+            reason=(cancel_reason or "").strip() or "Storniert über die Buchungsverwaltung.",
+        )
+    except crud.PeriodLocked as exc:
+        redirect = _build_redirect_with_next(
+            "/admin/users", next_url, error=str(exc), user=redirect_user
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    except revisions.ReasonRequired:
         redirect = _build_redirect_with_next(
             "/admin/users",
             next_url,
-            error="Buchung konnte nicht gelöscht werden",
+            error="Eine Stornierung braucht eine Begründung",
             user=redirect_user,
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    if not cancelled:
+        redirect = _build_redirect_with_next(
+            "/admin/users",
+            next_url,
+            error="Buchung konnte nicht storniert werden",
+            user=redirect_user,
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    compliance.refresh_for_entry(db, cancelled)
+    logging_setup.log_audit(
+        "Buchung storniert", user=user, detail=f"id={entry_id}"
+    )
     redirect = _build_redirect_with_next(
         "/admin/users",
         next_url,
-        msg="Buchung gelöscht",
+        msg="Buchung storniert – sie bleibt zur Nachvollziehbarkeit erhalten",
         user=redirect_user,
     )
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
@@ -4705,6 +5124,7 @@ def set_time_entry_status_admin(
     request: Request,
     entry_id: int,
     action: str = Form(...),
+    reason: str = Form(""),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -4727,7 +5147,18 @@ def set_time_entry_status_admin(
     else:
         redirect = _build_redirect("/admin/approvals", error="Ungültige Aktion")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    updated = crud.set_time_entry_status(db, entry_id, new_status)
+    try:
+        updated = crud.set_time_entry_status(
+            db, entry_id, new_status, actor=user, reason=reason
+        )
+    except revisions.ReasonRequired:
+        redirect = _build_redirect(
+            "/admin/approvals", error="Eine Ablehnung braucht eine Begründung"
+        )
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    except crud.PeriodLocked as exc:
+        redirect = _build_redirect("/admin/approvals", error=str(exc))
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if not updated:
         redirect = _build_redirect("/admin/approvals", error="Buchung nicht gefunden")
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)

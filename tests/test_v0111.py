@@ -177,7 +177,8 @@ def test_superadmin_can_reject_a_time_entry(client):
     _login(client)
     client.post(
         f"/admin/time-entries/{entry_id}/status",
-        data={"action": "reject", "csrf_token": _csrf(client, "/admin/approvals")},
+        data={"action": "reject", "reason": "Test: Zeiten nicht plausibel",
+              "csrf_token": _csrf(client, "/admin/approvals")},
     )
     db = database.SessionLocal()
     try:
@@ -225,7 +226,8 @@ def test_superadmin_can_reject_a_vacation(client):
     _login(client)
     client.post(
         f"/admin/vacations/{vacation_id}/status",
-        data={"action": "reject", "csrf_token": _csrf(client, "/admin/approvals")},
+        data={"action": "reject", "reason": "Test: Zeiten nicht plausibel",
+              "csrf_token": _csrf(client, "/admin/approvals")},
     )
     db = database.SessionLocal()
     try:

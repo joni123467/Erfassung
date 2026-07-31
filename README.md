@@ -2,7 +2,20 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.13.1`
+**Version:** `0.14.0`
+
+> Seit 0.14.0: **Revisionssichere Erfassung.** Buchungen werden nicht mehr
+> überschrieben oder gelöscht, sondern **storniert und ersetzt**; jede Änderung
+> landet mit Vorher/Nachher, Zeitpunkt, Urheber und Begründung in einer
+> Historie. Pausen werden als **einzelne Intervalle** mit Beginn und Ende
+> geführt und nie ungenommen gebucht; gesetzliche Mindestpausen erscheinen
+> getrennt davon als Hinweis. Verstöße gegen Höchstarbeitszeit, Ruhezeit,
+> Pausen sowie Sonn-/Feiertagsarbeit werden **gekennzeichnet, nicht
+> unterdrückt** – die tatsächliche Arbeitszeit bleibt gespeichert. Neu sind
+> außerdem Abrechnungsperioden mit Freigabe/Widerspruch, ein Zugriffsprotokoll,
+> Aufbewahrungsfristen und eine Selbstauskunft. **Eine rechtliche Garantie ist
+> damit nicht verbunden** – Details und Grenzen in
+> [`docs/RELEASE_NOTES_0.14.0.md`](docs/RELEASE_NOTES_0.14.0.md).
 
 > Seit 0.13.1: **Standorte gehören zu ihrer Firma.** Schnell stempeln bietet
 > wieder nur „Vor Ort" und „Remote"; im Auftragsdialog erscheinen ausschließlich
@@ -568,6 +581,105 @@ Weitere Eigenschaften:
   bereits erfasste Angaben erhalten (sie werden nur nicht mehr neu vergeben).
 - **Historie**: Wird ein Standort gelöscht, bleibt sein Name an den
   betroffenen Buchungen erhalten („Gelöscht (Werk Nord)") – wie bei Firmen.
+
+## Revisionssichere Erfassung (seit 0.14.0)
+
+> **Keine rechtliche Garantie.** Die folgenden Funktionen bilden gängige
+> Anforderungen an eine nachvollziehbare Arbeitszeiterfassung ab. Ob eine
+> konkrete Einrichtung den für sie geltenden Vorschriften genügt, entscheidet
+> weder diese Software noch diese Dokumentation – das ist mit der eigenen
+> Rechtsberatung und der Arbeitnehmervertretung zu klären.
+
+### Nichts wird überschrieben
+
+Originalbuchungen bleiben erhalten. Wird eine Buchung korrigiert, entsteht eine
+**Stornierung plus Ersatzbuchung**; beide sind über `replaces_id` und
+`replaced_by_id` miteinander verbunden. Auch das Löschen einer Buchung storniert
+sie nur – sie verschwindet aus den Summen, nicht aus den Daten.
+
+Jede Änderung, Freigabe, Ablehnung und Stornierung landet in der Tabelle
+`time_entry_revisions` mit **Vorher- und Nachher-Stand, Zeitpunkt, Urheber und
+Begründung**. Für Änderung, Ablehnung und Stornierung ist die Begründung
+**Pflicht** – ohne sie lehnt der Server ab. Die Historie einer Buchung steht
+unter Administration → Buchungen → *Historie*.
+
+### Pausen: tatsächlich statt pauschal
+
+Pausen werden als **einzelne Intervalle** mit Beginn und Ende geführt
+(`break_intervals`). Eine nicht genommene Pause wird **nicht** als genommen
+gebucht. Die gesetzlichen Mindestpausen erscheinen getrennt davon als Sollwert:
+
+| Brutto-Arbeitszeit | Mindestpause |
+|--------------------|--------------|
+| über 6 Stunden | 30 Minuten |
+| über 9 Stunden | 45 Minuten |
+
+Anrechenbar sind nur Abschnitte von **mindestens 15 Minuten**. Bleibt die
+tatsächliche Pause hinter dem Sollwert zurück, wird das **gekennzeichnet** – die
+tatsächliche Arbeitszeit bleibt unverändert gespeichert.
+
+Bestandsbuchungen behalten ihre alte Rechnung: Jede Buchung trägt in
+`break_rule` fest, nach welcher Regel sie berechnet wurde (`legacy_auto` für
+alles vor 0.14.0, `actual` ab 0.14.0). Alte Auswertungen ändern sich dadurch
+nicht rückwirkend.
+
+### Verstöße kennzeichnen, nicht verhindern
+
+Gespeichert wird immer die tatsächliche Zeit. Auffälligkeiten landen als
+Kennzeichnung in `compliance_flags` und unter Administration → **Regelverstöße**:
+
+| Kennzeichnung | Auslöser |
+|---------------|----------|
+| Tageshöchstarbeitszeit | über 8 Stunden (Hinweis) |
+| Absolute Höchstgrenze | über 10 Stunden (kritisch) |
+| Ruhezeit | unter 11 Stunden zwischen zwei Tagen |
+| Pause | tatsächliche Pause unter dem Sollwert |
+| Sonn-/Feiertagsarbeit | Buchung an einem Sonntag oder Feiertag |
+
+Kennzeichnungen lassen sich mit Notiz **zur Kenntnis nehmen**; gelöscht werden
+sie nicht.
+
+### Abschluss- und Korrekturworkflow
+
+Unter Administration → **Abrechnungsperioden** wird ein Zeitraum zur Prüfung
+freigegeben. Beschäftigte bestätigen ihn oder legen **Widerspruch mit
+Begründung** ein; die Arbeitgeberseite antwortet, gibt frei und **sperrt** die
+Periode. In einer gesperrten Periode weist der Server neue Buchungen und
+Änderungen ab. Ein **Wiederöffnen** ist möglich, verlangt aber eine Begründung
+und wird protokolliert.
+
+### Datenschutz
+
+- **Zugriffsprotokoll**: Sieht jemand fremde Zeitdaten ein, wird das in
+  `data_access_log` festgehalten. Der Blick auf die eigenen Daten wird nicht
+  protokolliert.
+- **Aufbewahrungsfristen**: einstellbar in `config/retention.json`
+  (Voreinstellung 24 Monate für Buchungen und Historie, 12 Monate für das
+  Zugriffsprotokoll). Der Bericht **zählt nur** – gelöscht wird ausschließlich
+  auf ausdrückliche Anweisung.
+- **Selbstauskunft**: `/api/me/export` liefert alle zur eigenen Person
+  gespeicherten Daten als JSON (Person, Buchungen, Änderungshistorie,
+  Kennzeichnungen, Urlaub, Zugriffe auf diese Daten). Für die Verwaltung gibt
+  es `/admin/users/{id}/export`.
+- **Kein GPS**: Es wird **keine** Ortung durchgeführt und **kein**
+  Bewegungsprofil geführt. Gespeichert wird nur der beim Stempeln bewusst
+  gewählte Standort – und der gehört zu genau einer Firma.
+
+### Zeitstempel und Nachtarbeit
+
+Zeitstempel werden zusätzlich in **UTC** mit der **ursprünglichen Zeitzone**
+(`tz_name`) gespeichert; die Zeitzone stellt `ERFASSUNG_TIMEZONE` ein
+(Voreinstellung `Europe/Berlin`). Buchungen über Mitternacht werden korrekt als
+eine Schicht gerechnet.
+
+### Bestand bleibt
+
+Migration 17 legt die neuen Tabellen und Spalten an, ohne bestehende Daten zu
+verändern: Alle vorhandenen Buchungen erhalten `break_rule = legacy_auto` und
+einen Eintrag „angelegt" in der Historie. Backups, Offline-PWA,
+Terminal-Importe, Exporte und die Rollenrechte bleiben unverändert; die neuen
+Tabellen wandern automatisch in das logische Backup und damit auch über
+Datenbankgrenzen hinweg.
 
 ## Urlaub
 

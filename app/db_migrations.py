@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
 
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from . import database, db_schema
@@ -563,6 +564,125 @@ def _add_company_locations(engine: Engine) -> None:
     )
 
 
+def _add_compliance_and_revisions(engine: Engine) -> None:
+    """Revisionssicherheit, Pausenintervalle, Verstöße, Perioden (ab 0.14.0).
+
+    Datenerhaltend und ohne Verhaltensänderung für Bestandsdaten:
+
+    * ``time_entries.break_rule`` bekommt für **vorhandene** Buchungen
+      ``legacy_auto``. Damit rechnen abgeschlossene Monate exakt weiter wie
+      bisher; nur neue Buchungen folgen der korrigierten Regel, die eine nicht
+      genommene Pause nicht mehr als genommen verbucht.
+    * Die UTC-Stempel bleiben zunächst ``NULL``. Sie werden nicht geraten:
+      Ohne bekannte Zeitzone der Vergangenheit wäre jede Umrechnung eine
+      Behauptung. Anzeige und Auswertung nutzen weiterhin ``work_date`` und
+      die Ortszeiten.
+    * Für jede vorhandene Buchung wird **eine** Revision ``created``
+      angelegt, damit die Historie lückenlos bei der Bestandsaufnahme
+      beginnt. Als Bearbeiter steht dort die Migration.
+    """
+    for table in (
+        "break_intervals",
+        "time_entry_revisions",
+        "compliance_flags",
+        "payroll_periods",
+        "period_confirmations",
+        "data_access_log",
+    ):
+        if not db_schema.has_table(engine, table):
+            models.Base.metadata.tables[table].create(bind=engine, checkfirst=True)
+
+    added_rule = db_schema.add_column(
+        engine, "time_entries", "break_rule", "VARCHAR(32)", default="'actual'"
+    )
+    db_schema.add_column(engine, "time_entries", "started_at_utc", "DATETIME")
+    db_schema.add_column(engine, "time_entries", "ended_at_utc", "DATETIME")
+    db_schema.add_column(engine, "time_entries", "tz_name", "VARCHAR(64)")
+    db_schema.add_column(engine, "time_entries", "cancelled_at", "DATETIME")
+    db_schema.add_column(engine, "time_entries", "cancelled_by_id", "INTEGER")
+    db_schema.add_column(engine, "time_entries", "cancel_reason", "VARCHAR(500)")
+    db_schema.add_column(engine, "time_entries", "replaced_by_id", "INTEGER")
+    db_schema.add_column(engine, "time_entries", "replaces_id", "INTEGER")
+
+    with engine.begin() as connection:
+        if added_rule:
+            # Nur beim erstmaligen Anlegen: Bestandsbuchungen behalten die alte
+            # Rechnung. Ein späterer Lauf darf das nicht erneut überschreiben.
+            connection.execute(
+                text("UPDATE time_entries SET break_rule = 'legacy_auto'")
+            )
+        connection.execute(
+            text("UPDATE time_entries SET break_rule = 'actual' WHERE break_rule IS NULL")
+        )
+
+        # Laufende Pausen der Altstruktur in ein Intervall überführen, damit
+        # eine gerade laufende Pause den Umstieg übersteht.
+        rows = connection.execute(
+            text(
+                "SELECT id, work_date, break_started_at FROM time_entries "
+                "WHERE break_started_at IS NOT NULL"
+            )
+        ).fetchall()
+        for row in rows:
+            existing = connection.execute(
+                text("SELECT COUNT(*) FROM break_intervals WHERE entry_id = :entry_id"),
+                {"entry_id": row[0]},
+            ).scalar()
+            if existing:
+                continue
+            started = _combine_legacy(row[1], row[2])
+            if started is None:
+                continue
+            connection.execute(
+                text(
+                    "INSERT INTO break_intervals (entry_id, started_at_utc, ended_at_utc, "
+                    "source, created_at) VALUES (:entry_id, :started, NULL, 'legacy', :now)"
+                ),
+                {"entry_id": row[0], "started": started, "now": datetime.utcnow()},
+            )
+
+        # Lückenlose Historie: je Bestandsbuchung ein Anlagevermerk.
+        connection.execute(
+            text(
+                "INSERT INTO time_entry_revisions "
+                "(entry_id, revision_no, action, changed_at_utc, actor_label, reason, source) "
+                "SELECT t.id, 1, 'created', COALESCE(t.created_at, :now), "
+                "'Migration 0.14.0', 'Bestandsaufnahme beim Umstieg auf die "
+                "revisionssichere Erfassung', COALESCE(t.source, 'legacy') "
+                "FROM time_entries t "
+                "WHERE NOT EXISTS (SELECT 1 FROM time_entry_revisions r WHERE r.entry_id = t.id)"
+            ),
+            {"now": datetime.utcnow()},
+        )
+
+
+def _combine_legacy(work_date: object, clock: object) -> datetime | None:
+    """``work_date`` + ``break_started_at`` aus der Datenbank zusammensetzen.
+
+    Die Treiber liefern je nach Backend ``date``/``time`` oder Text; beides
+    muss hier ankommen, ohne die Migration zu kippen.
+    """
+    from datetime import date as date_cls, time as time_cls
+
+    if work_date is None or clock is None:
+        return None
+    if isinstance(work_date, str):
+        try:
+            work_date = date_cls.fromisoformat(work_date[:10])
+        except ValueError:
+            return None
+    if isinstance(clock, str):
+        try:
+            clock = time_cls.fromisoformat(clock[:8])
+        except ValueError:
+            return None
+    if isinstance(work_date, datetime):
+        work_date = work_date.date()
+    if not isinstance(work_date, date_cls) or not isinstance(clock, time_cls):
+        return None
+    return datetime.combine(work_date, clock)
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -580,6 +700,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (14, _migrate_groups_to_roles),
     (15, _add_half_vacation_days),
     (16, _add_company_locations),
+    (17, _add_compliance_and_revisions),
 ]
 
 

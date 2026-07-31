@@ -56,6 +56,16 @@
                                    checked=entry.is_remote, selected=entry.location_id) }}
             </div>
         {% endif %}
+        <label class="full-width">
+            Begründung der Änderung <span class="required-marker">*</span>
+            <input type="text" name="change_reason" required maxlength="500"
+                   placeholder="z. B. Stempelung vergessen, Korrektur nach Rücksprache">
+            <small>
+                Pflicht: Jede Änderung wird mit Vorher- und Nachher-Stand, Zeitpunkt,
+                Bearbeiter und dieser Begründung dauerhaft festgehalten. Die
+                ursprüngliche Buchung bleibt dabei erhalten.
+            </small>
+        </label>
         <div class="form-actions full-width">
             <button type="submit" class="button primary">Speichern</button>
         </div>

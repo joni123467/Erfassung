@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Abrechnungsperioden – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'periods' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Abrechnungsperioden</h1>
+            <p class="card-header__hint">
+                Abschluss in vier Schritten: <strong>offen</strong> →
+                <strong>Mitarbeiterprüfung</strong> → <strong>freigegeben</strong> →
+                <strong>gesperrt</strong>. Erst die Sperre macht die Buchungen des
+                Zeitraums unveränderlich; bis dahin bleiben Korrekturen möglich.
+            </p>
+        </div>
+    </div>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Zeitraum</th>
+                <th>Zustand</th>
+                <th>Prüfung</th>
+                <th>Aktionen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for period in periods %}
+                <tr>
+                    <td>
+                        <strong>{{ period.label or '–' }}</strong><br>
+                        <small>{{ period.period_start.strftime('%d.%m.%Y') }} – {{ period.period_end.strftime('%d.%m.%Y') }}</small>
+                    </td>
+                    <td>
+                        <span class="license-state {{ 'license-state--valid' if period.status == 'locked' else '' }}">
+                            {{ status_label(period.status) }}
+                        </span>
+                        {% if period.note %}<br><small class="text-muted">{{ period.note }}</small>{% endif %}
+                    </td>
+                    <td>
+                        {% set open_count = period.confirmations | selectattr('status', 'equalto', 'pending') | list | length %}
+                        {% set objections = period.confirmations | selectattr('status', 'equalto', 'objected') | list %}
+                        {{ period.confirmations | length }} Personen,
+                        {{ open_count }} offen
+                        {% if objections %}
+                            <br><strong class="text-danger">{{ objections | length }} Widerspruch/Widersprüche</strong>
+                            <ul>
+                                {% for item in objections %}
+                                    <li>{{ item.user.full_name if item.user else '–' }}: {{ item.note }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="post" action="/admin/periods/{{ period.id }}/action" class="period-actions">
+                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                            {% if period.status == 'locked' %}
+                                <input type="text" name="note" required maxlength="500"
+                                       placeholder="Begründung für die Entsperrung">
+                                <button type="submit" name="action" value="reopen" class="button small danger">
+                                    Sperre aufheben
+                                </button>
+                            {% else %}
+                                <button type="submit" name="action" value="review" class="button small">
+                                    Zur Prüfung stellen
+                                </button>
+                                <button type="submit" name="action" value="approve" class="button small">
+                                    Freigeben
+                                </button>
+                                <button type="submit" name="action" value="lock" class="button small primary">
+                                    Sperren
+                                </button>
+                            {% endif %}
+                        </form>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4">Noch keine Periode angelegt.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Periode anlegen</h2>
+    <form method="post" action="/admin/periods/create" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label>
+            Beginn
+            <input type="date" name="period_start" required value="{{ suggested_start.isoformat() }}">
+        </label>
+        <label>
+            Ende
+            <input type="date" name="period_end" required>
+        </label>
+        <label>
+            Bezeichnung
+            <input type="text" name="label" maxlength="64" placeholder="z. B. 03/2026">
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button primary">Periode anlegen</button>
+        </div>
+    </form>
+    <p class="card-header__hint">
+        Eine gesperrte Periode weist jede Änderung an Buchungen dieses Zeitraums
+        ab – auch aus der Administration. Das Aufheben der Sperre ist möglich,
+        braucht aber eine Begründung und bleibt an der Periode vermerkt.
+    </p>
+</section>
+{% endblock %}
