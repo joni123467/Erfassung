@@ -26,6 +26,15 @@ from .database import Base
 
 
 class Company(Base):
+    """Ein **Kunde** beziehungsweise Auftraggeber – nicht der eigene Betrieb.
+
+    Wichtig für alle Auswertungen: Diese Daten dienen der Auftragszuordnung.
+    Sie sind **keine** Quelle für arbeitsrechtliche Regeln. Feiertagsregion,
+    Sollzeit, Pausenpflicht, Höchstarbeitszeit und Ruhezeit stammen
+    ausschließlich aus der zentralen Konfiguration des eigenen Unternehmens
+    beziehungsweise der Mitarbeiterstammdaten.
+    """
+
     __tablename__ = "companies"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -60,10 +69,15 @@ class Company(Base):
 
 
 class CompanyLocation(Base):
-    """Ein Standort einer Firma – Niederlassung, Werk, Baustelle, eigenes Büro.
+    """Ein **Kunden-/Auftragsstandort** – Niederlassung, Werk, Baustelle.
 
     Bewusst eine eigene Tabelle statt eines Adressfeldes an der Firma: Nur so
     lassen sich mehrere Standorte führen und an einer Buchung auswerten.
+
+    Wie bei :class:`Company` gilt: Der Standort sagt, *wo für wen* gearbeitet
+    wurde. Er bestimmt **nie** den Feiertagskalender oder eine andere
+    arbeitsrechtliche Regel. Arbeit an einem Kundenstandort in einer anderen
+    Feiertagsregion ändert die Bewertung nicht.
     """
 
     __tablename__ = "company_locations"
@@ -270,6 +284,13 @@ class RevisionAction:
     #: braucht deshalb auch keine Begründung.
     CLOSED = "closed"
     UPDATED = "updated"
+    #: Pausenereignisse (ab 0.15.0). Beginn und Ende sind Stempelungen und
+    #: brauchen keine Begründung; Korrektur und Storno einer Pause sind
+    #: nachträgliche Eingriffe und deshalb begründungspflichtig.
+    BREAK_STARTED = "break_started"
+    BREAK_ENDED = "break_ended"
+    BREAK_CORRECTED = "break_corrected"
+    BREAK_CANCELLED = "break_cancelled"
     APPROVED = "approved"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
@@ -279,8 +300,17 @@ class RevisionAction:
 
 #: Bei diesen Vorgängen ist eine Begründung Pflicht. Anlegen und Freigeben
 #: brauchen keine – der Vorgang selbst ist die Aussage.
+#: Vorgänge, die eine Begründung erzwingen.
 REVISION_REASON_REQUIRED = frozenset(
-    {RevisionAction.UPDATED, RevisionAction.REJECTED, RevisionAction.CANCELLED}
+    {
+        RevisionAction.UPDATED,
+        RevisionAction.REJECTED,
+        RevisionAction.CANCELLED,
+        # Eine Pause nachträglich zu verschieben oder zu streichen verändert
+        # die abgerechnete Arbeitszeit – das braucht einen Grund.
+        RevisionAction.BREAK_CORRECTED,
+        RevisionAction.BREAK_CANCELLED,
+    }
 )
 
 
@@ -293,6 +323,25 @@ ABSOLUTE_MAX_DAILY_MINUTES = 10 * 60
 
 #: Ununterbrochene Ruhezeit zwischen zwei Arbeitstagen (§5 ArbZG).
 MIN_REST_MINUTES = 11 * 60
+
+#: Ab dieser Unterbrechung gilt eine Schicht als beendet und eine neue als
+#: begonnen (ab 0.15.0).
+#:
+#: Der Wert ist eine **fachliche Festlegung**, keine Zahl aus dem Gesetz. Das
+#: ArbZG kennt den Begriff „Schicht" nicht; es kennt Ruhepausen (§ 4, höchstens
+#: 45 Minuten gefordert) und die Ruhezeit zwischen zwei Arbeitstagen (§ 5,
+#: 11 Stunden). Dazwischen klafft eine Lücke, die eine Software füllen muss:
+#: Ist eine Unterbrechung von vier Stunden eine sehr lange Pause oder das Ende
+#: des Arbeitstags?
+#:
+#: Sechs Stunden trennen beides brauchbar: Ein geteilter Dienst mit mehreren
+#: Stunden Mittagspause bleibt **eine** Schicht (und muss die Pausenpflicht
+#: erfüllen), während eine Unterbrechung von sechs Stunden oder mehr als Ende
+#: des Arbeitstags gilt und damit die Ruhezeitprüfung nach § 5 auslöst.
+#:
+#: Wer das anders handhabt (Tarifvertrag, Betriebsvereinbarung), ändert diesen
+#: Wert – die Auswirkung ist in den Release Notes zu 0.15.0 beschrieben.
+SHIFT_BREAK_MINUTES = 6 * 60
 
 
 class BreakRule:
@@ -697,6 +746,26 @@ class TimeEntryRevision(Base):
     entry = relationship("TimeEntry", back_populates="revisions")
 
 
+class ComplianceState:
+    """Lebenszyklus einer Compliance-Feststellung (ab 0.15.0).
+
+    Feststellungen werden nicht mehr gelöscht, sondern fortgeschrieben. Eine
+    Bestätigung bezieht sich immer auf einen konkreten Datenstand; ändert er
+    sich, wird die Feststellung wieder geöffnet.
+    """
+
+    #: Neu erkannt.
+    DETECTED = "detected"
+    #: Bestand schon, der bewertete Datenstand hat sich aber geändert.
+    CHANGED = "changed"
+    #: Verstoß besteht nicht mehr (Buchung korrigiert oder storniert).
+    RESOLVED = "resolved"
+    #: Gesehen und mit Begründung eingeordnet.
+    ACKNOWLEDGED = "acknowledged"
+    #: Nach einer Bestätigung erneut aufgetreten, weil sich die Daten änderten.
+    REOPENED = "reopened"
+
+
 class ComplianceFlag(Base):
     """Kennzeichnung eines Regelverstoßes zu einer Buchung oder einem Tag.
 
@@ -725,11 +794,38 @@ class ComplianceFlag(Base):
     acknowledged_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     acknowledgement = Column(String(500), nullable=True)
 
+    #: Lebenszyklus der Feststellung (ab 0.15.0). Bis 0.14.2 wurden offene
+    #: Kennzeichnungen bei jeder Neuberechnung physisch gelöscht – damit war
+    #: nicht mehr nachvollziehbar, dass es sie je gab.
+    state = Column(String(16), nullable=False, default="detected")
+    #: Prüfsumme des bewerteten Datenstands. Ändert sich Arbeitszeit, Pause
+    #: oder Schweregrad, passt die Bestätigung nicht mehr – die Feststellung
+    #: wird dann wieder geöffnet. Eine Bestätigung gilt nur für **den**
+    #: Datenstand, für den sie abgegeben wurde.
+    fingerprint = Column(String(64), nullable=True)
+    #: Fingerabdruck, für den die Bestätigung abgegeben wurde.
+    acknowledged_fingerprint = Column(String(64), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    reopened_at = Column(DateTime, nullable=True)
+    #: Wie oft der Verstoß nach einer Änderung erneut auftrat.
+    revision_no = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
     user = relationship("User", foreign_keys=[user_id])
 
     @property
     def is_open(self) -> bool:
-        return self.acknowledged_at is None
+        """Braucht diese Feststellung noch Aufmerksamkeit?
+
+        Erledigt (``resolved``) heißt: Der Verstoß besteht nicht mehr.
+        Bestätigt (``acknowledged``) heißt: gesehen und eingeordnet. Alles
+        andere ist offen.
+        """
+        return self.state in (
+            ComplianceState.DETECTED,
+            ComplianceState.CHANGED,
+            ComplianceState.REOPENED,
+        )
 
 
 class PayrollPeriod(Base):

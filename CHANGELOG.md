@@ -5,6 +5,109 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.15.0] – 2026-07-31
+
+### Security – die JSON-Schnittstelle war offen
+
+**Neun `/api/*`-Endpunkte hatten keinerlei Prüfung** – weder Anmeldung noch
+Berechtigung. Der CSRF-Schutz war keine Hürde: `GET /api/csrf` liefert Sitzung
+und Token auch ohne Anmeldung.
+
+- Betroffen: `GET/POST /api/users`, `GET/POST /api/groups`,
+  `POST /api/time-entries`, `DELETE /api/time-entries/{id}`,
+  `POST /api/vacations`, `POST /api/vacations/{id}/status` und –
+  besonders schwer – `GET /api/users/{id}/excel`, der die **vollständige
+  Arbeitszeit jeder Person** ohne jede Zugriffskontrolle herausgab.
+- Anonyme Aufrufe liefern jetzt **401**, fehlendes Recht oder fremder
+  Team-Geltungsbereich **403**. Für die eigene Person bleibt alles ohne
+  Sonderrecht möglich.
+- **`DELETE /api/time-entries/{id}` verlangt jetzt `?reason=…`** und einen
+  angemeldeten Akteur; beides landet in der Revisionshistorie. Ohne Begründung
+  antwortet der Server mit 400.
+- Erfolgreiche und abgewiesene sicherheitsrelevante Zugriffe werden
+  protokolliert – ohne IP-Adresse, ohne Passwörter, PINs oder Tokens.
+- **Beim Einordnen eines Regelverstoßes** genügte die Kenntnis einer
+  `flag_id`. Jetzt wird der Geltungsbereich von `Time.View` für die betroffene
+  Person geprüft; sonst 403 plus Security- und Audit-Eintrag.
+
+### Fixed – Pausen wurden je Buchung geprüft
+
+Wer von 8 bis 12 für Kunde A und von 12 bis 17 für Kunde B arbeitete, hatte
+nach alter Rechnung zwei Buchungen unter sechs Stunden – und damit **keine**
+Pausenpflicht. Tatsächlich sind das neun Stunden am Stück.
+
+- Die Prüfung bildet jetzt die **chronologische Schicht** über alle Kunden,
+  Aufträge und Einsatzorte hinweg.
+- Überlappende und unmittelbar aufeinanderfolgende Intervalle werden
+  zusammengeführt; Lücken **unter 15 Minuten** sind Arbeitszeit, keine Pause.
+  Ein Auftrags-, Kunden- oder Standortwechsel täuscht keine Pause mehr vor.
+- Nur echte Unterbrechungen **ab 15 Minuten** zählen (§ 4 Abs. 1 Satz 2 ArbZG).
+- Nachtarbeit über Mitternacht bleibt **eine** Schicht; auch die
+  Ruhezeitprüfung nach § 5 vergleicht Schichten statt Kalendertage.
+- Grenzen unverändert: mehr als 6 Std → 30 Min, mehr als 9 Std → 45 Min. Die
+  gespeicherte Arbeitszeit ändert sich nicht.
+
+**Neue Festlegung:** `models.SHIFT_BREAK_MINUTES` (6 Stunden) trennt zwei
+Schichten. Das ist eine fachliche Entscheidung, keine Zahl aus dem Gesetz –
+siehe Release Notes.
+
+### Fixed – UTC-Stempel wurden behauptet, aber nicht benutzt
+
+`compliance._entry_bounds()` versprach im eigenen Docstring den UTC-Vorrang und
+rechnete trotzdem nur mit Ortszeit. Über eine Zeitumstellung hinweg lag die
+Ruhezeit um eine Stunde daneben. Jetzt haben `started_at_utc`/`ended_at_utc`
+Vorrang, Ortszeit ist Rückfallebene für Bestandsbuchungen, und ein naiver Wert
+aus einer `*_at_utc`-Spalte wird als UTC gelesen. Durchgehend zonenbehaftet,
+keine naive/aware-Mischung.
+
+### Added – Pausenereignisse in der Revisionshistorie
+
+Neue Vorgänge `break_started`, `break_ended`, `break_corrected` und
+`break_cancelled` mit Akteur, Quelle, UTC-Zeitpunkt, Zeitzone und
+Vorher/Nachher. Korrektur und Storno einer Pause sind **begründungspflichtig**;
+eine stornierte Pause wird auf null gesetzt statt gelöscht. Web,
+Mobil/Offline, Terminalimport und API nutzen denselben Pfad.
+
+### Added – Compliance-Feststellungen werden fortgeschrieben
+
+Offene Kennzeichnungen wurden bei jeder Neuberechnung **physisch gelöscht**.
+Jetzt gibt es einen Lebenszyklus: `detected`, `changed`, `resolved`,
+`acknowledged`, `reopened`. Eine Bestätigung wird an eine Prüfsumme des
+bewerteten Datenstands gebunden – ändert sich Arbeitszeit, Pause oder
+Schweregrad, öffnet sich die Feststellung automatisch wieder. Ohne Änderung
+bleibt die Bestätigung bestehen.
+
+### Documentation – Kunden sind keine Arbeitgeber
+
+`Company`/`CompanyLocation` sind Kunde und Auftragsort. Die Prüfung ergab, dass
+`compliance.py` und `services.py` bereits nirgends darauf zugreifen; die Regel
+ist jetzt in beiden Modulen und an beiden Modellklassen dokumentiert und durch
+Tests abgesichert: Feiertagsregion, Sollzeit, Pausen-, Höchstarbeits- und
+Ruhezeitregeln kommen ausschließlich aus der zentralen Konfiguration.
+
+### Datenbank
+
+Migration **18** (`_add_compliance_lifecycle`) in beiden Mechanismen: sieben
+neue Spalten an `compliance_flags` (`state`, `fingerprint`,
+`acknowledged_fingerprint`, `resolved_at`, `reopened_at`, `revision_no`,
+`updated_at`). Idempotent und datenerhaltend – bestätigte Kennzeichnungen
+behalten ihren Zustand, alle übrigen werden `detected`. Portables DDL für
+SQLite, MySQL, MariaDB und PostgreSQL; die neuen Spalten wandern automatisch in
+das logische Backup und den Cross-Database-Restore.
+
+### Migrationshinweise
+
+- **Bestehende API-Integrationen brechen**, wenn sie sich ohne Anmeldung
+  bedient haben. Das ist beabsichtigt.
+- `DELETE /api/time-entries/{id}` braucht jetzt `?reason=…`.
+- Es entstehen **mehr Pausenwarnungen**, vor allem bei Personen, die an einem
+  Tag für mehrere Kunden arbeiten. Die gespeicherte Arbeitszeit bleibt gleich.
+
+### Tests
+
+`tests/test_v0150.py` – 42 Tests. Details in
+[`docs/RELEASE_NOTES_0.15.0.md`](docs/RELEASE_NOTES_0.15.0.md).
+
 ## [0.14.2] – 2026-07-31
 
 ### Fixed – halbe Urlaubstage wurden ganz angerechnet

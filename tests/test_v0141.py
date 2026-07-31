@@ -169,8 +169,8 @@ def _entry(*, work_date: date, start: time, end: time, user_id: int | None = Non
 
 
 def test_version_is_0141(client):
-    assert client.app.version == "0.14.2"
-    assert client.get("/health").json()["version"] == "0.14.2"
+    assert client.app.version == "0.15.0"
+    assert client.get("/health").json()["version"] == "0.15.0"
 
 
 # ── Einsatzort hängt nicht am Remote-Kennzeichen ──────────────────────────
@@ -639,8 +639,9 @@ def test_deleting_over_the_api_cancels_and_reports_it(client):
 
     entry = _entry(work_date=date.today(), start=time(8, 0), end=time(12, 0))
     _login(client)
+    # Seit 0.15.0 braucht die Stornierung über die API eine Begründung.
     response = client.delete(
-        f"/api/time-entries/{entry.id}",
+        f"/api/time-entries/{entry.id}?reason=Test%3A+doppelt+erfasst",
         headers={"x-csrf-token": client.get("/api/csrf").json()["csrf_token"]},
     )
     assert response.status_code == 200

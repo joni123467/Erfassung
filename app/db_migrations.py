@@ -683,6 +683,63 @@ def _combine_legacy(work_date: object, clock: object) -> datetime | None:
     return datetime.combine(work_date, clock)
 
 
+def _add_compliance_lifecycle(engine: Engine) -> None:
+    """Lebenszyklus der Compliance-Feststellungen (ab 0.15.0).
+
+    Bis 0.14.2 wurden offene Kennzeichnungen bei jeder Neuberechnung physisch
+    gelöscht. Diese Migration ergänzt die Felder, mit denen sie stattdessen
+    fortgeschrieben werden.
+
+    Datenerhaltend: Vorhandene Kennzeichnungen behalten ihren Inhalt und
+    bekommen einen passenden Zustand – bereits bestätigte ``acknowledged``,
+    alle übrigen ``detected``. Die Prüfsumme bleibt zunächst ``NULL``; sie wird
+    bei der nächsten Neuberechnung gesetzt. Bis dahin gilt eine Bestätigung
+    weiter, denn eine leere Prüfsumme wird nicht als Änderung gewertet.
+    """
+    if not db_schema.has_table(engine, "compliance_flags"):
+        models.Base.metadata.tables["compliance_flags"].create(
+            bind=engine, checkfirst=True
+        )
+        return
+
+    added_state = db_schema.add_column(
+        engine, "compliance_flags", "state", "VARCHAR(16)", default="'detected'"
+    )
+    db_schema.add_column(engine, "compliance_flags", "fingerprint", "VARCHAR(64)")
+    db_schema.add_column(
+        engine, "compliance_flags", "acknowledged_fingerprint", "VARCHAR(64)"
+    )
+    db_schema.add_column(engine, "compliance_flags", "resolved_at", "DATETIME")
+    db_schema.add_column(engine, "compliance_flags", "reopened_at", "DATETIME")
+    db_schema.add_column(
+        engine, "compliance_flags", "revision_no", "INTEGER", default="1"
+    )
+    db_schema.add_column(engine, "compliance_flags", "updated_at", "DATETIME")
+
+    with engine.begin() as connection:
+        # Immer absichern (idempotent): NULL-Werte auffüllen …
+        connection.execute(
+            text("UPDATE compliance_flags SET state = 'detected' WHERE state IS NULL")
+        )
+        connection.execute(
+            text("UPDATE compliance_flags SET revision_no = 1 WHERE revision_no IS NULL")
+        )
+        connection.execute(
+            text(
+                "UPDATE compliance_flags SET updated_at = detected_at "
+                "WHERE updated_at IS NULL"
+            )
+        )
+        if added_state:
+            # … und beim ersten Anlegen den Zustand aus dem Bestand ableiten.
+            connection.execute(
+                text(
+                    "UPDATE compliance_flags SET state = 'acknowledged' "
+                    "WHERE acknowledged_at IS NOT NULL"
+                )
+            )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -701,6 +758,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (15, _add_half_vacation_days),
     (16, _add_company_locations),
     (17, _add_compliance_and_revisions),
+    (18, _add_compliance_lifecycle),
 ]
 
 

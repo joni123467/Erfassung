@@ -2,7 +2,18 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.14.2`
+**Version:** `0.15.0`
+
+> Seit 0.15.0: **Die JSON-Schnittstelle ist abgesichert.** Neun `/api/*`-Endpunkte
+> waren ohne jede Prüfung erreichbar – darunter das Anlegen von Benutzern und
+> der vollständige Arbeitszeitexport jeder Person. Anonyme Aufrufe liefern jetzt
+> **401**, fehlendes Recht oder fremder Team-Geltungsbereich **403**; eine
+> Stornierung über die API braucht Akteur und Begründung. Außerdem: **Pausen
+> werden über die ganze Schicht geprüft** statt je Buchung (ein Kunden- oder
+> Auftragswechsel ist keine Pause), **UTC-Stempel werden tatsächlich benutzt**
+> (Zeitumstellung), **Pausenereignisse stehen in der Historie** und
+> **Regelverstöße werden fortgeschrieben statt gelöscht**. Details in
+> [`docs/RELEASE_NOTES_0.15.0.md`](docs/RELEASE_NOTES_0.15.0.md).
 
 > Seit 0.14.2: **Halbe Urlaubstage werden halb angerechnet.** In der
 > Adminauswertung, im Excel- und PDF-Export sowie über `POST /api/vacations`
@@ -420,6 +431,86 @@ Beim ersten Start nach dem Update (Migration 14, datenerhaltend):
 Niemand verliert dadurch Rechte. Details siehe
 [`docs/RBAC_MIGRATIONSPLAN.md`](docs/RBAC_MIGRATIONSPLAN.md).
 
+## JSON-Schnittstelle (`/api/*`)
+
+**Seit 0.15.0 ist jeder Endpunkt authentifiziert.** Bis 0.14.2 waren neun
+Endpunkte ohne jede Prüfung erreichbar – das ist behoben.
+
+### Authentifizierung
+
+Es gibt **einen** Weg: die **Sitzung**. Ein API-Client meldet sich wie die
+Oberfläche über `POST /login` an und schickt das Sitzungs-Cookie mit. Einen
+API-Schlüssel oder Token gibt es bewusst nicht – ein zweiter Anmeldeweg wäre
+eine zweite Angriffsfläche.
+
+Für schreibende Aufrufe kommt der CSRF-Schutz hinzu: Token über `GET /api/csrf`
+holen und als Kopfzeile `X-CSRF-Token` mitschicken.
+
+```bash
+# 1. Anmelden (Cookie merken)
+curl -c cookies.txt -X POST https://host/login \
+     -d "username=…&password=…&csrf_token=…"
+
+# 2. Token holen und lesend zugreifen
+curl -b cookies.txt https://host/api/users
+```
+
+### Antworten
+
+| Lage | Antwort |
+|------|---------|
+| nicht angemeldet | **401** `Nicht angemeldet` |
+| angemeldet, Recht fehlt | **403** `Keine Berechtigung` |
+| Recht da, Person außerhalb des Geltungsbereichs | **403** `Außerhalb deines Geltungsbereichs` |
+| gesperrte Abrechnungsperiode | **409** mit Klartextgrund |
+| Benutzerlimit der Lizenz erreicht | **402** |
+
+Der Unterschied zwischen 401 und 403 ist Absicht: „nicht angemeldet" und
+„angemeldet, aber nicht berechtigt" sind verschiedene Dinge.
+
+### Rechte je Endpunkt
+
+| Endpunkt | Recht (mit Geltungsbereich) |
+|----------|------------------------------|
+| `GET /api/users` | `User.View` – die Liste ist auf den Geltungsbereich begrenzt |
+| `POST /api/users` | `User.Create` |
+| `GET`/`POST /api/groups` | `System.Groups` |
+| `GET`/`POST /api/roles` | `System.Roles` |
+| `POST /api/time-entries` | eigene Person frei, sonst `Time.Edit` |
+| `DELETE /api/time-entries/{id}` | eigene Person frei, sonst `Time.Edit` |
+| `GET /api/users/{id}/excel` | eigene Person frei, sonst `Time.View` |
+| `POST /api/vacations` | eigene Person frei, sonst `Vacation.Manage` |
+| `POST /api/vacations/{id}/status` | `Vacation.Manage` |
+| `GET /api/license` | `System.Settings` |
+| `GET /api/me/export` | nur die eigene Person |
+
+Die eigene Person kommt immer ohne Sonderrecht an ihre Daten – das ist
+Selbstbedienung, kein Privileg.
+
+### Stornieren
+
+`DELETE /api/time-entries/{id}` **löscht nicht**, es storniert – und verlangt
+eine Begründung:
+
+```bash
+curl -b cookies.txt -X DELETE \
+     -H "X-CSRF-Token: $TOKEN" \
+     "https://host/api/time-entries/42?reason=Doppelt+gestempelt"
+```
+
+Ohne `reason` antwortet der Server mit **400**. Akteur und Begründung landen in
+der Revisionshistorie; eine Stornierung ohne Urheber wäre für die
+Nachvollziehbarkeit wertlos.
+
+### Protokollierung
+
+Abgewiesene Zugriffe stehen in `logs/security.log`, erfolgreiche
+administrative Aktionen zusätzlich in `logs/audit.log`. Protokolliert werden
+Endpunkt, Recht und Zielperson – **keine** IP-Adresse (sie wäre ein
+personenbezogenes Datum, das die Anwendung sonst nirgends festhält) und
+niemals Passwörter, PINs oder Tokens. Lesende Zugriffe auf **fremde** Zeitdaten
+erzeugen zusätzlich einen Eintrag im Zugriffsprotokoll.
+
 ## Lizenzierung
 
 Die Anwendung kann sich gegen den **Erfassung-Lizenzserver** aktivieren
@@ -669,6 +760,45 @@ Bestandsbuchungen behalten ihre alte Rechnung: Jede Buchung trägt in
 alles vor 0.14.0, `actual` ab 0.14.0). Alte Auswertungen ändern sich dadurch
 nicht rückwirkend.
 
+### Kunden sind keine Arbeitgeber
+
+**Firmen und ihre Standorte sind Kunden beziehungsweise Auftragsorte.** Sie
+dienen der Auftragszuordnung und sind **keine** Quelle für arbeitsrechtliche
+Regeln:
+
+| | Quelle |
+|---|---|
+| Feiertagsregion | zentrale Konfiguration (Administration → Feiertage) |
+| Sollzeit, Pausenpflicht, Höchstarbeitszeit, Ruhezeit | Mitarbeiterstammdaten und Gesetz |
+| Kunde, Auftrag, Kundenstandort | **nur** Zuordnung und Auswertung |
+
+Wer für einen Kunden in einem anderen Bundesland arbeitet, bekommt deswegen
+weder dessen Feiertage noch verliert er die eigenen. Ein Wechsel von Kunde,
+Auftrag oder Standort ändert weder Sollzeit noch Pausen-, Höchstarbeitszeit-
+oder Ruhezeitregeln. Die Arbeitszeiten **aller** Kunden eines Beschäftigten
+werden für die Tages- und Ruhezeitprüfung gemeinsam betrachtet.
+
+### Pausen über die ganze Schicht (seit 0.15.0)
+
+Die Pausenprüfung betrachtet die **chronologische Schicht** über alle Kunden,
+Aufträge und Einsatzorte hinweg – nicht die einzelne Buchung:
+
+1. Jede Buchung wird um ihre gebuchten Pausen bereinigt.
+2. Überlappende und unmittelbar aufeinanderfolgende Arbeitsintervalle werden
+   zusammengeführt.
+3. Lücken **unter 15 Minuten** sind Arbeitszeit, keine Ruhepause – ein
+   Auftrags-, Kunden- oder Standortwechsel täuscht keine Pause vor.
+4. Nur echte Unterbrechungen **ab 15 Minuten** werden angerechnet.
+5. Eine Unterbrechung ab **6 Stunden** (`models.SHIFT_BREAK_MINUTES`) beendet
+   die Schicht und löst die Ruhezeitprüfung nach § 5 ArbZG aus.
+
+Punkt 5 ist eine **betriebliche Festlegung**, keine Zahl aus dem Gesetz: Das
+ArbZG kennt den Begriff „Schicht" nicht. Wer das anders handhabt, ändert die
+Konstante – die Auswirkung steht in den Release Notes zu 0.15.0.
+
+Nachtarbeit über Mitternacht bleibt eine Schicht. Gerechnet wird durchgehend
+in UTC, damit die Zeitumstellung das Ergebnis nicht verschiebt.
+
 ### Verstöße kennzeichnen, nicht verhindern
 
 Gespeichert wird immer die tatsächliche Zeit. Auffälligkeiten landen als
@@ -683,7 +813,22 @@ Kennzeichnung in `compliance_flags` und unter Administration → **Regelverstö�
 | Sonn-/Feiertagsarbeit | Buchung an einem Sonntag oder Feiertag |
 
 Kennzeichnungen lassen sich mit Notiz **zur Kenntnis nehmen**; gelöscht werden
-sie nicht.
+sie nicht. Seit 0.15.0 haben sie einen Lebenszyklus:
+
+| Zustand | Bedeutung |
+|---------|-----------|
+| Erkannt | neu aufgetreten |
+| Geändert | besteht weiter, der bewertete Datenstand hat sich geändert |
+| Erledigt | besteht nicht mehr – bleibt trotzdem erhalten |
+| Eingeordnet | gesehen und mit Begründung bewertet |
+| Wieder geöffnet | nach einer Bestätigung erneut aufgetreten |
+
+**Eine Bestätigung gilt nur für den geprüften Datenstand.** Ändert sich danach
+Arbeitszeit, Pause oder Schweregrad, öffnet sich die Feststellung automatisch
+wieder – eine Einordnung von gestern deckt keinen Verstoß von heute zu.
+
+Zum Einordnen genügt nicht die Kenntnis der Kennzeichnung: Der Server prüft,
+ob die betroffene Person im Geltungsbereich von `Time.View` liegt.
 
 ### Abschluss- und Korrekturworkflow
 
