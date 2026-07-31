@@ -5155,7 +5155,7 @@ def admin_system_license(request: Request, db: Session = Depends(database.get_db
         license_config=licensing.load_config(),
         default_server_url=licensing.DEFAULT_SERVER_URL,
         feature_labels=licensing.FEATURES,
-        check_interval_hours=licensing.CHECK_INTERVAL_HOURS,
+        check_interval_label=licensing.check_interval_label(),
         license_request_url=licensing.license_request_url(db),
     )
 
@@ -5188,6 +5188,36 @@ def admin_system_license_activate(
         url=_build_redirect("/admin/system/license", msg="Lizenz aktiviert"),
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+@app.post("/admin/system/license/refresh")
+def admin_system_license_refresh(request: Request, db: Session = Depends(database.get_db)):
+    """„Lizenz aktualisieren" – den aktuellen Stand sofort vom Server holen.
+
+    Wirkt sofort: Ein frisch signiertes Dokument ersetzt das gespeicherte, eine
+    aufgehobene Sperre endet augenblicklich. Ist der Server nicht erreichbar,
+    bleibt die hinterlegte Lizenz in vollem Umfang gültig – gemeldet wird das
+    als Hinweis, nicht als Fehler.
+    """
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    reached, message = licensing.refresh_now()
+    logging_setup.log_audit(
+        "Lizenz aktualisiert" if reached else "Lizenzaktualisierung ohne Serverkontakt",
+        user=user,
+        detail=message,
+    )
+    if reached:
+        target = _build_redirect("/admin/system/license", msg=message)
+    else:
+        target = _build_redirect(
+            "/admin/system/license",
+            error=(
+                f"{message} Die hinterlegte Lizenz gilt unverändert weiter."
+            ),
+        )
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/system/license/recheck")

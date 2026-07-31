@@ -85,29 +85,6 @@ dieses Release.
 
 ## Behoben
 
-**Auftragsbezogenes Stempeln lief ohne Lizenz weiter.** Web und Stempel-App
-boten weiterhin an, auf eine Firma bzw. einen Auftrag zu stempeln – obwohl das
-zum Baustein `orders` gehört. Der Grund: `/punch` war bewusst ganz von der
-Middleware ausgenommen, damit eine Lizenzfrage niemals das Stempeln blockiert.
-Genau darin lag die Lücke.
-
-Jetzt gilt fein getrennt:
-
-| Aktion | Ohne `orders` |
-|---|---|
-| Arbeitszeit starten/beenden, Pausen, Kommentare | offen |
-| Auftrag starten (`start_company`) | abgewiesen |
-| Firma bei einem Nachtrag angeben | abgewiesen |
-| **Auftrag beenden** (`end_company`) | **offen** |
-
-Dass „Auftrag beenden" offen bleibt, ist Absicht: Läuft eine Lizenz mitten im
-Auftrag aus, muss sich die laufende Buchung schließen lassen. Sonst hinge sie
-fest und es ginge Arbeitszeit verloren.
-
-Aus der Oberfläche verschwindet der Auftragsteil vollständig – Dashboard,
-Mobilansicht und die Offline-Synchronisation liefern ohne `orders` keine
-Firmenliste und `create_companies: false`.
-
 `GET /api/users/{id}/excel` war nicht lizenzpflichtig. Der Endpunkt ist eine
 Auswertung, ließ sich am Pfadpräfix aber nicht von der Benutzer-API
 unterscheiden, die zur Basis gehört – der Export lief deshalb an der
@@ -124,7 +101,7 @@ Middleware vorbei. Sie kennt jetzt zusätzlich Muster für solche Einzelfälle.
 
 ## Tests
 
-`tests/test_v0121.py` – 33 Tests: jeder zubuchbare Bereich ohne Lizenz zu
+`tests/test_v0121.py` – 27 Tests: jeder zubuchbare Bereich ohne Lizenz zu
 (Oberfläche mit 303 auf das Dashboard, API mit 402), Basis offen, Navigation
 ohne die gesperrten Punkte, Benutzeranlage abgewiesen, Stempeln und Anmelden
 weiterhin möglich, abgelaufene und ungültige Lizenz schalten nichts frei, eine

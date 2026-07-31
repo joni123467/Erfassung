@@ -434,7 +434,7 @@ def test_check_is_due_only_after_the_interval(licensing, keypair):
     assert licensing.due_for_check() is False
 
     stale = datetime.now(tz=timezone.utc) - timedelta(
-        hours=licensing.CHECK_INTERVAL_HOURS + 1
+        minutes=licensing.check_interval_minutes() + 1
     )
     _store(licensing, _document(keypair[0], licensing.deployment_id()),
            last_contact_at=stale.isoformat())

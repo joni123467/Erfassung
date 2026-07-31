@@ -148,7 +148,7 @@
                     <th>Letzter Serverkontakt</th>
                     <td>
                         {{ state.last_contact_at.strftime('%d.%m.%Y %H:%M') if state.last_contact_at else '–' }}
-                        <small>(automatisch alle {{ check_interval_hours }} Stunden)</small>
+                        <small>(automatisch bei jedem Start und danach alle {{ check_interval_label }})</small>
                     </td>
                 </tr>
             </tbody>
@@ -228,9 +228,13 @@
 <section class="card">
     <h2>Verwaltung</h2>
     <div class="card-header__actions">
+        <form method="post" action="/admin/system/license/refresh">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+            <button type="submit" class="button primary">Lizenz aktualisieren</button>
+        </form>
         <form method="post" action="/admin/system/license/recheck">
             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-            <button type="submit" class="button">Erneut prüfen</button>
+            <button type="submit" class="button">Neu aktivieren</button>
         </form>
         <form method="post" action="/admin/system/license/deactivate"
               onsubmit="return confirm('Lizenz entfernen und den Aktivierungsplatz freigeben?');">
@@ -239,11 +243,21 @@
         </form>
     </div>
     <p class="card-header__hint">
-        <strong>Erneut prüfen</strong> holt ein frisches Lizenzdokument vom Server –
-        nötig nach einer Verlängerung oder Erweiterung. Der Aufruf ist idempotent und
-        verbraucht keinen weiteren Aktivierungsplatz.
+        <strong>Lizenz aktualisieren</strong> holt den aktuellen Stand sofort vom
+        Lizenzserver: frisches Lizenzdokument, geänderte Benutzerzahl, geänderte
+        Laufzeit, geänderte Bausteine, aufgehobene Sperre. Was sich geändert hat,
+        steht anschließend in der Rückmeldung. Nötig ist der Knopf nicht – dieselbe
+        Abfrage läuft bei jedem Start und danach alle {{ check_interval_label }} von
+        selbst –, er nimmt nur die Wartezeit.
+        <strong>Neu aktivieren</strong> wiederholt die vollständige Aktivierung; das
+        hilft, wenn der Lizenzserver gewechselt hat. Beide Aufrufe sind idempotent und
+        verbrauchen keinen weiteren Aktivierungsplatz.
         <strong>Lizenz entfernen</strong> gibt den Platz beim Lizenzserver frei, damit
         eine andere Installation aktiviert werden kann.
+    </p>
+    <p class="card-header__hint">
+        Ist der Lizenzserver nicht erreichbar, ändert sich <strong>nichts</strong>:
+        Die hinterlegte Lizenz bleibt in vollem Umfang gültig, bis sie abläuft.
     </p>
     <p class="card-header__hint">
         Hinweis zur Reichweite: Die Aktivierung verhindert weitere reguläre

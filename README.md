@@ -2,7 +2,16 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.12.1`
+**Version:** `0.12.2`
+
+> Seit 0.12.2: **Lizenzänderungen wirken schnell.** Die Nachfrage läuft
+> **stündlich** statt täglich und zusätzlich **bei jedem Start**; der neue
+> Knopf **„Lizenz aktualisieren"** holt den Stand sofort und nennt, was sich
+> geändert hat. Behoben: Auftragsbezogenes Stempeln lief ohne den Baustein
+> `orders` weiter – Firmen- und Auftragsauswahl sind jetzt gesperrt, „Auftrag
+> beenden" und das reine Stempeln bleiben offen. Ein unerreichbarer
+> Lizenzserver nimmt weiterhin **nichts** weg. Details in
+> [`docs/RELEASE_NOTES_0.12.2.md`](docs/RELEASE_NOTES_0.12.2.md).
 
 > Seit 0.12.1: **Ohne Lizenz keine zubuchbare Funktion.** 0.12.0 hatte eine
 > unlizenzierte Installation offen gelassen – damit war die Lizenz folgenlos,
@@ -584,13 +593,25 @@ eigenen Daten aussperren.
 
 ### Regelmäßige Prüfung
 
-Einmal täglich fragt die Installation beim Lizenzserver nach
-(`POST /v1/activations/state`) und bekommt dabei ein frisch signiertes
-Dokument. Änderungen an Benutzerzahl, Laufzeit oder Bausteinen wirken damit
-**ohne Zutun des Kunden**, in der Regel binnen eines Tages.
+Die Installation fragt beim Lizenzserver nach (`POST /v1/activations/state`)
+und bekommt dabei ein frisch signiertes Dokument. Änderungen an Benutzerzahl,
+Laufzeit oder Bausteinen wirken damit **ohne Zutun des Kunden**:
 
-Den Zeitpunkt des letzten Kontakts zeigt die Lizenzseite. „Erneut prüfen“
-stößt die Abfrage sofort an.
+| Auslöser | Wirkt |
+|---|---|
+| Knopf „Lizenz aktualisieren“ | sofort |
+| Neustart des Containers | sofort |
+| selbsttätige Nachfrage | spätestens nach einer Stunde |
+
+Das Intervall lässt sich über `ERFASSUNG_LICENSE_CHECK_MINUTES` einstellen
+(Standard 60, Untergrenze 5). Den Zeitpunkt des letzten Kontakts zeigt die
+Lizenzseite.
+
+**„Lizenz aktualisieren“** holt den Stand sofort und nennt in der Rückmeldung,
+was sich geändert hat – etwa „Benutzer 5 → 25; neu: Urlaubsplanung“.
+**„Neu aktivieren“** wiederholt die vollständige Aktivierung, etwa nach einem
+Wechsel des Lizenzservers. Beides ist idempotent und verbraucht keinen
+weiteren Aktivierungsplatz.
 
 ### Wenn der Lizenzserver ausfällt
 
@@ -598,6 +619,11 @@ stößt die Abfrage sofort an.
 Server lassen die gespeicherte Lizenz unverändert weiterlaufen – die Prüfung
 ist ohnehin offline. Der Vorfall landet in `license.log`, sonst merkt niemand
 etwas. Nur eine *ausdrückliche* Sperrmeldung des Servers ändert etwas.
+
+Das gilt für jeden Weg gleichermaßen: stündliche Nachfrage, Prüfung beim
+Start und „Lizenz aktualisieren“ können nichts wegnehmen. Auch aus 24
+erfolglosen Versuchen am Tag wird keine Sperre; die Lizenz bleibt in vollem
+Umfang gültig, bis sie abläuft.
 
 ### Wenn eine Lizenz gesperrt wird
 
