@@ -439,6 +439,13 @@ Eintrag fehlt.
   umbruchfähige Paragraphs mit Escaping.
 - **Changelog**: jede nutzersichtbare Änderung in `CHANGELOG.md`
   dokumentieren (Keep-a-Changelog-Format, deutsch).
+- **Standorte gehören zu genau einer Firma.** Angeboten werden sie nur dort,
+  wo eine Firma feststeht (Auftragsdialog, Nachtrag, Buchung bearbeiten) –
+  beim Schnellstempeln gibt es nur „Vor Ort" und „Remote". Serverseitig prüft
+  `_resolve_work_location(..., company_id=…)`, dass der Standort zur gebuchten
+  Firma gehört; das JavaScript ist nur Bedienkomfort. Bei `/punch` steht die
+  Firma erst nach Auswertung der Aktion fest, deshalb wird der Einsatzort dort
+  und nicht vorab aufgelöst.
 - **Einsatzort**: `TimeEntry.location_label` prüft `location_id`, bevor es auf
   die Beziehung `location` zugreift. Das ist Absicht – ohne diesen Vorabtest
   löst jede Buchungsliste je Zeile eine Abfrage aus, und an einer abgelösten

@@ -2,12 +2,18 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.13.0`
+**Version:** `0.13.1`
+
+> Seit 0.13.1: **Standorte gehören zu ihrer Firma.** Schnell stempeln bietet
+> wieder nur „Vor Ort" und „Remote"; im Auftragsdialog erscheinen ausschließlich
+> die Standorte der gewählten Firma, und deren Hauptstandort ist vorausgewählt.
+> Firmenfremde Standorte sind nicht mehr wählbar – der Server prüft das nach.
+> Details in [`docs/RELEASE_NOTES_0.13.1.md`](docs/RELEASE_NOTES_0.13.1.md).
 
 > Seit 0.13.0: **Standorte statt „Vor Ort“** – jede Firma kann beliebig viele
 > Standorte mit Anschrift führen, und beim Stempeln lässt sich der Standort
-> direkt wählen. Eine Firma kann als **eigener Betrieb** markiert werden; ihre
-> Standorte stehen auch beim Stempeln ohne Auftrag zur Wahl. Ohne gepflegte
+> direkt wählen. Eine Firma kann als **eigener Betrieb** markiert werden, damit
+> interne Zeit von Kundenzeit unterscheidbar bleibt. Ohne gepflegte
 > Standorte bleibt es beim gewohnten Umschalter „Remote / Vor Ort“. Details in
 > [`docs/RELEASE_NOTES_0.13.0.md`](docs/RELEASE_NOTES_0.13.0.md).
 
@@ -501,13 +507,12 @@ Sind an einer Firma **Standorte** hinterlegt, wird aus dem Umschalter eine
 gleiche Farben:
 
 ```
-● Einsatzort  [ Vor Ort ▾ ]
-                Vor Ort
-                Remote
-                ── Wir GmbH ──────
-                Büro Hamburg · Hamburg
-                ── Müller GmbH ───
-                Werk Nord · Kiel
+Firma auswählen  [ Müller GmbH ▾ ]
+● Einsatzort       [ Werk Nord · Kiel ▾ ]
+                     Vor Ort
+                     Remote
+                     Werk Nord · Kiel
+                     Werk Süd · Ulm
 ```
 
 Gepflegt werden sie unter Administration → Firmen → *Firma bearbeiten*
@@ -515,10 +520,19 @@ Gepflegt werden sie unter Administration → Firmen → *Firma bearbeiten*
 automatisch **Hauptstandort** und ist vorausgewählt; ein Standort lässt sich
 **schließen** statt löschen und bleibt dann in Auswertungen erhalten.
 
-Eine Firma kann als **eigener Betrieb** markiert werden. Ihre Standorte stehen
-auch beim Stempeln **ohne Auftrag** zur Wahl – für die eigenen Büros – und
-erscheinen in der Liste oben. Der Einsatzort hängt dabei **nicht** an der
-gewählten Firma: Wer für Kunde A arbeitet, kann im eigenen Büro sitzen.
+Ein Standort gehört zu **genau einer Firma**. Angeboten wird er deshalb nur
+im Auftragsdialog, sobald die Firma gewählt ist – beim Wechsel der Firma
+tauscht die Liste, und der **Hauptstandort** ist vorausgewählt. Beim
+**Schnellstempeln** ohne Auftrag gibt es keine Firma und damit nur „Vor Ort"
+und „Remote".
+
+Eine Firma kann als **eigener Betrieb** markiert werden. Das trennt interne
+Zeit in Auswertungen von Kundenzeit; wer im eigenen Büro arbeitet, startet
+einen Auftrag auf den eigenen Betrieb.
+
+Der Server nimmt einen Standort nur an, wenn er zur gebuchten Firma gehört –
+ein veraltetes oder manipuliertes Formular kann keinen fremden Standort
+unterschieben.
 
 Ohne gepflegte Standorte bleibt alles beim gewohnten Umschalter. Ein
 unbekannter oder geschlossener Standort wird beim Stempeln verworfen und gilt

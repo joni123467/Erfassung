@@ -1696,7 +1696,7 @@ def _build_dashboard_context(db: Session, user: models.User):
         "active_entry": active_entry,
         "metrics_month": reference_month.replace(day=1),
         "can_create_companies": _can_create_companies(user),
-        "location_options": _location_options(db),
+        "location_catalogue_data": _location_catalogue(db),
         "can_submit_manual_entries": _can_submit_manual_entries(user),
         "can_edit_own_notes": _can_edit_own_notes(user),
         "can_request_vacations": _can_request_vacations(user),
@@ -1905,7 +1905,10 @@ def submit_time_entry(
     remote_value, location_value = (False, None)
     if _can_flag_remote(user):
         remote_value, location_value = _resolve_work_location(
-            db, work_location, fallback_remote=_parse_checkbox(is_remote)
+            db,
+            work_location,
+            fallback_remote=_parse_checkbox(is_remote),
+            company_id=company_value,
         )
     try:
         entry = schemas.TimeEntryCreate(
@@ -2044,20 +2047,21 @@ def mobile_sync_data(
             }
             for company in companies
         ] if orders_licensed else [],
-        # Standorte für die Offline-Auswahl. Ohne sie stünde man auf der
-        # Baustelle ohne Netz vor einer leeren Liste.
+        # Standorte für die Offline-Auswahl, mit Firmenbezug: Die Liste im
+        # Auftragsdialog zeigt nur die Standorte der gewählten Firma.
         "locations": [
             {
                 "id": location.id,
-                "company_id": location.company_id,
-                "company_name": company_name,
+                "company_id": company.id,
+                "company_name": company.name,
                 "name": location.name,
+                "city": location.city or "",
                 "address": location.address_line,
                 "is_primary": bool(location.is_primary),
             }
-            for company_name, locations in _location_options(db)
-            for location in locations
-        ] if orders_licensed else [],
+            for company in (crud.get_companies(db) if orders_licensed else [])
+            for location in company.active_locations
+        ],
         "entries": [_serialize_mobile_entry(entry) for entry in entries],
         "vacations": (
             [_serialize_mobile_vacation(vacation) for vacation in vacations]
@@ -2217,14 +2221,29 @@ def punch_action(
     # Einsatzort nur berücksichtigen, wenn das Feld für den Benutzer
     # freigeschaltet ist – sonst bleibt es bei „vor Ort".
     remote_allowed = _can_flag_remote(user)
-    remote_value, location_value = (False, None)
-    if remote_allowed:
-        remote_value, location_value = _resolve_work_location(
-            db, work_location, fallback_remote=_parse_checkbox(is_remote)
+
+    def _work_location(company_id: Optional[int]) -> tuple[bool, Optional[int]]:
+        """Einsatzort für **diese** Firma auflösen.
+
+        Die Firma steht erst fest, wenn die Aktion ausgewertet ist (bei
+        ``start_company`` etwa nach dem Anlegen einer neuen Firma). Deshalb
+        wird der Einsatzort hier und nicht vorab bestimmt – sonst könnte ein
+        Standort an einer Buchung landen, zu deren Firma er nicht gehört.
+        """
+        if not remote_allowed:
+            return False, None
+        return _resolve_work_location(
+            db,
+            work_location,
+            fallback_remote=_parse_checkbox(is_remote),
+            company_id=company_id,
         )
+
+    remote_value, location_value = _work_location(None)
 
     def _safe_start_running_entry(*, company_id: Optional[int] = None, notes_value: str = "") -> bool:
         nonlocal error
+        entry_remote, entry_location = _work_location(company_id)
         try:
             crud.start_running_entry(
                 db,
@@ -2232,8 +2251,8 @@ def punch_action(
                 started_at=now,
                 company_id=company_id,
                 notes=notes_value,
-                is_remote=remote_value,
-                location_id=location_value,
+                is_remote=entry_remote,
+                location_id=entry_location,
             )
             return True
         except ValueError as exc:
@@ -2390,12 +2409,14 @@ def punch_action(
         if target_entry is None:
             error = "Keine beendete Buchung zum Bearbeiten gefunden."
         else:
+            # Der Einsatzort gehört zur Firma **dieser** Buchung.
+            notes_remote, notes_location = _work_location(target_entry.company_id)
             crud.update_time_entry_notes(
                 db,
                 target_entry,
                 notes.strip(),
-                is_remote=remote_value if remote_allowed else None,
-                location_id=location_value,
+                is_remote=notes_remote if remote_allowed else None,
+                location_id=notes_location,
                 # Nur wenn der Einsatzort überhaupt mitgeschickt wurde; ein
                 # reiner Kommentar-Nachtrag lässt ihn unangetastet.
                 set_location=remote_allowed and bool((work_location or "").strip()),
@@ -2788,30 +2809,49 @@ def _can_approve_manual_entries(user: models.User) -> bool:
     return permission_service.has(user, "Time.Approve")
 
 
-def _location_options(db: Session) -> list[tuple[str, list[models.CompanyLocation]]]:
-    """Auswählbare Einsatzorte, nach Firma gruppiert – eigener Betrieb zuerst.
+def _locations_of(db: Session, company_id: Optional[int]) -> list[models.CompanyLocation]:
+    """Aktive Standorte **genau dieser** Firma – Hauptstandort zuerst.
 
-    Leer, wenn nichts gepflegt oder der Baustein ``orders`` nicht lizenziert
-    ist. Dann bleibt es beim Umschalter „Remote / Vor Ort" wie vor 0.13.0.
+    Ein Standort gehört zu einer Firma. Wer einen Auftrag bei Kunde A stempelt,
+    darf keinen Standort von Kunde B wählen können; ohne Firma gibt es
+    entsprechend nichts zu wählen.
+    """
+    if company_id is None or not _can_clock_on_orders():
+        return []
+    return crud.get_company_locations(db, int(company_id), only_active=True)
 
-    Die Liste hängt bewusst **nicht** an der gewählten Firma: Wer für Kunde A
-    arbeitet, kann trotzdem im eigenen Büro sitzen. Eine Kopplung wäre eine
-    falsche Einschränkung – und bräuchte JavaScript.
+
+def _location_catalogue(db: Session) -> dict[str, list[dict[str, object]]]:
+    """Standorte je Firma für die Oberfläche: ``{"<firmen-id>": [...]}``.
+
+    Wird als JSON in die Seite gelegt, damit die Auswahl beim Wechsel der Firma
+    sofort umschaltet – ohne Nachladen und damit auch offline.
     """
     if not _can_clock_on_orders():
-        return []
-    groups: list[tuple[str, list[models.CompanyLocation]]] = []
-    for company in sorted(
-        crud.get_companies(db), key=lambda item: (not item.is_internal, item.name.lower())
-    ):
+        return {}
+    catalogue: dict[str, list[dict[str, object]]] = {}
+    for company in crud.get_companies(db):
         locations = company.active_locations
-        if locations:
-            groups.append((company.name, locations))
-    return groups
+        if not locations:
+            continue
+        catalogue[str(company.id)] = [
+            {
+                "id": location.id,
+                "name": location.name,
+                "city": location.city or "",
+                "is_primary": bool(location.is_primary),
+            }
+            for location in locations
+        ]
+    return catalogue
 
 
 def _resolve_work_location(
-    db: Session, value: Optional[str], *, fallback_remote: bool
+    db: Session,
+    value: Optional[str],
+    *,
+    fallback_remote: bool,
+    company_id: Optional[int] = None,
 ) -> tuple[bool, Optional[int]]:
     """Formularwert des Einsatzorts zu ``(is_remote, location_id)`` auflösen.
 
@@ -2819,8 +2859,13 @@ def _resolve_work_location(
     Feld ganz, zählt der alte Haken ``is_remote`` – so bleiben Buchungen aus
     der Offline-Warteschlange gültig, die noch vor dem Update entstanden sind.
 
-    Ein unbekannter, gesperrter oder nicht lizenzierter Standort wird
-    verworfen und gilt als „vor Ort"; abgewiesen wird deshalb nichts.
+    Ein Standort zählt nur, wenn er zur gebuchten Firma gehört: Ein
+    manipuliertes oder veraltetes Formular darf keinen firmenfremden Standort
+    unterschieben. Ohne Firma gibt es keinen Standort.
+
+    Verworfen statt abgewiesen: Ein unbekannter, geschlossener, firmenfremder
+    oder nicht lizenzierter Standort gilt als „vor Ort". Eine Stempelung darf
+    nie an einer Stammdatenfrage scheitern.
     """
     raw = (value or "").strip()
     if not raw:
@@ -2833,10 +2878,12 @@ def _resolve_work_location(
         location_id = int(raw)
     except ValueError:
         return bool(fallback_remote), None
-    if not _can_clock_on_orders():
-        return bool(fallback_remote), None
+    if not _can_clock_on_orders() or company_id is None:
+        return False, None
     location = crud.get_company_location(db, location_id)
     if location is None or not location.is_active:
+        return False, None
+    if int(location.company_id) != int(company_id):
         return False, None
     return False, int(location.id)
 
@@ -4473,7 +4520,8 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
         # Einsatzort nur anbieten, wenn er für den Benutzer freigeschaltet ist
         # oder die Buchung bereits als Remote erfasst wurde.
         remote_editable=_can_flag_remote(entry.user) or bool(entry.is_remote),
-        location_options=_location_options(db),
+        location_catalogue_data=_location_catalogue(db),
+        entry_locations=_locations_of(db, entry.company_id),
     )
 
 
@@ -4528,7 +4576,10 @@ def update_time_entry_html(
     remote_editable = _can_flag_remote(crud.get_user(db, user_id)) or remote_current
     if remote_editable:
         remote_value, location_value = _resolve_work_location(
-            db, work_location, fallback_remote=_parse_checkbox(is_remote)
+            db,
+            work_location,
+            fallback_remote=_parse_checkbox(is_remote),
+            company_id=company_value,
         )
     else:
         remote_value, location_value = remote_current, location_current

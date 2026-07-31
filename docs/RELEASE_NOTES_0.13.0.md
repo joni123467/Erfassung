@@ -54,12 +54,13 @@ Pille** – gleicher Punkt, gleiche Beschriftung, gleiche Farben:
 ```
 
 Bewusst **ein** Bedienelement statt Schalter *und* Liste: Auf dem Handy ist
-jeder zusätzliche Griff einer zu viel. Die eigenen Standorte stehen oben, weil
-sie am häufigsten gebraucht werden.
+jeder zusätzliche Griff einer zu viel.
 
-Der Einsatzort hängt dabei **nicht** an der gewählten Firma. Wer für Kunde A
-arbeitet, kann trotzdem im eigenen Büro sitzen – eine Kopplung wäre eine
-falsche Einschränkung (und bräuchte JavaScript).
+> ⚠️ **Gilt nur für 0.13.0.** Die Auswahl hing hier noch nicht an der
+> gewählten Firma – auch das Schnellstempeln zeigte Standorte, und
+> firmenfremde Standorte waren wählbar. Seit 0.13.1 gehört ein Standort zu
+> genau einer Firma; siehe
+> [`RELEASE_NOTES_0.13.1.md`](RELEASE_NOTES_0.13.1.md).
 
 Der laufende Zustand zeigt den Standort samt Anschrift, Listen und Exporte
 zeigen statt „Vor Ort“ den Standortnamen. Die Spalte „Ort“ in PDF und Excel

@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% from "_components.html" import location_toggle, location_picker %}
+{% from "_components.html" import location_toggle, location_picker, location_catalogue %}
 {% block title %}Dashboard – Erfassung{% endblock %}
 {% block content %}
+{{ location_catalogue(location_catalogue_data) }}
 {% set vacation_minutes = metrics.vacation_minutes %}
 {% set ist_minutes = metrics.total_work_minutes + vacation_minutes %}
 {% set soll_minutes = metrics.target_minutes %}
@@ -126,7 +127,7 @@
                         {% if can_flag_remote %}
                             {# Der Einsatzort gilt für die Buchung, nicht für einen
                                einzelnen Knopf – deshalb eine eigene Zeile darüber. #}
-                            <div class="punch-controls__location">{{ location_picker(options=location_options) }}</div>
+                            <div class="punch-controls__location">{{ location_toggle() }}</div>
                         {% endif %}
                         <div class="punch-controls__row">
                             <button type="submit" class="button primary">Arbeitszeit starten</button>
@@ -179,7 +180,7 @@
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
                             {% if can_flag_remote %}
-                                {{ location_picker(options=location_options, block=True) }}
+                                {{ location_picker(catalogue=location_catalogue_data, block=True) }}
                             {% endif %}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
@@ -470,7 +471,7 @@
             <textarea name="notes" rows="2" placeholder="z. B. Projekt oder Kunde"></textarea>
         </label>
         {% if can_flag_remote %}
-            <div class="full-width">{{ location_picker(options=location_options) }}</div>
+            <div class="full-width">{{ location_picker(catalogue=location_catalogue_data) }}</div>
         {% endif %}
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
