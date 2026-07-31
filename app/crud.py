@@ -637,15 +637,23 @@ def update_time_entry_notes(
     notes: str,
     *,
     is_remote: Optional[bool] = None,
+    location_id: Optional[int] = None,
+    set_location: bool = False,
 ) -> models.TimeEntry:
     """Kommentar (und optional den Einsatzort) einer Buchung nachtragen.
 
     ``is_remote=None`` lässt den Einsatzort unverändert – so ändert ein reiner
-    Kommentar-Nachtrag die Angabe nicht versehentlich.
+    Kommentar-Nachtrag die Angabe nicht versehentlich. Für den Standort gilt
+    dasselbe über ``set_location``: Nur wenn er ausdrücklich mitgeschickt
+    wurde, wird er gesetzt (``None`` heißt dann „kein Standort").
     """
     entry.notes = (notes or "")[:255]
     if is_remote is not None:
         entry.is_remote = bool(is_remote)
+    if set_location:
+        entry.location_id = location_id
+        if location_id is not None:
+            entry.deleted_location_name = None
     db.commit()
     db.refresh(entry)
     return entry
@@ -663,11 +671,13 @@ def start_running_entry(
     company_id: Optional[int] = None,
     notes: str = "",
     is_remote: bool = False,
+    location_id: Optional[int] = None,
 ) -> models.TimeEntry:
     normalized = _normalize_time(started_at)
     entry = schemas.TimeEntryCreate(
         user_id=user_id,
         company_id=company_id,
+        location_id=location_id,
         work_date=normalized.date(),
         start_time=normalized.time(),
         end_time=normalized.time(),
@@ -1269,6 +1279,10 @@ def delete_company(db: Session, company_id: int) -> bool:
         return False
 
     company_name = db_company.name
+    # Standorte verschwinden mit der Firma – ihre Namen bleiben an den
+    # Buchungen erhalten, sonst verlöre eine alte Buchung ihre Aussage.
+    for location in list(db_company.locations):
+        _stamp_deleted_location(db, location)
     (
         db.query(models.TimeEntry)
         .filter(models.TimeEntry.company_id == company_id)
@@ -1282,6 +1296,131 @@ def delete_company(db: Session, company_id: int) -> bool:
     )
 
     db.delete(db_company)
+    db.commit()
+    return True
+
+
+# --- Standorte einer Firma -------------------------------------------------
+
+def _stamp_deleted_location(db: Session, location: models.CompanyLocation) -> None:
+    """Standortnamen an den betroffenen Buchungen festhalten.
+
+    Ohne das stünde nach dem Löschen eines Standorts in einer zwei Jahre alten
+    Buchung nur noch „Vor Ort" – die Aussage wäre verloren.
+    """
+    (
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.location_id == location.id)
+        .update(
+            {
+                models.TimeEntry.location_id: None,
+                models.TimeEntry.deleted_location_name: location.name,
+            },
+            synchronize_session=False,
+        )
+    )
+
+
+def get_company_location(db: Session, location_id: int) -> Optional[models.CompanyLocation]:
+    return (
+        db.query(models.CompanyLocation)
+        .filter(models.CompanyLocation.id == location_id)
+        .first()
+    )
+
+
+def get_company_locations(
+    db: Session, company_id: int, *, only_active: bool = False
+) -> List[models.CompanyLocation]:
+    query = db.query(models.CompanyLocation).filter(
+        models.CompanyLocation.company_id == company_id
+    )
+    if only_active:
+        query = query.filter(models.CompanyLocation.is_active.is_(True))
+    return query.order_by(
+        models.CompanyLocation.is_primary.desc(), models.CompanyLocation.name
+    ).all()
+
+
+def get_internal_company(db: Session) -> Optional[models.Company]:
+    """Die als eigener Betrieb markierte Firma – ``None``, wenn es keine gibt.
+
+    Deren Standorte stehen auch beim Stempeln **ohne** Auftrag zur Wahl.
+    """
+    return (
+        db.query(models.Company)
+        .filter(models.Company.is_internal.is_(True))
+        .order_by(models.Company.name)
+        .first()
+    )
+
+
+def get_internal_locations(db: Session) -> List[models.CompanyLocation]:
+    """Aktive Standorte des eigenen Betriebs; leer, wenn keiner gepflegt ist."""
+    company = get_internal_company(db)
+    if company is None:
+        return []
+    return get_company_locations(db, company.id, only_active=True)
+
+
+def _clear_primary(db: Session, company_id: int, *, keep: Optional[int] = None) -> None:
+    query = db.query(models.CompanyLocation).filter(
+        models.CompanyLocation.company_id == company_id
+    )
+    if keep is not None:
+        query = query.filter(models.CompanyLocation.id != keep)
+    query.update({models.CompanyLocation.is_primary: False}, synchronize_session=False)
+
+
+def create_company_location(
+    db: Session, company_id: int, location: schemas.CompanyLocationCreate
+) -> models.CompanyLocation:
+    values = location.model_dump()
+    db_location = models.CompanyLocation(company_id=company_id, **values)
+    # Der erste Standort einer Firma ist automatisch der Hauptstandort – sonst
+    # müsste beim Stempeln jedes Mal ausgewählt werden.
+    existing = get_company_locations(db, company_id)
+    if not existing:
+        db_location.is_primary = True
+    db.add(db_location)
+    db.flush()
+    if db_location.is_primary:
+        _clear_primary(db, company_id, keep=db_location.id)
+    db.commit()
+    db.refresh(db_location)
+    return db_location
+
+
+def update_company_location(
+    db: Session, location_id: int, location: schemas.CompanyLocationUpdate
+) -> Optional[models.CompanyLocation]:
+    db_location = get_company_location(db, location_id)
+    if not db_location:
+        return None
+    for key, value in location.model_dump().items():
+        setattr(db_location, key, value)
+    db.flush()
+    if db_location.is_primary:
+        _clear_primary(db, db_location.company_id, keep=db_location.id)
+    db.commit()
+    db.refresh(db_location)
+    return db_location
+
+
+def delete_company_location(db: Session, location_id: int) -> bool:
+    db_location = get_company_location(db, location_id)
+    if not db_location:
+        return False
+    company_id = db_location.company_id
+    was_primary = bool(db_location.is_primary)
+    _stamp_deleted_location(db, db_location)
+    db.delete(db_location)
+    db.flush()
+    if was_primary:
+        # Ohne Hauptstandort gäbe es keine Vorauswahl mehr – der nächste rückt nach.
+        remaining = get_company_locations(db, company_id, only_active=True)
+        if remaining:
+            remaining[0].is_primary = True
     db.commit()
     return True
 

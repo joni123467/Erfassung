@@ -441,6 +441,19 @@ def ensure_schema() -> None:
         table_names = inspector.get_table_names()
         if "companies" not in table_names:
             models.Base.metadata.tables["companies"].create(bind=connection)
+        else:
+            company_columns = {column["name"] for column in inspector.get_columns("companies")}
+            if "is_internal" not in company_columns:
+                # Default 0: Jede vorhandene Firma ist ein Kunde, kein eigener
+                # Betrieb – das Verhalten für Bestandsdaten bleibt gleich.
+                connection.execute(
+                    text("ALTER TABLE companies ADD COLUMN is_internal BOOLEAN DEFAULT 0")
+                )
+                connection.execute(
+                    text("UPDATE companies SET is_internal = 0 WHERE is_internal IS NULL")
+                )
+        if "company_locations" not in table_names:
+            models.Base.metadata.tables["company_locations"].create(bind=connection)
         if "time_entries" in table_names:
             columns = {column["name"] for column in inspector.get_columns("time_entries")}
             if "company_id" not in columns:
@@ -459,6 +472,14 @@ def ensure_schema() -> None:
                 # Default 0: Bestandsbuchungen gelten als vor Ort erfasst.
                 connection.execute(text("ALTER TABLE time_entries ADD COLUMN is_remote BOOLEAN DEFAULT 0"))
                 connection.execute(text("UPDATE time_entries SET is_remote = 0 WHERE is_remote IS NULL"))
+            if "location_id" not in columns:
+                # NULL bleibt NULL: Eine Bestandsbuchung hat keinen Standort und
+                # liest sich weiterhin als „Remote" bzw. „Vor Ort".
+                connection.execute(text("ALTER TABLE time_entries ADD COLUMN location_id INTEGER"))
+            if "deleted_location_name" not in columns:
+                connection.execute(
+                    text("ALTER TABLE time_entries ADD COLUMN deleted_location_name VARCHAR")
+                )
             connection.execute(text("UPDATE time_entries SET is_open = 0 WHERE is_open IS NULL"))
         if "users" in table_names:
             columns = {column["name"] for column in inspector.get_columns("users")}
@@ -1675,6 +1696,7 @@ def _build_dashboard_context(db: Session, user: models.User):
         "active_entry": active_entry,
         "metrics_month": reference_month.replace(day=1),
         "can_create_companies": _can_create_companies(user),
+        "location_options": _location_options(db),
         "can_submit_manual_entries": _can_submit_manual_entries(user),
         "can_edit_own_notes": _can_edit_own_notes(user),
         "can_request_vacations": _can_request_vacations(user),
@@ -1837,6 +1859,7 @@ def submit_time_entry(
     company_id: Optional[str] = Form(None),
     new_company_name: Optional[str] = Form(None),
     is_remote: Optional[str] = Form(None),
+    work_location: Optional[str] = Form(None),
     next_url: str = Form("/time"),
     db: Session = Depends(database.get_db),
 ):
@@ -1879,6 +1902,11 @@ def submit_time_entry(
         except (TypeError, ValueError):
             redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Firmenauswahl")
             return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    remote_value, location_value = (False, None)
+    if _can_flag_remote(user):
+        remote_value, location_value = _resolve_work_location(
+            db, work_location, fallback_remote=_parse_checkbox(is_remote)
+        )
     try:
         entry = schemas.TimeEntryCreate(
             user_id=user.id,
@@ -1892,7 +1920,8 @@ def submit_time_entry(
             notes=notes,
             status=models.TimeEntryStatus.PENDING,
             is_manual=True,
-            is_remote=_can_flag_remote(user) and _parse_checkbox(is_remote),
+            is_remote=remote_value,
+            location_id=location_value,
         )
         _, split_performed = crud.create_manual_time_entry(db, entry)
     except ValueError as exc:
@@ -1927,6 +1956,8 @@ def _serialize_mobile_entry(entry: models.TimeEntry) -> dict[str, object]:
         "notes": entry.notes or "",
         "status": entry.status,
         "is_remote": bool(entry.is_remote),
+        "location_id": entry.location_id,
+        "location_name": entry.location_label,
         "company_id": entry.company_id,
         "company_name": entry.company_display_name if (entry.company or entry.deleted_company_name) else "",
         "worked_minutes": entry.worked_minutes,
@@ -2012,6 +2043,20 @@ def mobile_sync_data(
                 "description": company.description or "",
             }
             for company in companies
+        ] if orders_licensed else [],
+        # Standorte für die Offline-Auswahl. Ohne sie stünde man auf der
+        # Baustelle ohne Netz vor einer leeren Liste.
+        "locations": [
+            {
+                "id": location.id,
+                "company_id": location.company_id,
+                "company_name": company_name,
+                "name": location.name,
+                "address": location.address_line,
+                "is_primary": bool(location.is_primary),
+            }
+            for company_name, locations in _location_options(db)
+            for location in locations
         ] if orders_licensed else [],
         "entries": [_serialize_mobile_entry(entry) for entry in entries],
         "vacations": (
@@ -2146,6 +2191,7 @@ def punch_action(
     entry_id: Optional[str] = Form(None),
     notes: str = Form(""),
     is_remote: Optional[str] = Form(None),
+    work_location: Optional[str] = Form(None),
     next_url: str = Form("/dashboard"),
     client_action_id: Optional[str] = Form(None),
     event_time: Optional[str] = Form(None),
@@ -2171,7 +2217,11 @@ def punch_action(
     # Einsatzort nur berücksichtigen, wenn das Feld für den Benutzer
     # freigeschaltet ist – sonst bleibt es bei „vor Ort".
     remote_allowed = _can_flag_remote(user)
-    remote_value = remote_allowed and _parse_checkbox(is_remote)
+    remote_value, location_value = (False, None)
+    if remote_allowed:
+        remote_value, location_value = _resolve_work_location(
+            db, work_location, fallback_remote=_parse_checkbox(is_remote)
+        )
 
     def _safe_start_running_entry(*, company_id: Optional[int] = None, notes_value: str = "") -> bool:
         nonlocal error
@@ -2183,6 +2233,7 @@ def punch_action(
                 company_id=company_id,
                 notes=notes_value,
                 is_remote=remote_value,
+                location_id=location_value,
             )
             return True
         except ValueError as exc:
@@ -2344,6 +2395,10 @@ def punch_action(
                 target_entry,
                 notes.strip(),
                 is_remote=remote_value if remote_allowed else None,
+                location_id=location_value,
+                # Nur wenn der Einsatzort überhaupt mitgeschickt wurde; ein
+                # reiner Kommentar-Nachtrag lässt ihn unangetastet.
+                set_location=remote_allowed and bool((work_location or "").strip()),
             )
             message = "Kommentar gespeichert."
     else:
@@ -2731,6 +2786,59 @@ def _can_manage_vacations(user: models.User) -> bool:
 
 def _can_approve_manual_entries(user: models.User) -> bool:
     return permission_service.has(user, "Time.Approve")
+
+
+def _location_options(db: Session) -> list[tuple[str, list[models.CompanyLocation]]]:
+    """Auswählbare Einsatzorte, nach Firma gruppiert – eigener Betrieb zuerst.
+
+    Leer, wenn nichts gepflegt oder der Baustein ``orders`` nicht lizenziert
+    ist. Dann bleibt es beim Umschalter „Remote / Vor Ort" wie vor 0.13.0.
+
+    Die Liste hängt bewusst **nicht** an der gewählten Firma: Wer für Kunde A
+    arbeitet, kann trotzdem im eigenen Büro sitzen. Eine Kopplung wäre eine
+    falsche Einschränkung – und bräuchte JavaScript.
+    """
+    if not _can_clock_on_orders():
+        return []
+    groups: list[tuple[str, list[models.CompanyLocation]]] = []
+    for company in sorted(
+        crud.get_companies(db), key=lambda item: (not item.is_internal, item.name.lower())
+    ):
+        locations = company.active_locations
+        if locations:
+            groups.append((company.name, locations))
+    return groups
+
+
+def _resolve_work_location(
+    db: Session, value: Optional[str], *, fallback_remote: bool
+) -> tuple[bool, Optional[int]]:
+    """Formularwert des Einsatzorts zu ``(is_remote, location_id)`` auflösen.
+
+    ``value`` ist ``"remote"``, ``"onsite"`` oder eine Standort-ID. Fehlt das
+    Feld ganz, zählt der alte Haken ``is_remote`` – so bleiben Buchungen aus
+    der Offline-Warteschlange gültig, die noch vor dem Update entstanden sind.
+
+    Ein unbekannter, gesperrter oder nicht lizenzierter Standort wird
+    verworfen und gilt als „vor Ort"; abgewiesen wird deshalb nichts.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return bool(fallback_remote), None
+    if raw == "remote":
+        return True, None
+    if raw == "onsite":
+        return False, None
+    try:
+        location_id = int(raw)
+    except ValueError:
+        return bool(fallback_remote), None
+    if not _can_clock_on_orders():
+        return bool(fallback_remote), None
+    location = crud.get_company_location(db, location_id)
+    if location is None or not location.is_active:
+        return False, None
+    return False, int(location.id)
 
 
 def _can_clock_on_orders() -> bool:
@@ -4106,6 +4214,7 @@ def create_company_html(
     request: Request,
     name: str = Form(...),
     description: str = Form(""),
+    is_internal: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -4116,7 +4225,11 @@ def create_company_html(
     try:
         crud.create_company(
             db,
-            schemas.CompanyCreate(name=name.strip(), description=description.strip()),
+            schemas.CompanyCreate(
+                name=name.strip(),
+                description=description.strip(),
+                is_internal=_parse_checkbox(is_internal),
+            ),
         )
     except IntegrityError:
         db.rollback()
@@ -4133,6 +4246,7 @@ def update_company_html(
     company_id: int,
     name: str = Form(...),
     description: str = Form(""),
+    is_internal: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -4144,7 +4258,11 @@ def update_company_html(
         updated = crud.update_company(
             db,
             company_id,
-            schemas.CompanyUpdate(name=name.strip(), description=description.strip()),
+            schemas.CompanyUpdate(
+                name=name.strip(),
+                description=description.strip(),
+                is_internal=_parse_checkbox(is_internal),
+            ),
         )
     except IntegrityError:
         db.rollback()
@@ -4173,6 +4291,142 @@ def delete_company_html(request: Request, company_id: int, db: Session = Depends
             status_code=status.HTTP_303_SEE_OTHER,
         )
     return RedirectResponse(url="/admin/companies?msg=Firma+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/companies/{company_id}/locations/create")
+def create_company_location_html(
+    request: Request,
+    company_id: int,
+    name: str = Form(...),
+    street: str = Form(""),
+    postal_code: str = Form(""),
+    city: str = Form(""),
+    country: str = Form(""),
+    is_primary: Optional[str] = Form(None),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_companies(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    if not crud.get_company(db, company_id):
+        return RedirectResponse(
+            url="/admin/companies?error=Firma+nicht+gefunden",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    label = name.strip()
+    if not label:
+        return RedirectResponse(
+            url=_build_redirect(
+                f"/admin/companies/{company_id}", error="Bitte eine Bezeichnung angeben."
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    crud.create_company_location(
+        db,
+        company_id,
+        schemas.CompanyLocationCreate(
+            name=label,
+            street=street.strip(),
+            postal_code=postal_code.strip(),
+            city=city.strip(),
+            country=country.strip(),
+            is_primary=_parse_checkbox(is_primary),
+        ),
+    )
+    logging_setup.log_audit("Standort angelegt", user=user, detail=label)
+    return RedirectResponse(
+        url=_build_redirect(f"/admin/companies/{company_id}", msg="Standort angelegt"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/companies/{company_id}/locations/{location_id}/update")
+def update_company_location_html(
+    request: Request,
+    company_id: int,
+    location_id: int,
+    name: str = Form(...),
+    street: str = Form(""),
+    postal_code: str = Form(""),
+    city: str = Form(""),
+    country: str = Form(""),
+    is_primary: Optional[str] = Form(None),
+    is_active: Optional[str] = Form(None),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_companies(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    location = crud.get_company_location(db, location_id)
+    if not location or location.company_id != company_id:
+        return RedirectResponse(
+            url=_build_redirect(
+                f"/admin/companies/{company_id}", error="Standort nicht gefunden."
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    label = name.strip()
+    if not label:
+        return RedirectResponse(
+            url=_build_redirect(
+                f"/admin/companies/{company_id}", error="Bitte eine Bezeichnung angeben."
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    crud.update_company_location(
+        db,
+        location_id,
+        schemas.CompanyLocationUpdate(
+            name=label,
+            street=street.strip(),
+            postal_code=postal_code.strip(),
+            city=city.strip(),
+            country=country.strip(),
+            is_primary=_parse_checkbox(is_primary),
+            is_active=_parse_checkbox(is_active),
+        ),
+    )
+    logging_setup.log_audit("Standort geändert", user=user, detail=label)
+    return RedirectResponse(
+        url=_build_redirect(f"/admin/companies/{company_id}", msg="Standort gespeichert"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/admin/companies/{company_id}/locations/{location_id}/delete")
+def delete_company_location_html(
+    request: Request,
+    company_id: int,
+    location_id: int,
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_manage_companies(user):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    location = crud.get_company_location(db, location_id)
+    if not location or location.company_id != company_id:
+        return RedirectResponse(
+            url=_build_redirect(
+                f"/admin/companies/{company_id}", error="Standort nicht gefunden."
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    label = location.name
+    crud.delete_company_location(db, location_id)
+    logging_setup.log_audit("Standort gelöscht", user=user, detail=label)
+    return RedirectResponse(
+        url=_build_redirect(
+            f"/admin/companies/{company_id}",
+            msg="Standort gelöscht – vorhandene Buchungen behalten den Namen",
+        ),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.get("/admin/time-entries/{entry_id}/edit", response_class=HTMLResponse)
@@ -4219,6 +4473,7 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
         # Einsatzort nur anbieten, wenn er für den Benutzer freigeschaltet ist
         # oder die Buchung bereits als Remote erfasst wurde.
         remote_editable=_can_flag_remote(entry.user) or bool(entry.is_remote),
+        location_options=_location_options(db),
     )
 
 
@@ -4234,6 +4489,7 @@ def update_time_entry_html(
     company_id: Optional[str] = Form(None),
     notes: str = Form(""),
     is_remote: Optional[str] = Form(None),
+    work_location: Optional[str] = Form(None),
     redirect_user: Optional[str] = Form(None),
     next_url: Optional[str] = Form(None),
     confirm_overwrite: Optional[str] = Form(None),
@@ -4268,8 +4524,14 @@ def update_time_entry_html(
     # Andernfalls bleibt der bisherige Wert erhalten, statt still gelöscht zu
     # werden.
     remote_current = bool(existing_entry.is_remote) if existing_entry else False
+    location_current = existing_entry.location_id if existing_entry else None
     remote_editable = _can_flag_remote(crud.get_user(db, user_id)) or remote_current
-    remote_value = _parse_checkbox(is_remote) if remote_editable else remote_current
+    if remote_editable:
+        remote_value, location_value = _resolve_work_location(
+            db, work_location, fallback_remote=_parse_checkbox(is_remote)
+        )
+    else:
+        remote_value, location_value = remote_current, location_current
     payload = schemas.TimeEntryCreate(
         user_id=user_id,
         company_id=company_value,
@@ -4281,6 +4543,7 @@ def update_time_entry_html(
         is_open=False,
         notes=notes,
         is_remote=remote_value,
+        location_id=location_value,
     )
     # Ohne Bestätigung: bei einem neuen Konflikt zuerst nachfragen und
     # auflisten, welche Buchungen überschrieben würden.
@@ -4302,6 +4565,11 @@ def update_time_entry_html(
                     "company_id": company_id or "",
                     "notes": notes,
                     "is_remote": remote_value,
+                    # Der Einsatzort muss die Rückfrage überstehen, sonst
+                    # fiele die Buchung beim Bestätigen auf „vor Ort" zurück.
+                    "work_location": (
+                        str(location_value) if location_value else ("remote" if remote_value else "onsite")
+                    ),
                 },
                 entry_id=entry_id,
                 next_url=_sanitize_next(next_url or "/admin/users", "/admin/users"),

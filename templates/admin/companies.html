@@ -14,20 +14,34 @@
             <tr>
                 <th>Name</th>
                 <th>Beschreibung</th>
+                <th>Standorte</th>
                 <th>Aktionen</th>
             </tr>
             </thead>
             <tbody>
             {% for company in companies %}
                 <tr>
-                    <td>{{ company.name }}</td>
+                    <td>
+                        {{ company.name }}
+                        {% if company.is_internal %}
+                            <span class="tag">eigener Betrieb</span>
+                        {% endif %}
+                    </td>
                     <td>{{ company.description or '-' }}</td>
+                    <td>
+                        {% set active = company.active_locations %}
+                        {% if active %}
+                            {% for location in active %}{{ location.name }}{{ '' if loop.last else ', ' }}{% endfor %}
+                        {% else %}
+                            <span class="text-muted">–</span>
+                        {% endif %}
+                    </td>
                     <td>
                         <a class="button small" href="/admin/companies/{{ company.id }}">Bearbeiten</a>
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="3">Noch keine Firmen angelegt.</td></tr>
+                <tr><td colspan="4">Noch keine Firmen angelegt.</td></tr>
             {% endfor %}
             </tbody>
         </table>

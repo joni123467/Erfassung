@@ -439,6 +439,10 @@ Eintrag fehlt.
   umbruchfähige Paragraphs mit Escaping.
 - **Changelog**: jede nutzersichtbare Änderung in `CHANGELOG.md`
   dokumentieren (Keep-a-Changelog-Format, deutsch).
+- **Einsatzort**: `TimeEntry.location_label` prüft `location_id`, bevor es auf
+  die Beziehung `location` zugreift. Das ist Absicht – ohne diesen Vorabtest
+  löst jede Buchungsliste je Zeile eine Abfrage aus, und an einer abgelösten
+  Buchung (Session bereits geschlossen) schlägt der Zugriff fehl.
 - **Lizenz in Tests**: Aufträge, Urlaubsplanung, Auswertungen und Terminals
   sind ohne gültige Lizenz gesperrt (seit 0.12.1). Jede Testdatei, die diese
   Bereiche aufruft, ruft in ihrer App-Fixture `licensed_env.activate()` auf –

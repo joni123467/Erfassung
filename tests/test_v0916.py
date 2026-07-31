@@ -139,8 +139,8 @@ def _get(entry_id):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.12.2"
-    assert client.get("/health").json()["version"] == "0.12.2"
+    assert client.main.APP_VERSION == "0.13.0"
+    assert client.get("/health").json()["version"] == "0.13.0"
 
 
 # --- the reported case ---------------------------------------------------------

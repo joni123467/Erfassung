@@ -2,7 +2,14 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.12.2`
+**Version:** `0.13.0`
+
+> Seit 0.13.0: **Standorte statt „Vor Ort“** – jede Firma kann beliebig viele
+> Standorte mit Anschrift führen, und beim Stempeln lässt sich der Standort
+> direkt wählen. Eine Firma kann als **eigener Betrieb** markiert werden; ihre
+> Standorte stehen auch beim Stempeln ohne Auftrag zur Wahl. Ohne gepflegte
+> Standorte bleibt es beim gewohnten Umschalter „Remote / Vor Ort“. Details in
+> [`docs/RELEASE_NOTES_0.13.0.md`](docs/RELEASE_NOTES_0.13.0.md).
 
 > Seit 0.12.2: **Lizenzänderungen wirken schnell.** Die Nachfrage läuft
 > **stündlich** statt täglich und zusätzlich **bei jedem Start**; der neue
@@ -468,11 +475,10 @@ Prüfung, die Ablaufprüfung nutzt die lokale Uhr, und wer den Quellcode ändert
 kann die Prüfung entfernen – stehen in
 [`docs/RELEASE_NOTES_0.11.0.md`](docs/RELEASE_NOTES_0.11.0.md).
 
-## Einsatzort (Remote / vor Ort)
+## Einsatzort (Remote / vor Ort / Standort)
 
-Optionales Feld je Buchung: fand der Termin **vor Ort** statt oder **remote**
-(z. B. per Telefon)? Es wird – wie das Zeitkonto – **je Benutzer** in der
-Benutzerverwaltung freigeschaltet:
+Optionales Feld je Buchung: Wo wurde gearbeitet? Es wird – wie das Zeitkonto –
+**je Benutzer** in der Benutzerverwaltung freigeschaltet:
 
 > Administration → Benutzer → *Benutzer* → **Zeitkonto & Buchungen** →
 > „Einsatzort erfassen (Remote / vor Ort)"
@@ -487,6 +493,37 @@ wechselt Farbe und Beschriftung (seit 0.9.22, davor eine Checkbox):
 |---------|-------------|
 | Nicht gesetzt | grau – „Einsatzort · **Vor Ort**" |
 | Gesetzt | blau – „Einsatzort · **Remote**" |
+
+### Standorte (seit 0.13.0)
+
+Sind an einer Firma **Standorte** hinterlegt, wird aus dem Umschalter eine
+**Auswahlliste in derselben Pille** – gleicher Punkt, gleiche Beschriftung,
+gleiche Farben:
+
+```
+● Einsatzort  [ Vor Ort ▾ ]
+                Vor Ort
+                Remote
+                ── Wir GmbH ──────
+                Büro Hamburg · Hamburg
+                ── Müller GmbH ───
+                Werk Nord · Kiel
+```
+
+Gepflegt werden sie unter Administration → Firmen → *Firma bearbeiten*
+(Bezeichnung, Straße, PLZ, Ort, Land). Der **erste Standort** einer Firma wird
+automatisch **Hauptstandort** und ist vorausgewählt; ein Standort lässt sich
+**schließen** statt löschen und bleibt dann in Auswertungen erhalten.
+
+Eine Firma kann als **eigener Betrieb** markiert werden. Ihre Standorte stehen
+auch beim Stempeln **ohne Auftrag** zur Wahl – für die eigenen Büros – und
+erscheinen in der Liste oben. Der Einsatzort hängt dabei **nicht** an der
+gewählten Firma: Wer für Kunde A arbeitet, kann im eigenen Büro sitzen.
+
+Ohne gepflegte Standorte bleibt alles beim gewohnten Umschalter. Ein
+unbekannter oder geschlossener Standort wird beim Stempeln verworfen und gilt
+als „vor Ort" – abgewiesen wird nichts. Standorte gehören zum Lizenzbaustein
+`orders`.
 
 Stellen:
 
@@ -506,14 +543,17 @@ Weitere Eigenschaften:
   in der Offline-Shell ohne JavaScript.
 - **Teilen bleibt konsistent**: Wird eine Buchung durch einen Nachtrag geteilt,
   übernehmen beide Abschnitte den Einsatzort der Ursprungsbuchung.
-- **Anzeige**: Remote-Buchungen tragen in den Buchungslisten, den
-  Zeitübersichten und den Freigaben ein Kennzeichen „Remote" neben der Firma.
-- **Exporte**: PDF und Excel zeigen eine zusätzliche Spalte **„Ort"** (Remote /
-  Vor Ort) – aber nur, wenn im Zeitraum mindestens eine Buchung remote erfasst
-  wurde. Wer den Einsatzort nicht nutzt, bekommt unveränderte Exporte.
-- **Bestandsdaten**: Alle vorhandenen Buchungen gelten als vor Ort. Wird die
-  Option für einen Benutzer wieder deaktiviert, bleiben bereits erfasste
-  Remote-Kennzeichen erhalten (sie werden nur nicht mehr neu vergeben).
+- **Anzeige**: Buchungslisten, Zeitübersichten und Freigaben tragen neben der
+  Firma ein Kennzeichen – den **Standortnamen**, sonst „Remote". Das Dashboard
+  zeigt bei laufender Buchung zusätzlich die Anschrift.
+- **Exporte**: PDF und Excel zeigen eine zusätzliche Spalte **„Ort"** – aber
+  nur, wenn im Zeitraum mindestens eine Buchung einen Einsatzort trägt
+  (Standort oder Remote). Wer ihn nicht nutzt, bekommt unveränderte Exporte.
+- **Bestandsdaten**: Alle vorhandenen Buchungen gelten als vor Ort und ohne
+  Standort. Wird die Option für einen Benutzer wieder deaktiviert, bleiben
+  bereits erfasste Angaben erhalten (sie werden nur nicht mehr neu vergeben).
+- **Historie**: Wird ein Standort gelöscht, bleibt sein Name an den
+  betroffenen Buchungen erhalten („Gelöscht (Werk Nord)") – wie bei Firmen.
 
 ## Urlaub
 
@@ -547,7 +587,7 @@ Zubuchbar sind vier Bausteine:
 
 | Baustein | Schaltet frei |
 |---|---|
-| `orders` | Aufträge, Firmen, auftragsbezogenes Stempeln |
+| `orders` | Aufträge, Firmen, Standorte, auftragsbezogenes Stempeln |
 | `vacation` | Urlaubsanträge, Urlaubskonten, Urlaubsfreigaben |
 | `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
 | `terminals` | RFID-Terminals und Geräte-Synchronisation |

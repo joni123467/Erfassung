@@ -11,6 +11,9 @@ from . import models
 class CompanyBase(BaseModel):
     name: str
     description: str = ""
+    #: Der eigene Betrieb statt eines Kunden – ältere Clients, die das Feld
+    #: nicht kennen, legen weiterhin Kunden an.
+    is_internal: bool = False
 
 
 class CompanyCreate(CompanyBase):
@@ -23,6 +26,30 @@ class CompanyUpdate(CompanyBase):
 
 class Company(CompanyBase):
     id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CompanyLocationBase(BaseModel):
+    name: str
+    street: str = ""
+    postal_code: str = ""
+    city: str = ""
+    country: str = ""
+    is_primary: bool = False
+    is_active: bool = True
+
+
+class CompanyLocationCreate(CompanyLocationBase):
+    pass
+
+
+class CompanyLocationUpdate(CompanyLocationBase):
+    pass
+
+
+class CompanyLocation(CompanyLocationBase):
+    id: int
+    company_id: int
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -166,6 +193,9 @@ class TimeEntryBase(BaseModel):
     status: str = models.TimeEntryStatus.APPROVED
     is_manual: bool = False
     is_remote: bool = False
+    #: Gewählter Standort; ``None`` heißt „kein Standort" und lässt allein
+    #: ``is_remote`` entscheiden – wie vor 0.13.0.
+    location_id: Optional[int] = None
     source: Optional[str] = None
     external_id: Optional[str] = None
 

@@ -124,7 +124,7 @@ def test_backup_archive_has_metadata(client):
     login(client)
     archive = _create_and_run_local_job(client)
     meta = backup_manager.read_metadata(archive)
-    assert meta and meta["app_version"] == "0.12.2"
+    assert meta and meta["app_version"] == "0.13.0"
     assert meta["database_type"] == "sqlite"
     assert "database" in meta["contents"]
 

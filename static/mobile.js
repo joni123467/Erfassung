@@ -759,6 +759,47 @@ async function hydrateCompaniesFromCache() {
   });
 }
 
+// Einsatzorte aus dem Snapshot in die Auswahllisten schreiben. Ohne das stünde
+// man offline vor einer Liste mit nur „Vor Ort“ und „Remote“ – die Standorte
+// kommen aus der Synchronisation, nicht aus der zwischengespeicherten Seite.
+async function hydrateLocationsFromCache() {
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const locations = snapshot?.data?.locations;
+  if (!Array.isArray(locations) || locations.length === 0) return;
+
+  document.querySelectorAll('select[name="work_location"]').forEach((select) => {
+    if (!(select instanceof HTMLSelectElement)) return;
+    const selected = select.value;
+    select.innerHTML = '';
+    [['onsite', 'Vor Ort'], ['remote', 'Remote']].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      if (value === selected) option.selected = true;
+      select.appendChild(option);
+    });
+
+    const groups = new Map();
+    locations.forEach((location) => {
+      const name = location.company_name || '';
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(location);
+    });
+    groups.forEach((items, companyName) => {
+      const group = document.createElement('optgroup');
+      group.label = companyName;
+      items.forEach((location) => {
+        const option = document.createElement('option');
+        option.value = String(location.id);
+        option.textContent = location.name;
+        if (String(location.id) === String(selected)) option.selected = true;
+        group.appendChild(option);
+      });
+      select.appendChild(group);
+    });
+  });
+}
+
 async function syncServerData() {
   try {
     const settings = await loadSettings();
@@ -787,6 +828,7 @@ async function syncServerData() {
     updateLocalDataBadge(true);
     updateLastSyncLabel(nowIso);
     await hydrateCompaniesFromCache();
+    await hydrateLocationsFromCache();
     applyMobilePermissions(payload.permissions || null);
     await handleServerVersion(payload.version || '');
     return true;
@@ -1809,6 +1851,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   await initializeSyncMeta();
   await initSettingsTab();
   await hydrateCompaniesFromCache();
+  await hydrateLocationsFromCache();
   await hydratePermissionsFromCache();
   await recomputeEffectiveState();
   // Render from whatever data is already in IndexedDB (possibly from a previous session)

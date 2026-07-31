@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -30,8 +31,80 @@ class Company(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, nullable=False)
     description = Column(Text, default="")
+    #: Der eigene Betrieb statt eines Kunden. Die Standorte einer solchen Firma
+    #: stehen auch beim Stempeln **ohne** Auftrag zur Wahl, und Auswertungen
+    #: können interne Zeit von Kundenzeit trennen.
+    is_internal = Column(Boolean, default=False, nullable=False)
 
     time_entries = relationship("TimeEntry", back_populates="company")
+    locations = relationship(
+        "CompanyLocation",
+        back_populates="company",
+        cascade="all, delete-orphan",
+        order_by="CompanyLocation.name",
+    )
+
+    @property
+    def active_locations(self) -> list["CompanyLocation"]:
+        """Standorte, die noch zur Auswahl stehen – Hauptstandort zuerst."""
+        return sorted(
+            (location for location in self.locations if location.is_active),
+            key=lambda location: (not location.is_primary, location.name.lower()),
+        )
+
+    @property
+    def primary_location(self) -> Optional["CompanyLocation"]:
+        """Vorauswahl beim Stempeln; ``None``, wenn nichts gepflegt ist."""
+        active = self.active_locations
+        return active[0] if active else None
+
+
+class CompanyLocation(Base):
+    """Ein Standort einer Firma – Niederlassung, Werk, Baustelle, eigenes Büro.
+
+    Bewusst eine eigene Tabelle statt eines Adressfeldes an der Firma: Nur so
+    lassen sich mehrere Standorte führen und an einer Buchung auswerten.
+    """
+
+    __tablename__ = "company_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(
+        Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name = Column(String(255), nullable=False)
+    street = Column(String(255), default="")
+    postal_code = Column(String(32), default="")
+    city = Column(String(255), default="")
+    country = Column(String(128), default="")
+    #: Vorauswahl beim Stempeln. Genau einer je Firma.
+    is_primary = Column(Boolean, default=False, nullable=False)
+    #: Geschlossene Standorte verschwinden aus der Auswahl, bleiben aber in
+    #: Auswertungen und alten Buchungen erhalten.
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    company = relationship("Company", back_populates="locations")
+    time_entries = relationship("TimeEntry", back_populates="location")
+
+    @property
+    def address_line(self) -> str:
+        """Einzeilige Anschrift; leer, wenn nichts hinterlegt ist."""
+        parts = [
+            (self.street or "").strip(),
+            " ".join(
+                value for value in ((self.postal_code or "").strip(), (self.city or "").strip())
+                if value
+            ),
+            (self.country or "").strip(),
+        ]
+        return ", ".join(part for part in parts if part)
+
+    @property
+    def display_name(self) -> str:
+        """Name mit Firma davor – für Listen über mehrere Firmen hinweg."""
+        if self.company is None:
+            return self.name
+        return f"{self.company.name} – {self.name}"
 
 
 #: Zuordnungstabellen des Rollenmodells (RBAC): Ein Benutzer gehört beliebig
@@ -201,6 +274,14 @@ class TimeEntry(Base):
     status = Column(String(32), default=TimeEntryStatus.APPROVED)
     is_manual = Column(Boolean, default=False)
     is_remote = Column(Boolean, default=False)
+    #: Gewählter Standort. ``NULL`` heißt: kein Standort gepflegt oder nicht
+    #: gewählt – dann gilt weiterhin allein ``is_remote`` (Remote/Vor Ort).
+    location_id = Column(
+        Integer, ForeignKey("company_locations.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Name des Standorts, falls dieser später gelöscht wird – damit eine alte
+    #: Buchung ihre Aussage behält (wie ``deleted_company_name``).
+    deleted_location_name = Column(String(255), nullable=True)
     source = Column(String(64), nullable=True)
     external_id = Column(String(191), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -208,6 +289,7 @@ class TimeEntry(Base):
 
     user = relationship("User", back_populates="time_entries")
     company = relationship("Company", back_populates="time_entries")
+    location = relationship("CompanyLocation", back_populates="time_entries")
 
     @property
     def required_break_minutes(self) -> int:
@@ -288,8 +370,29 @@ class TimeEntry(Base):
 
     @property
     def location_label(self) -> str:
-        """Einsatzort der Buchung: Remote (z. B. Telefon) oder vor Ort."""
+        """Einsatzort der Buchung.
+
+        Der Standortname, sobald einer gewählt wurde – sonst wie seit 0.9.21
+        „Remote" oder „Vor Ort". Bestandsbuchungen ohne Standort lesen sich
+        damit unverändert.
+
+        Die Abfrage von ``location_id`` steht bewusst vor dem Zugriff auf die
+        Beziehung: Ohne Standort wird gar nicht erst nachgeladen. Das spart bei
+        jeder Liste eine Abfrage je Zeile und macht die Eigenschaft auch an
+        einer abgelösten Buchung benutzbar.
+        """
+        if self.location_id is not None and self.location is not None:
+            return self.location.name
+        if self.deleted_location_name:
+            return f"Gelöscht ({self.deleted_location_name})"
         return "Remote" if self.is_remote else "Vor Ort"
+
+    @property
+    def location_address(self) -> str:
+        """Anschrift des gewählten Standorts; leer, wenn keiner hinterlegt."""
+        if self.location_id is None or self.location is None:
+            return ""
+        return self.location.address_line
 
 
 class VacationStatus:

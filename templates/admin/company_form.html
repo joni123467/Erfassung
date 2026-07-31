@@ -20,6 +20,16 @@
             Beschreibung
             <textarea name="description" rows="3" placeholder="Optionale Beschreibung">{{ (company.description if is_edit else '')|trim }}</textarea>
         </label>
+        <label class="checkbox full-width">
+            <input type="checkbox" name="is_internal" value="1"
+                   {% if is_edit and company.is_internal %}checked{% endif %}>
+            Eigener Betrieb (kein Kunde)
+        </label>
+        <p class="form-hint full-width">
+            Die Standorte des eigenen Betriebs stehen zusätzlich beim Stempeln
+            <strong>ohne Auftrag</strong> zur Wahl – für die eigenen Büros. In
+            Auswertungen bleibt diese Zeit als intern erkennbar.
+        </p>
         <div class="form-actions full-width">
             <button type="submit" class="button primary">{% if is_edit %}Änderungen speichern{% else %}Firma anlegen{% endif %}</button>
         </div>
@@ -31,4 +41,135 @@
         </form>
     {% endif %}
 </section>
+
+{% if is_edit %}
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2>Standorte</h2>
+            <p class="card-header__hint">
+                Niederlassungen, Werke, Baustellen – beim Stempeln lässt sich der
+                Standort statt „Vor Ort“ auswählen. Ist keiner hinterlegt, bleibt
+                es bei „Remote“ und „Vor Ort“ wie bisher.
+            </p>
+        </div>
+    </div>
+
+    {% set locations = company.locations | sort(attribute='name') %}
+    {% if locations %}
+        <div class="table-scroll">
+            <table class="striped-table location-table">
+                <thead>
+                <tr>
+                    <th>Bezeichnung</th>
+                    <th>Anschrift</th>
+                    <th>Hauptstandort</th>
+                    <th>Zustand</th>
+                    <th>Aktionen</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for location in locations %}
+                    <tr>
+                        <form method="post" id="location-{{ location.id }}"
+                              action="/admin/companies/{{ company.id }}/locations/{{ location.id }}/update"></form>
+                        <td>
+                            <input type="hidden" name="csrf_token" form="location-{{ location.id }}"
+                                   value="{{ get_csrf_token(request) }}">
+                            <input type="text" name="name" form="location-{{ location.id }}"
+                                   value="{{ location.name }}" required aria-label="Bezeichnung">
+                        </td>
+                        <td class="location-table__address">
+                            <input type="text" name="street" form="location-{{ location.id }}"
+                                   value="{{ location.street or '' }}" placeholder="Straße und Nummer"
+                                   aria-label="Straße">
+                            <div class="location-table__city">
+                                <input type="text" name="postal_code" form="location-{{ location.id }}"
+                                       value="{{ location.postal_code or '' }}" placeholder="PLZ"
+                                       aria-label="PLZ">
+                                <input type="text" name="city" form="location-{{ location.id }}"
+                                       value="{{ location.city or '' }}" placeholder="Ort" aria-label="Ort">
+                                <input type="text" name="country" form="location-{{ location.id }}"
+                                       value="{{ location.country or '' }}" placeholder="Land"
+                                       aria-label="Land">
+                            </div>
+                        </td>
+                        <td>
+                            <label class="checkbox">
+                                <input type="checkbox" name="is_primary" value="1"
+                                       form="location-{{ location.id }}"
+                                       {% if location.is_primary %}checked{% endif %}>
+                                <span class="visually-hidden">Hauptstandort</span>
+                            </label>
+                        </td>
+                        <td>
+                            <label class="checkbox">
+                                <input type="checkbox" name="is_active" value="1"
+                                       form="location-{{ location.id }}"
+                                       {% if location.is_active %}checked{% endif %}>
+                                aktiv
+                            </label>
+                        </td>
+                        <td class="location-table__actions">
+                            <button type="submit" class="button small" form="location-{{ location.id }}">
+                                Speichern
+                            </button>
+                            <form method="post"
+                                  action="/admin/companies/{{ company.id }}/locations/{{ location.id }}/delete"
+                                  onsubmit="return confirm('Standort löschen? Vorhandene Buchungen behalten den Namen.');">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <button type="submit" class="button danger small">Löschen</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="card-header__hint">
+            Ein <strong>geschlossener</strong> Standort (Haken „aktiv“ entfernt)
+            verschwindet aus der Auswahl, bleibt in Auswertungen aber erhalten.
+            Das ist dem Löschen vorzuziehen.
+        </p>
+    {% else %}
+        <p class="empty-state">Noch kein Standort hinterlegt.</p>
+    {% endif %}
+
+    <h3>Standort hinzufügen</h3>
+    <form method="post" action="/admin/companies/{{ company.id }}/locations/create" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label>
+            Bezeichnung
+            <input type="text" name="name" required placeholder="z. B. Werk Nord">
+        </label>
+        <label>
+            Straße und Nummer
+            <input type="text" name="street" placeholder="Musterweg 1">
+        </label>
+        <label>
+            PLZ
+            <input type="text" name="postal_code" placeholder="12345">
+        </label>
+        <label>
+            Ort
+            <input type="text" name="city" placeholder="Musterstadt">
+        </label>
+        <label>
+            Land
+            <input type="text" name="country" placeholder="optional">
+        </label>
+        <label class="checkbox">
+            <input type="checkbox" name="is_primary" value="1">
+            Als Hauptstandort vorauswählen
+        </label>
+        <div class="form-actions full-width">
+            <button type="submit" class="button">Standort hinzufügen</button>
+        </div>
+    </form>
+    <p class="card-header__hint">
+        Der <strong>Hauptstandort</strong> ist beim Stempeln vorausgewählt. Der
+        erste Standort einer Firma wird automatisch dazu.
+    </p>
+</section>
+{% endif %}
 {% endblock %}

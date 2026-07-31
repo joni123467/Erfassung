@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_components.html" import location_toggle %}
+{% from "_components.html" import location_toggle, location_picker %}
 {% block title %}Zeitbuchung bearbeiten – Erfassung{% endblock %}
 {% block content %}
 {% set admin_active = active_tab %}
@@ -51,7 +51,7 @@
         {% if remote_editable %}
             <div class="field full-width">
                 <span class="field__label">Einsatzort</span>
-                {{ location_toggle(checked=entry.is_remote) }}
+                {{ location_picker(options=location_options, checked=entry.is_remote, selected=entry.location_id) }}
             </div>
         {% endif %}
         <div class="form-actions full-width">

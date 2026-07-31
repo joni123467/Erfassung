@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_components.html" import location_toggle %}
+{% from "_components.html" import location_toggle, location_picker %}
 {% block title %}Dashboard – Erfassung{% endblock %}
 {% block content %}
 {% set vacation_minutes = metrics.vacation_minutes %}
@@ -49,7 +49,14 @@
                         {% if active_entry.company %}
                             <p class="status-line">Firma: {{ active_entry.company.name }}</p>
                         {% endif %}
-                        {% if active_entry.is_remote %}
+                        {% if active_entry.location %}
+                            <p class="status-line">
+                                Einsatzort: {{ active_entry.location.name }}
+                                {% if active_entry.location_address %}
+                                    <small class="text-muted">({{ active_entry.location_address }})</small>
+                                {% endif %}
+                            </p>
+                        {% elif active_entry.is_remote %}
                             <p class="status-line"><span class="status-badge remote">Remote</span></p>
                         {% endif %}
                         <p class="status-line">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Stunden</p>
@@ -62,52 +69,72 @@
                             <p class="status-line">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
                         {% endif %}
                     </div>
-                    <div class="punch-actions">
-                        <form method="post" action="/punch">
-                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                            <input type="hidden" name="next_url" value="/dashboard">
-                            <input type="hidden" name="action" value="start_break">
-                            <button type="submit" class="button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
-                        </form>
-                        <form method="post" action="/punch">
-                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                            <input type="hidden" name="next_url" value="/dashboard">
-                            <input type="hidden" name="action" value="end_break">
-                            <button type="submit" class="button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
-                        </form>
-                        {% if active_entry.company_id is not none %}
+                    {# Gruppiert statt in einer Reihe: Pause und Auftrag gehören
+                       zusammen, „Arbeitszeit beenden" steht als abschließende
+                       Aktion für sich – abgesetzt, damit sie nicht versehentlich
+                       neben „Pause beenden" getroffen wird. #}
+                    <div class="punch-controls">
+                        <div class="punch-controls__group" role="group" aria-label="Pause">
                             <form method="post" action="/punch">
                                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                                 <input type="hidden" name="next_url" value="/dashboard">
-                                <input type="hidden" name="action" value="end_company">
-                                <button type="submit" class="button">Auftrag beenden</button>
+                                <input type="hidden" name="action" value="start_break">
+                                <button type="submit" class="button ghost" {% if active_entry.break_started_at %}disabled{% endif %}>Pause starten</button>
                             </form>
+                            <form method="post" action="/punch">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <input type="hidden" name="next_url" value="/dashboard">
+                                <input type="hidden" name="action" value="end_break">
+                                <button type="submit" class="button ghost" {% if not active_entry.break_started_at %}disabled{% endif %}>Pause beenden</button>
+                            </form>
+                        </div>
+                        {% if (companies or can_create_companies) or active_entry.company_id is not none %}
+                            <div class="punch-controls__group" role="group" aria-label="Auftrag">
+                                {% if companies or can_create_companies %}
+                                    <button type="button" class="button" data-open="order-modal">
+                                        {{ 'Auftrag wechseln' if active_entry.company_id is not none else 'Auftrag starten' }}
+                                    </button>
+                                {% endif %}
+                                {% if active_entry.company_id is not none %}
+                                    <form method="post" action="/punch">
+                                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                        <input type="hidden" name="next_url" value="/dashboard">
+                                        <input type="hidden" name="action" value="end_company">
+                                        <button type="submit" class="button">Auftrag beenden</button>
+                                    </form>
+                                {% endif %}
+                            </div>
                         {% endif %}
-                        {% if companies or can_create_companies %}
-                            <button type="button" class="button" data-open="order-modal">Auftrag starten</button>
-                        {% endif %}
-                        <form method="post" action="/punch">
-                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                            <input type="hidden" name="next_url" value="/dashboard">
-                            <input type="hidden" name="action" value="end_work">
-                            <button type="submit" class="button danger">Arbeitszeit beenden</button>
-                        </form>
+                        <div class="punch-controls__primary">
+                            <form method="post" action="/punch">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <input type="hidden" name="next_url" value="/dashboard">
+                                <input type="hidden" name="action" value="end_work">
+                                <button type="submit" class="button danger">Arbeitszeit beenden</button>
+                            </form>
+                        </div>
                     </div>
                 {% else %}
-                    <div class="punch-start-options">
-                        <form method="post" action="/punch" class="punch-start-quick">
-                            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                            <input type="hidden" name="next_url" value="/dashboard">
-                            <input type="hidden" name="action" value="start_work">
-                            {% if can_flag_remote %}
-                                <div class="punch-remote-toggle">{{ location_toggle() }}</div>
-                            {% endif %}
-                            <button type="submit" class="button primary">Arbeitszeit starten</button>
-                        </form>
-                        {% if companies or can_create_companies %}
-                            <button type="button" class="button ghost" data-open="order-modal">Auftrag starten</button>
+                    {# „Auftrag starten" liegt bewusst *innerhalb* des Formulars:
+                       Der Knopf öffnet nur den Dialog (``type="button"``, sendet
+                       also nichts) und steht damit sauber neben der Hauptaktion,
+                       statt neben dem Einsatzort zu hängen. #}
+                    <form method="post" action="/punch" class="punch-start-quick">
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                        <input type="hidden" name="next_url" value="/dashboard">
+                        <input type="hidden" name="action" value="start_work">
+                        {% if can_flag_remote %}
+                            {# Der Einsatzort gilt für die Buchung, nicht für einen
+                               einzelnen Knopf – deshalb eine eigene Zeile darüber. #}
+                            <div class="punch-controls__location">{{ location_picker(options=location_options) }}</div>
                         {% endif %}
-                    </div>
+                        <div class="punch-controls__row">
+                            <button type="submit" class="button primary">Arbeitszeit starten</button>
+                            {% if companies or can_create_companies %}
+                                <button type="button" class="button ghost" data-open="order-modal">Auftrag starten</button>
+                            {% endif %}
+                        </div>
+                    </form>
                 {% endif %}
             </section>
             {% if companies or can_create_companies %}
@@ -152,7 +179,7 @@
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
                             {% if can_flag_remote %}
-                                {{ location_toggle(block=True) }}
+                                {{ location_picker(options=location_options, block=True) }}
                             {% endif %}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
@@ -443,7 +470,7 @@
             <textarea name="notes" rows="2" placeholder="z. B. Projekt oder Kunde"></textarea>
         </label>
         {% if can_flag_remote %}
-            <div class="full-width">{{ location_toggle() }}</div>
+            <div class="full-width">{{ location_picker(options=location_options) }}</div>
         {% endif %}
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
