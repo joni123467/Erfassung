@@ -557,6 +557,21 @@ Reiter und Antragsformular der Mobilansicht. Auch `GET /mobile/sync-data`
 liefert dann keine Urlaubsdaten und meldet `request_vacations: false`, damit
 die Offline-Shell einen gesperrten Antrag nicht in die Warteschlange stellt.
 
+Ohne `orders` entfällt der gesamte Auftragsteil: keine Firmenauswahl im
+Dashboard, kein „Auftrag starten" in der Stempel-App, keine Firmenliste in der
+Synchronisation. `start_company` und ein Nachtrag mit Firma werden auch
+serverseitig abgewiesen.
+
+| Aktion | Ohne `orders` |
+|---|---|
+| Arbeitszeit starten/beenden, Pausen, Kommentare | offen |
+| Auftrag starten | abgewiesen |
+| Firma bei einem Nachtrag angeben | abgewiesen |
+| **Auftrag beenden** | **offen** |
+
+„Auftrag beenden" bleibt bewusst offen: Läuft eine Lizenz mitten im Auftrag
+aus, muss sich die laufende Buchung schließen lassen – sonst hinge sie fest.
+
 > **Ohne gültige Lizenz ist kein zubuchbarer Baustein nutzbar** – das gilt für
 > „nicht lizenziert“ genauso wie für „abgelaufen“ und „ungültig“. Freischalten
 > kann nur das Lizenzdokument.

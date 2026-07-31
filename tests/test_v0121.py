@@ -324,6 +324,149 @@ def test_unlicensed_existing_users_keep_working(client):
         db.close()
 
 
+# --- Auftragsbezogenes Stempeln --------------------------------------------
+
+def _company(name: str = "Muster AG") -> int:
+    from app import crud, database, schemas
+
+    db = database.SessionLocal()
+    try:
+        company = crud.create_company(db, schemas.CompanyCreate(name=name, description=""))
+        return int(company.id)
+    finally:
+        db.close()
+
+
+def _open_entry_company(username: str = "admin"):
+    from app import crud, database
+
+    db = database.SessionLocal()
+    try:
+        user = crud.get_user_by_username(db, username)
+        entry = crud.get_open_time_entry(db, user.id)
+        return None if entry is None else entry.company_id
+    finally:
+        db.close()
+
+
+def test_unlicensed_hides_order_clocking(client):
+    """Stempeln ja, auf einen Auftrag stempeln nein."""
+    _company()
+    _login(client)
+    for path in ("/dashboard", "/mobile"):
+        page = client.get(path).text
+        assert "Auftrag starten" not in page, path
+        assert 'value="start_company"' not in page, path
+        # Das reine Stempeln bleibt.
+        assert 'value="start_work"' in page, path
+
+
+def test_unlicensed_refuses_a_company_punch(client):
+    """Auch der direkte Aufruf – die Oberfläche ist nur die halbe Miete."""
+    company_id = _company()
+    _login(client)
+    token = _csrf(client, "/dashboard")
+    response = client.post(
+        "/punch",
+        data={
+            "action": "start_company",
+            "company_id": str(company_id),
+            "csrf_token": token,
+            "next_url": "/dashboard",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert "nicht+enthalten" in response.headers["location"]
+    assert _open_entry_company() is None
+
+
+def test_unlicensed_refuses_a_manual_entry_with_a_company(client):
+    company_id = _company()
+    _login(client)
+    token = _csrf(client, "/dashboard")
+    response = client.post(
+        "/time",
+        data={
+            "work_date": "2026-07-01",
+            "start_time": "08:00",
+            "end_time": "16:00",
+            "break_minutes": "30",
+            "company_id": str(company_id),
+            "csrf_token": token,
+            "next_url": "/dashboard",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert "nicht+enthalten" in response.headers["location"]
+
+
+def test_unlicensed_sync_payload_omits_companies(client):
+    _company()
+    _login(client)
+    payload = client.get("/mobile/sync-data").json()
+    assert payload["companies"] == []
+    assert payload["permissions"]["create_companies"] is False
+
+
+def test_a_running_order_can_still_be_ended(client, licensing, keypair):
+    """Läuft die Lizenz mitten im Auftrag aus, bleibt „Auftrag beenden" offen.
+
+    Sonst hinge die Buchung fest und es ginge Arbeitszeit verloren.
+    """
+    company_id = _company()
+    _store(licensing, _document(keypair[0], licensing.deployment_id(), features=["orders"]))
+    _login(client)
+    token = _csrf(client, "/dashboard")
+    client.post(
+        "/punch",
+        data={
+            "action": "start_company",
+            "company_id": str(company_id),
+            "csrf_token": token,
+            "next_url": "/dashboard",
+        },
+        follow_redirects=False,
+    )
+    assert _open_entry_company() == company_id
+
+    # Lizenz weg – der laufende Auftrag muss sich beenden lassen.
+    _store(licensing, _document(keypair[0], licensing.deployment_id(), features=[]))
+    response = client.post(
+        "/punch",
+        data={"action": "end_company", "csrf_token": token, "next_url": "/dashboard"},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert "error=" not in response.headers["location"]
+    assert _open_entry_company() is None
+
+
+def test_licensed_orders_allow_clocking_on_a_company(client, licensing, keypair):
+    company_id = _company()
+    _store(licensing, _document(keypair[0], licensing.deployment_id(), features=["orders"]))
+    _login(client)
+    assert "Auftrag starten" in client.get("/dashboard").text
+    payload = client.get("/mobile/sync-data").json()
+    assert company_id in [company["id"] for company in payload["companies"]]
+
+    token = _csrf(client, "/dashboard")
+    response = client.post(
+        "/punch",
+        data={
+            "action": "start_company",
+            "company_id": str(company_id),
+            "csrf_token": token,
+            "next_url": "/dashboard",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert "error=" not in response.headers["location"]
+    assert _open_entry_company() == company_id
+
+
 # --- Ungültig, abgelaufen, gesperrt ----------------------------------------
 
 def test_an_expired_license_closes_the_modules(client, licensing, keypair):
