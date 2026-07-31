@@ -5,6 +5,84 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.14.0] – 2026-07-31
+
+### Added – Revisionssichere Erfassung nach ArbZG, MiLoG und DSGVO
+
+**Keine rechtliche Garantie.** Diese Umsetzung erfüllt technische
+Anforderungen; sie ist nicht zertifiziert und ersetzt keine Rechtsberatung.
+Ausnahmen nach §7/§10 ArbZG und Tariföffnungen kann eine Software nicht
+bewerten, und Revisionssicherheit endet an der Anwendungsgrenze. In Betrieben
+mit Betriebsrat ist die Einführung nach §87 Abs. 1 Nr. 6 BetrVG
+mitbestimmungspflichtig.
+
+- **Revisionshistorie** (`time_entry_revisions`): Anlage, Änderung, Freigabe,
+  Ablehnung und Stornierung mit Vorher/Nachher, Zeitpunkt, Bearbeiter, Quelle
+  und Begründung. Ändern, Ablehnen und Stornieren **erfordern** eine
+  Begründung; fehlt sie, wird der Vorgang abgewiesen. Ansicht unter
+  `/admin/time-entries/<id>/history`.
+- **Korrektur über Storno und Ersatzbuchung** (`crud.replace_time_entry`);
+  beide Buchungen verweisen aufeinander. `delete_time_entry()` storniert
+  jetzt. Auch das Überschreiben kollidierender Buchungen und der vollständig
+  abdeckende Nachtrag stornieren statt zu löschen.
+- **Pausenintervalle** (`break_intervals`) mit Beginn und Ende statt einer
+  Summe. Grenzen korrigiert auf **mehr als** 6 Stunden = 30 Minuten und
+  **mehr als** 9 Stunden = 45 Minuten (bisher schon *ab* sechs Stunden);
+  Ruhepause erst ab 15 Minuten Abschnitt.
+- **Nicht genommene Pausen werden nicht mehr abgezogen.** Die tatsächliche
+  Zeit steht in der Buchung, der Fehlbetrag wird gekennzeichnet.
+  Bestandsbuchungen behalten über `break_rule = legacy_auto` ihre bisherige
+  Rechnung – abgerechnete Monate ändern sich nicht rückwirkend.
+- **Regelverstöße** (`compliance_flags`): mehr als 8 bzw. 10 Stunden, Ruhezeit
+  unter 11 Stunden, fehlende Pause, Sonn- und Feiertagsarbeit. Sie
+  kennzeichnen und blockieren nichts; Einordnung mit Pflichtbegründung unter
+  *Administration → Regelverstöße*.
+- **Abschlussworkflow** (`payroll_periods`, `period_confirmations`): offen →
+  Mitarbeiterprüfung → freigegeben → gesperrt. Bestätigung oder Widerspruch
+  mit Begründung, Antwort des Arbeitgebers; eine gesperrte Periode weist jede
+  Änderung ab. Entsperren nur mit Begründung, die vermerkt bleibt.
+- **Zugriffsprotokoll** (`data_access_log`) für Lesezugriffe auf fremde
+  Zeitdaten – ohne IP-Adresse, eigene Daten erzeugen keinen Eintrag.
+- **Aufbewahrungsfristen** einstellbar (`config/retention.json`), Vorgabe 24
+  Monate für Buchungen und 12 für das Zugriffsprotokoll. Automatisch gelöscht
+  wird **nichts**; `privacy.retention_report()` zeigt nur, was die Frist
+  überschritten hat.
+- **Auskunftsexport** nach Art. 15 DSGVO: `/api/me/export` und – protokolliert
+  – `/admin/users/<id>/export`, inklusive Historie und Zugriffen.
+- **Vollständige Zeitstempel**: `started_at_utc`, `ended_at_utc` und `tz_name`
+  an neuen Buchungen (`ERFASSUNG_TIMEZONE`, Vorgabe `Europe/Berlin`).
+  Bestandsbuchungen werden nicht nachträglich umgerechnet. Nachtarbeit über
+  Mitternacht ist zusätzlich durch Tests abgesichert.
+
+**Keine GPS-Ortung, keine Bewegungsprofile** – und dieses Release führt auch
+keine ein.
+
+### Fixed
+
+- `total_break_minutes` und `auto_break_enabled` lösten auf einer von ihrer
+  Sitzung gelösten Buchung eine Ausnahme aus; beide prüfen jetzt vorher.
+- Stornierte Buchungen blockierten die Überschneidungsprüfung. Sie zählen
+  nicht mehr und belegen deshalb keinen Zeitraum.
+
+### Datenbank
+
+Migration **17** (`_add_compliance_and_revisions`) in beiden Mechanismen:
+sechs neue Tabellen, neun neue Spalten an `time_entries`. Idempotent und
+datenerhaltend; Bestandsbuchungen bekommen `legacy_auto`, eine laufende Pause
+wird in ein Intervall überführt, und jede vorhandene Buchung erhält einen
+Anlagevermerk. Portables DDL für SQLite, MySQL, MariaDB und PostgreSQL.
+
+### Tests
+
+`tests/test_v0140.py` – 42 Tests; die Suite umfasst damit 495 Tests. Details
+in [`docs/RELEASE_NOTES_0.14.0.md`](docs/RELEASE_NOTES_0.14.0.md).
+
+Neu ist `tests/conftest.py`: Jeder Test lädt die Anwendung frisch und legte
+dabei eine Engine an, deren Verbindungspool offen blieb. Über die gesamte
+Suite lief der Prozess dadurch in das Limit für offene Dateien – und zwar
+erst beim Aufräumen, sodass pytest keine Zusammenfassung mehr schrieb. Ein
+autouse-Fixture schließt den Pool jetzt nach jedem Test.
+
 ## [0.13.1] – 2026-07-31
 
 ### Fixed – Standorte gehören zu ihrer Firma

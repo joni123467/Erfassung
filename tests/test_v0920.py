@@ -127,8 +127,8 @@ def _report_data(params: dict, allowed=None):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.13.1"
-    assert client.get("/health").json()["version"] == "0.13.1"
+    assert client.main.APP_VERSION == "0.14.0"
+    assert client.get("/health").json()["version"] == "0.14.0"
 
 
 # --- report data ----------------------------------------------------------------

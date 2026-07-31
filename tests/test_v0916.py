@@ -121,6 +121,7 @@ def _update(entry_id, user_id, start, end):
                 is_open=False, notes="", status=models.TimeEntryStatus.APPROVED,
                 is_manual=False,
             ),
+            reason="Test: Korrektur",
         )
     finally:
         db.close()
@@ -139,8 +140,8 @@ def _get(entry_id):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.13.1"
-    assert client.get("/health").json()["version"] == "0.13.1"
+    assert client.main.APP_VERSION == "0.14.0"
+    assert client.get("/health").json()["version"] == "0.14.0"
 
 
 # --- the reported case ---------------------------------------------------------
@@ -193,6 +194,7 @@ def test_edit_route_shrink_despite_overlap(client):
         f"/admin/time-entries/{hist}/update",
         data={
             "csrf_token": token,
+            "change_reason": "Test: Korrektur",
             "user_id": str(uid),
             "work_date": DAY.isoformat(),
             "start_time": "14:18",

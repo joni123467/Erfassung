@@ -111,8 +111,8 @@ def _closed_entry(user_id, start, end, *, is_remote=False):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.13.1"
-    assert client.get("/health").json()["version"] == "0.13.1"
+    assert client.main.APP_VERSION == "0.14.0"
+    assert client.get("/health").json()["version"] == "0.14.0"
 
 
 # --- Umschalter statt Checkbox --------------------------------------------------

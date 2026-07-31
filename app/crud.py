@@ -8,7 +8,84 @@ from sqlalchemy.orm import Session, joinedload
 
 from . import models, schemas
 from . import permissions as group_permissions
+from . import revisions as revision_log
 from . import security
+
+
+# --- Zeitzonen -------------------------------------------------------------
+
+#: Zeitzone der Installation. Ortszeit bleibt führend für Anzeige und
+#: Auswertung; die UTC-Stempel machen die Angabe eindeutig – etwa in der Nacht
+#: der Zeitumstellung, in der eine Ortszeit zweimal vorkommt.
+TIMEZONE_ENV = "ERFASSUNG_TIMEZONE"
+DEFAULT_TIMEZONE = "Europe/Berlin"
+
+
+def local_timezone_name() -> str:
+    import os
+
+    return (os.environ.get(TIMEZONE_ENV) or "").strip() or DEFAULT_TIMEZONE
+
+
+def _local_zone():
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(local_timezone_name())
+    except Exception:  # pragma: no cover - fehlende tzdata darf nichts kippen
+        return None
+
+
+def _to_utc(moment: datetime) -> datetime:
+    """Ortszeit ohne Zeitzone in einen UTC-Stempel umrechnen.
+
+    Ist keine Zeitzonendatenbank verfügbar, wird der Wert unverändert
+    übernommen. Das ist ehrlicher als eine falsche Umrechnung – die Ortszeiten
+    bleiben ohnehin führend.
+    """
+    if moment is None:
+        return None
+    zone = _local_zone()
+    if zone is None:
+        return moment.replace(tzinfo=None)
+    aware = moment.replace(tzinfo=zone)
+    from datetime import timezone as _tz
+
+    return aware.astimezone(_tz.utc).replace(tzinfo=None)
+
+
+# --- Abrechnungsperioden: Sperre ------------------------------------------
+
+class PeriodLocked(ValueError):
+    """Die Buchung liegt in einer gesperrten Abrechnungsperiode."""
+
+
+def locking_period(db: Session, work_date: date) -> Optional[models.PayrollPeriod]:
+    """Gesperrte Periode, die diesen Tag umfasst – sonst ``None``."""
+    if work_date is None:
+        return None
+    return (
+        db.query(models.PayrollPeriod)
+        .filter(models.PayrollPeriod.status == models.PeriodStatus.LOCKED)
+        .filter(models.PayrollPeriod.period_start <= work_date)
+        .filter(models.PayrollPeriod.period_end >= work_date)
+        .first()
+    )
+
+
+def ensure_period_open(db: Session, work_date: date) -> None:
+    """Schreibzugriff nur außerhalb gesperrter Perioden.
+
+    Eine gesperrte Periode ist abgerechnet. Änderungen daran würden die
+    Grundlage einer bereits erfolgten Lohnzahlung nachträglich verschieben –
+    deshalb wird abgelehnt statt still geändert.
+    """
+    period = locking_period(db, work_date)
+    if period is not None:
+        raise PeriodLocked(
+            f"Der Zeitraum {period.period_start:%d.%m.%Y}–{period.period_end:%d.%m.%Y} "
+            "ist abgerechnet und gesperrt."
+        )
 
 
 def get_group(db: Session, group_id: int) -> Optional[models.Group]:
@@ -358,8 +435,13 @@ def _describe_entry(entry: models.TimeEntry) -> str:
 def _overlapping_entries(
     db: Session, payload: dict, *, exclude_id: Optional[int] = None
 ) -> list[models.TimeEntry]:
-    """Alle (nicht abgelehnten) Buchungen desselben Benutzers, deren Zeitraum
-    sich mit dem übergebenen überschneidet."""
+    """Buchungen desselben Benutzers, deren Zeitraum sich überschneidet.
+
+    Abgelehnte und **stornierte** Buchungen bleiben außen vor: Sie zählen nicht
+    mehr und belegen deshalb auch keinen Zeitraum. Ohne diese Ausnahme könnte
+    eine Ersatzbuchung nicht angelegt werden, weil genau die Buchung im Weg
+    stünde, die sie ablöst.
+    """
     user_id = payload["user_id"]
     work_date = payload["work_date"]
     start_time = payload["start_time"]
@@ -371,7 +453,9 @@ def _overlapping_entries(
     query = (
         db.query(models.TimeEntry)
         .filter(models.TimeEntry.user_id == user_id)
-        .filter(models.TimeEntry.status != models.TimeEntryStatus.REJECTED)
+        .filter(models.TimeEntry.status.notin_(
+            [models.TimeEntryStatus.REJECTED, models.TimeEntryStatus.CANCELLED]
+        ))
         .filter(models.TimeEntry.work_date >= window_start)
         .filter(models.TimeEntry.work_date <= window_end)
     )
@@ -483,22 +567,54 @@ def _split_closed_entry(
             external_id=existing.external_id,
         )
 
+    note = "Durch einen Nachtrag geteilt."
+    before = revision_log.snapshot(existing)
+    clone: Optional[models.TimeEntry] = None
+    replaced = False
+
     if has_first:
         # Bestandsbuchung wird zum ersten Abschnitt (behält Pausen/Referenzen).
         existing.end_time = new_start_time
         if has_second:
-            db.add(_clone_part(new_end_time, original_end, 0))
+            clone = _clone_part(new_end_time, original_end, 0)
+            db.add(clone)
     elif has_second:
         # Kein erster Abschnitt: Bestandsbuchung wird zum zweiten Abschnitt.
         existing.start_time = new_end_time
         existing.end_time = original_end
         existing.break_minutes = original_breaks
     else:
-        # Nachtrag deckt die Bestandsbuchung exakt ab – sie wird ersetzt.
-        db.delete(existing)
+        # Nachtrag deckt die Bestandsbuchung exakt ab. Sie wird **storniert**,
+        # nicht gelöscht: Der Originaldatensatz bleibt mitsamt Historie
+        # erhalten und verweist auf seinen Ersatz.
+        existing.status = models.TimeEntryStatus.CANCELLED
+        existing.cancelled_at = datetime.utcnow()
+        existing.cancel_reason = "Durch einen Nachtrag vollständig ersetzt."
+        existing.is_open = False
+        replaced = True
 
     manual_entry = models.TimeEntry(**payload)
     db.add(manual_entry)
+    db.flush()
+
+    if replaced:
+        existing.replaced_by_id = manual_entry.id
+        manual_entry.replaces_id = existing.id
+        db.flush()
+        revision_log.record(
+            db, existing, models.RevisionAction.CANCELLED,
+            reason=existing.cancel_reason, before=before,
+            after=revision_log.snapshot(existing),
+        )
+    else:
+        revision_log.record(
+            db, existing, models.RevisionAction.UPDATED,
+            reason=note, before=before, after=revision_log.snapshot(existing),
+        )
+    if clone is not None:
+        revision_log.record_creation(db, clone)
+    revision_log.record_creation(db, manual_entry)
+
     db.commit()
     db.refresh(manual_entry)
     return manual_entry
@@ -593,9 +709,12 @@ def create_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> models.Tim
         existing = get_time_entry_by_external_reference(db, source, external_id)
         if existing:
             return existing
+    ensure_period_open(db, payload.get("work_date"))
     _ensure_no_time_overlap(db, payload)
     db_entry = models.TimeEntry(**payload)
     db.add(db_entry)
+    db.flush()
+    revision_log.record_creation(db, db_entry, source=payload.get("source"))
     db.commit()
     db.refresh(db_entry)
     return db_entry
@@ -688,41 +807,73 @@ def start_running_entry(
         status=models.TimeEntryStatus.APPROVED,
         is_manual=False,
         is_remote=is_remote,
+        started_at_utc=_to_utc(normalized),
+        tz_name=local_timezone_name(),
     )
     return create_time_entry(db, entry)
 
 
 def finish_running_entry(db: Session, entry: models.TimeEntry, finished_at: datetime) -> models.TimeEntry:
     normalized = _normalize_time(finished_at)
-    if entry.break_started_at:
+    if entry.break_started_at or entry.running_break is not None:
         end_break(db, entry, normalized)
         db.refresh(entry)
     entry.end_time = normalized.time()
     entry.is_open = False
     entry.break_started_at = None
+    entry.ended_at_utc = _to_utc(normalized)
     db.commit()
     db.refresh(entry)
     return entry
 
 
 def start_break(db: Session, entry: models.TimeEntry, started_at: datetime) -> models.TimeEntry:
+    """Pause beginnen – als eigenes Intervall mit Beginn.
+
+    Die Altspalte ``break_started_at`` wird mitgeführt, damit Bestandscode und
+    Offline-Shell unverändert weiterlaufen; führend ist ab jetzt das Intervall.
+    """
     normalized = _normalize_time(started_at)
+    if entry.running_break is not None:
+        return entry
     entry.break_started_at = normalized.time()
+    db.add(models.BreakInterval(
+        entry_id=entry.id,
+        started_at_utc=_to_utc(normalized),
+        tz_name=entry.tz_name or local_timezone_name(),
+        source=entry.source or "web",
+    ))
     db.commit()
     db.refresh(entry)
     return entry
 
 
 def end_break(db: Session, entry: models.TimeEntry, finished_at: datetime) -> models.TimeEntry:
+    """Laufende Pause beenden.
+
+    Das Intervall bekommt sein Ende; die Summenspalte wird für Bestandscode
+    fortgeschrieben. Ohne Intervall (Bestandsbuchung) greift der alte Weg.
+    """
+    normalized = _normalize_time(finished_at)
+    running = entry.running_break
+    if running is not None:
+        end_utc = _to_utc(normalized)
+        if end_utc < running.started_at_utc:
+            end_utc += timedelta(days=1)
+        running.ended_at_utc = end_utc
+        entry.break_started_at = None
+        db.commit()
+        db.refresh(entry)
+        return entry
+
     if not entry.break_started_at:
         return entry
-    normalized = _normalize_time(finished_at)
     break_start = datetime.combine(entry.work_date, entry.break_started_at)
     break_end = datetime.combine(normalized.date(), normalized.time())
     if break_end < break_start:
         break_end += timedelta(days=1)
     duration = max(int((break_end - break_start).total_seconds() // 60), 0)
-    entry.break_minutes += duration
+    entry.break_minutes = (entry.break_minutes or 0) + duration
     entry.break_started_at = None
     db.commit()
     db.refresh(entry)
@@ -833,24 +984,50 @@ def plan_time_entry_overwrite(
 
 
 def _apply_overwrite(
-    db: Session, plan: list[dict], new_start: datetime, new_end: datetime
+    db: Session,
+    plan: list[dict],
+    new_start: datetime,
+    new_end: datetime,
+    *,
+    actor: object = None,
+    reason: str = "",
 ) -> None:
-    """Kollidierende Buchungen gemäß Plan kürzen, teilen oder entfernen.
+    """Kollidierende Buchungen gemäß Plan kürzen, teilen oder stornieren.
 
-    Offene (laufende) Buchungen werden nie gelöscht, sondern nur verschoben –
+    Offene (laufende) Buchungen werden nie entfernt, sondern nur verschoben –
     die laufende Zeiterfassung darf durch eine Korrektur nicht abbrechen.
+
+    Seit 0.14.0 wird auch hier **nichts gelöscht**: Eine verdrängte Buchung
+    wird storniert und bleibt mit ihrer Historie erhalten. Jede Kürzung und
+    Teilung landet ebenfalls in der Historie.
     """
+    note = (reason or "").strip() or "Durch eine überschreibende Korrektur angepasst."
     for item in plan:
         conflict: models.TimeEntry = item["entry"]
         action = item["action"]
+        before = revision_log.snapshot(conflict)
         if action == "delete":
             if conflict.is_open:
                 # Laufende Buchung ab dem Ende der neuen Buchung fortführen.
                 conflict.work_date = new_end.date()
                 conflict.start_time = new_end.time()
                 conflict.end_time = new_end.time()
+                db.flush()
+                revision_log.record(
+                    db, conflict, models.RevisionAction.UPDATED, actor=actor,
+                    reason=note, before=before, after=revision_log.snapshot(conflict),
+                )
                 continue
-            db.delete(conflict)
+            conflict.status = models.TimeEntryStatus.CANCELLED
+            conflict.cancelled_at = datetime.utcnow()
+            conflict.cancelled_by_id = getattr(actor, "id", None)
+            conflict.cancel_reason = note[:500]
+            db.flush()
+            revision_log.record(
+                db, conflict, models.RevisionAction.CANCELLED, actor=actor,
+                reason=note, before=before, after=revision_log.snapshot(conflict),
+            )
+            continue
         elif action == "shorten":
             start_time, end_time = item["result"]
             conflict.start_time = start_time
@@ -858,14 +1035,20 @@ def _apply_overwrite(
                 conflict.end_time = start_time
             else:
                 conflict.end_time = end_time
+            db.flush()
+            revision_log.record(
+                db, conflict, models.RevisionAction.UPDATED, actor=actor,
+                reason=note, before=before, after=revision_log.snapshot(conflict),
+            )
         elif action == "split":
             (first_start, first_end), (second_start, second_end) = item["result"]
             conflict.start_time = first_start
             conflict.end_time = first_end
             conflict.is_open = False
-            db.add(models.TimeEntry(
+            second = models.TimeEntry(
                 user_id=conflict.user_id,
                 company_id=conflict.company_id,
+                location_id=conflict.location_id,
                 work_date=conflict.work_date,
                 start_time=second_start,
                 end_time=second_end,
@@ -876,7 +1059,16 @@ def _apply_overwrite(
                 status=conflict.status,
                 is_manual=conflict.is_manual,
                 is_remote=bool(conflict.is_remote),
-            ))
+                break_rule=conflict.break_rule or models.BreakRule.ACTUAL,
+            )
+            db.add(second)
+            db.flush()
+            revision_log.record(
+                db, conflict, models.RevisionAction.UPDATED, actor=actor,
+                reason=f"{note} (Buchung geteilt)", before=before,
+                after=revision_log.snapshot(conflict),
+            )
+            revision_log.record_creation(db, second, actor=actor)
 
 
 def update_time_entry(
@@ -885,6 +1077,8 @@ def update_time_entry(
     entry: schemas.TimeEntryCreate,
     *,
     overwrite: bool = False,
+    actor: object = None,
+    reason: str = "",
 ) -> Optional[models.TimeEntry]:
     """Buchung aktualisieren.
 
@@ -892,10 +1086,15 @@ def update_time_entry(
     abzulehnen: kollidierende Buchungen werden gekürzt, geteilt oder entfernt
     (siehe ``plan_time_entry_overwrite``). Ohne das Flag wird bei einem neuen
     Konflikt ``OVERLAPPING_TIME_ENTRY:<Beschreibung>`` ausgelöst.
+
+    Jede Änderung wird mit Vorher/Nachher historisiert und braucht eine
+    Begründung (:class:`app.revisions.ReasonRequired`).
     """
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return None
+    ensure_period_open(db, db_entry.work_date)
+    ensure_period_open(db, entry.work_date)
     payload = entry.model_dump()
     payload["break_started_at"] = None
     payload["is_open"] = False
@@ -914,7 +1113,10 @@ def update_time_entry(
         new_start, new_end = _entry_bounds(
             payload["work_date"], payload["start_time"], payload["end_time"], False
         )
-        _apply_overwrite(db, plan, _floor_to_minute(new_start), _floor_to_minute(new_end))
+        _apply_overwrite(
+            db, plan, _floor_to_minute(new_start), _floor_to_minute(new_end),
+            actor=actor, reason=reason,
+        )
         db.flush()
     else:
         old_start, old_end = _entry_bounds(
@@ -930,29 +1132,173 @@ def update_time_entry(
                 # nennt, WELCHE Buchung blockiert (Diagnose).
                 raise ValueError(f"OVERLAPPING_TIME_ENTRY:{_describe_entry(conflict)}")
 
+    before = revision_log.snapshot(db_entry)
     for key, value in payload.items():
         setattr(db_entry, key, value)
+    db.flush()
+    revision_log.record(
+        db,
+        db_entry,
+        models.RevisionAction.UPDATED,
+        actor=actor,
+        reason=reason,
+        before=before,
+        after=revision_log.snapshot(db_entry),
+    )
     db.commit()
     db.refresh(db_entry)
     return db_entry
 
 
-def set_time_entry_status(db: Session, entry_id: int, status: str) -> Optional[models.TimeEntry]:
+def set_time_entry_status(
+    db: Session,
+    entry_id: int,
+    status: str,
+    *,
+    actor: object = None,
+    reason: str = "",
+) -> Optional[models.TimeEntry]:
+    """Status setzen und den Vorgang historisieren.
+
+    Ablehnen braucht eine Begründung – sonst weiß die betroffene Person nicht,
+    was sie korrigieren soll.
+    """
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return None
+    ensure_period_open(db, db_entry.work_date)
+    before = revision_log.snapshot(db_entry)
     db_entry.status = status
+    db.flush()
+    action = {
+        models.TimeEntryStatus.APPROVED: models.RevisionAction.APPROVED,
+        models.TimeEntryStatus.REJECTED: models.RevisionAction.REJECTED,
+        models.TimeEntryStatus.CANCELLED: models.RevisionAction.CANCELLED,
+    }.get(status, models.RevisionAction.UPDATED)
+    revision_log.record(
+        db,
+        db_entry,
+        action,
+        actor=actor,
+        reason=reason,
+        before=before,
+        after=revision_log.snapshot(db_entry),
+    )
     db.commit()
     db.refresh(db_entry)
     return db_entry
 
 
+def cancel_time_entry(
+    db: Session,
+    entry_id: int,
+    *,
+    actor: object,
+    reason: str,
+    replacement_id: Optional[int] = None,
+) -> Optional[models.TimeEntry]:
+    """Buchung stornieren statt löschen.
+
+    Die Buchung bleibt vollständig erhalten und sichtbar, zählt aber nicht
+    mehr. Wird eine Ersatzbuchung angegeben, verweisen beide aufeinander –
+    damit ist die Korrektur in der Historie als solche erkennbar und nicht
+    als zwei zusammenhanglose Vorgänge.
+    """
+    db_entry = get_time_entry(db, entry_id)
+    if not db_entry:
+        return None
+    ensure_period_open(db, db_entry.work_date)
+    cleaned = (reason or "").strip()
+    if not cleaned:
+        raise revision_log.ReasonRequired("Eine Stornierung braucht eine Begründung.")
+
+    before = revision_log.snapshot(db_entry)
+    db_entry.status = models.TimeEntryStatus.CANCELLED
+    db_entry.cancelled_at = datetime.utcnow()
+    db_entry.cancelled_by_id = getattr(actor, "id", None)
+    db_entry.cancel_reason = cleaned[:500]
+    db_entry.is_open = False
+    if replacement_id:
+        db_entry.replaced_by_id = replacement_id
+        replacement = get_time_entry(db, replacement_id)
+        if replacement is not None:
+            replacement.replaces_id = db_entry.id
+    db.flush()
+    revision_log.record(
+        db,
+        db_entry,
+        models.RevisionAction.CANCELLED,
+        actor=actor,
+        reason=cleaned,
+        before=before,
+        after=revision_log.snapshot(db_entry),
+    )
+    db.commit()
+    db.refresh(db_entry)
+    return db_entry
+
+
+def replace_time_entry(
+    db: Session,
+    entry_id: int,
+    entry: schemas.TimeEntryCreate,
+    *,
+    actor: object,
+    reason: str,
+) -> tuple[Optional[models.TimeEntry], Optional[models.TimeEntry]]:
+    """Korrektur nach dem vorgesehenen Weg: Storno plus Ersatzbuchung.
+
+    Gibt ``(storniertes Original, Ersatzbuchung)`` zurück. Das Original wird
+    zuerst storniert, damit die Ersatzbuchung nicht an einer Überschneidung mit
+    genau der Buchung scheitert, die sie ablöst.
+    """
+    original = get_time_entry(db, entry_id)
+    if not original:
+        return None, None
+    cleaned = (reason or "").strip()
+    if not cleaned:
+        raise revision_log.ReasonRequired("Eine Korrektur braucht eine Begründung.")
+    ensure_period_open(db, original.work_date)
+    ensure_period_open(db, entry.work_date)
+
+    cancel_time_entry(db, entry_id, actor=actor, reason=cleaned)
+    replacement = create_time_entry(db, entry)
+    replacement.replaces_id = original.id
+    original.replaced_by_id = replacement.id
+    db.flush()
+    revision_log.record(
+        db,
+        replacement,
+        models.RevisionAction.REPLACED,
+        actor=actor,
+        reason=cleaned,
+        before=revision_log.snapshot(original),
+        after=revision_log.snapshot(replacement),
+    )
+    db.commit()
+    db.refresh(original)
+    db.refresh(replacement)
+    return original, replacement
+
+
 def delete_time_entry(db: Session, entry_id: int) -> bool:
+    """Physisches Löschen ist seit 0.14.0 nicht mehr vorgesehen.
+
+    Der Aufruf storniert stattdessen – ohne Bearbeiter und mit einer
+    Begründung, die genau das festhält. So bleibt kein Aufrufpfad übrig, über
+    den eine Buchung spurlos verschwindet.
+    """
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return False
-    db.delete(db_entry)
-    db.commit()
+    if db_entry.status == models.TimeEntryStatus.CANCELLED:
+        return True
+    cancel_time_entry(
+        db,
+        entry_id,
+        actor=None,
+        reason="Löschanforderung – Buchung storniert statt entfernt (revisionssicher).",
+    )
     return True
 
 

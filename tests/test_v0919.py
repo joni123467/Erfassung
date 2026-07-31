@@ -199,8 +199,8 @@ def dept(client):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.13.1"
-    assert client.get("/health").json()["version"] == "0.13.1"
+    assert client.main.APP_VERSION == "0.14.0"
+    assert client.get("/health").json()["version"] == "0.14.0"
 
 
 # --- Teil 1: Administrationszugang für Abteilungsadmins --------------------------
@@ -328,6 +328,7 @@ def test_overwrite_confirmation_lists_affected_booking(client):
         f"/admin/time-entries/{a}/update",
         data={
             "csrf_token": token, "user_id": str(uid), "work_date": DAY.isoformat(),
+            "change_reason": "Test: Korrektur",
             "start_time": "10:30", "end_time": "11:00", "break_minutes": "0",
             "notes": "A", "next_url": "/admin/reports/time",
         },
@@ -359,6 +360,7 @@ def test_overwrite_confirmed_splits_covered_booking(client):
         f"/admin/time-entries/{a}/update",
         data={
             "csrf_token": token, "user_id": str(uid), "work_date": DAY.isoformat(),
+            "change_reason": "Test: Korrektur",
             "start_time": "10:30", "end_time": "11:00", "break_minutes": "0",
             "notes": "A", "next_url": "/admin/reports/time", "confirm_overwrite": "1",
         },
@@ -371,7 +373,7 @@ def test_overwrite_confirmed_splits_covered_booking(client):
     assert (time(11, 0), time(12, 0), "B") in segments
 
 
-def test_overwrite_confirmed_deletes_fully_covered_booking(client):
+def test_overwrite_confirmed_cancels_fully_covered_booking(client):
     from app import crud, database
 
     login(client)
@@ -388,12 +390,20 @@ def test_overwrite_confirmed_deletes_fully_covered_booking(client):
         f"/admin/time-entries/{a}/update",
         data={
             "csrf_token": token, "user_id": str(uid), "work_date": DAY.isoformat(),
+            "change_reason": "Test: Korrektur",
             "start_time": "09:30", "end_time": "11:30", "break_minutes": "0",
             "notes": "A", "next_url": "/admin/reports/time", "confirm_overwrite": "1",
         },
         follow_redirects=False,
     )
-    assert _get(b) is None, "vollständig überdeckte Buchung wurde nicht entfernt"
+    # Seit 0.14.0 wird die überdeckte Buchung storniert statt gelöscht – sie
+    # bleibt mit ihrer Historie erhalten, zählt aber nicht mehr.
+    from app import models as _models
+
+    overdeckt = _get(b)
+    assert overdeckt is not None, "Buchung darf nicht physisch gelöscht werden"
+    assert overdeckt.status == _models.TimeEntryStatus.CANCELLED
+    assert overdeckt.worked_minutes == 0
     assert _get(a).start_time == time(9, 30) and _get(a).end_time == time(11, 30)
 
 
@@ -414,6 +424,7 @@ def test_overwrite_confirmed_shortens_partial_overlap(client):
         f"/admin/time-entries/{a}/update",
         data={
             "csrf_token": token, "user_id": str(uid), "work_date": DAY.isoformat(),
+            "change_reason": "Test: Korrektur",
             "start_time": "09:00", "end_time": "11:00", "break_minutes": "0",
             "notes": "A", "next_url": "/admin/reports/time", "confirm_overwrite": "1",
         },
@@ -441,6 +452,7 @@ def test_no_confirmation_without_conflict(client):
         f"/admin/time-entries/{a}/update",
         data={
             "csrf_token": token, "user_id": str(uid), "work_date": DAY.isoformat(),
+            "change_reason": "Test: Korrektur",
             "start_time": "08:00", "end_time": "11:00", "break_minutes": "0",
             "notes": "", "next_url": "/admin/reports/time",
         },
@@ -468,6 +480,7 @@ def test_overwrite_keeps_running_entry_alive(client):
         f"/admin/time-entries/{a}/update",
         data={
             "csrf_token": token, "user_id": str(uid), "work_date": DAY.isoformat(),
+            "change_reason": "Test: Korrektur",
             "start_time": "09:30", "end_time": "11:00", "break_minutes": "0",
             "notes": "A", "next_url": "/admin/reports/time", "confirm_overwrite": "1",
         },

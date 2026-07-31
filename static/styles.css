@@ -4235,3 +4235,38 @@ tr.company-deleted td {
         min-width: 12rem;
     }
 }
+
+/* ── Pflichtfeld-Markierung ────────────────────────────────────────── */
+
+.required-marker {
+    color: var(--danger);
+    font-weight: 700;
+}
+
+/* ── Revisionshistorie und Regelverstöße ───────────────────────────── */
+
+.revision-changes {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.9rem;
+}
+
+.revision-changes__old {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
+
+.revision-changes__new {
+    font-weight: 600;
+}
+
+.compliance-form {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin: 0;
+}
+
+.compliance-form input[type="text"] {
+    min-width: 12rem;
+}

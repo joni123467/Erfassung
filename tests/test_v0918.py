@@ -123,6 +123,7 @@ def _update(entry_id, uid, start, end):
                 break_minutes=0, break_started_at=None, is_open=False, notes="",
                 status=models.TimeEntryStatus.APPROVED, is_manual=False,
             ),
+            reason="Test: Korrektur",
         )
     finally:
         db.close()
@@ -141,8 +142,8 @@ def _get(entry_id):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.13.1"
-    assert client.get("/health").json()["version"] == "0.13.1"
+    assert client.main.APP_VERSION == "0.14.0"
+    assert client.get("/health").json()["version"] == "0.14.0"
 
 
 # --- the exact reported case ---------------------------------------------------
@@ -171,6 +172,7 @@ def test_edit_route_adjacent_seconds_boundary(client):
         f"/admin/time-entries/{a}/update",
         data={
             "csrf_token": token, "user_id": str(uid), "work_date": DAY.isoformat(),
+            "change_reason": "Test: Korrektur",
             "start_time": "14:18", "end_time": "16:00", "break_minutes": "0",
             "notes": "Bis 16:00", "next_url": "/admin/reports/time",
         },
