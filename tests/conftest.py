@@ -1,79 +1,76 @@
 """Gemeinsame Testinfrastruktur.
 
-Jeder Test lädt die Anwendung frisch (die Module unter ``app`` werden aus
-``sys.modules`` entfernt und neu importiert) und legt dabei eine eigene
-SQLAlchemy-Engine mit eigenem Verbindungspool an. Die alte Engine wird dabei
-nur noch dereferenziert – ihre offenen SQLite-Verbindungen bleiben bestehen,
-bis der Garbage Collector sie einsammelt.
+Jeder Test lädt die Anwendung frisch: Die Module unter ``app`` werden aus
+``sys.modules`` entfernt und neu importiert. Dabei bleiben zwei Sorten von
+Ressourcen offen zurück, weil die Anwendung im Betrieb nie neu geladen wird
+und daher auch nichts aufzuräumen hat:
 
-Für einzelne Testdateien fällt das nicht auf. Über die gesamte Suite hinweg
-summiert es sich: Der Prozess läuft in das Limit für offene Dateien und bricht
-mit ``OSError: [Errno 24] Too many open files`` ab – und zwar erst beim
-Aufräumen am Ende, sodass pytest gar keine Zusammenfassung mehr schreibt. Ein
-grüner Lauf ist dann nicht mehr von einem roten zu unterscheiden.
+1. **Der Verbindungspool der Datenbank.** Die vorherige ``app.database``-Engine
+   wird nur dereferenziert; ihre SQLite-Verbindungen bleiben bis zur nächsten
+   Garbage Collection offen.
+2. **Die Logdateien.** ``logging_setup`` merkt sich seine Handler in einer
+   modulweiten Liste und schließt sie beim Neukonfigurieren. Wird das *Modul*
+   ersetzt, ist diese Liste leer – die Handler des alten Moduls hängen aber
+   weiter an den ``erfassung.*``-Loggern, denn die leben in der globalen
+   Logging-Registrierung und werden nicht mitgeladen. Pro Test bleiben so rund
+   zehn offene Logdateien liegen.
 
-Deshalb wird nach jedem Test aufgeräumt. Das ist reine Testhygiene und ändert
-nichts am Verhalten der Anwendung.
+Über die gesamte Suite summiert sich das bis an das Limit für offene Dateien
+(``OSError: [Errno 24] Too many open files``). Das Tückische daran: Es trifft
+irgendeinen späten Test oder erst das Aufräumen am Ende – ein grüner Lauf ist
+dann nicht mehr von einem roten zu unterscheiden.
+
+Deshalb wird nach jedem Test beides geschlossen. Reine Testhygiene; am
+Verhalten der Anwendung ändert das nichts.
 """
 
 from __future__ import annotations
 
-import gc
-import os
+import logging
 import sys
 
 import pytest
 
-#: Ab so vielen offenen Dateideskriptoren wird zusätzlich der Heap nach
-#: verwaisten Engines durchsucht. Das Limit des Containers liegt bei 4096;
-#: der Schwellwert lässt genug Luft und hält die teure Suche selten.
-_FD_SWEEP_THRESHOLD = 1500
+#: Wurzel der Kanal-Logger aus ``app.logging_setup``.
+_LOGGER_PREFIX = "erfassung"
 
 
-def _open_fd_count() -> int:
-    """Offene Dateideskriptoren des Prozesses – oder 0, wenn nicht ermittelbar."""
+def _close(resource: object, method: str) -> None:
     try:
-        return len(os.listdir("/proc/self/fd"))
-    except OSError:  # pragma: no cover - andere Plattformen
-        return 0
-
-
-def _dispose(engine: object) -> None:
-    try:
-        engine.dispose()  # type: ignore[attr-defined]
+        getattr(resource, method)()
     except Exception:  # pragma: no cover - Aufräumen darf keinen Test kippen
         pass
 
 
-def _sweep_orphaned_engines() -> None:
-    """Verwaiste Engines auf dem Heap schließen.
-
-    Nicht jede Engine hängt an ``app.database``: Der datenbankübergreifende
-    Restore baut eigene Engines für Quelle und Ziel, und ein Modulneuladen
-    lässt die vorherige Engine unerreichbar, aber mit offenem Pool zurück.
-    Diese Suche ist teuer, deshalb läuft sie erst, wenn wirklich viele
-    Deskriptoren offen sind.
-    """
-    try:
-        from sqlalchemy.engine import Engine
-    except Exception:  # pragma: no cover
-        return
-    gc.collect()
-    for obj in gc.get_objects():
-        try:
-            if isinstance(obj, Engine):
-                _dispose(obj)
-        except ReferenceError:  # pragma: no cover - Objekt verschwand beim Iterieren
-            continue
-
-
-@pytest.fixture(autouse=True)
-def _dispose_database_engine():
-    """Verbindungspools nach jedem Test schließen."""
-    yield
+def _dispose_engine() -> None:
     database = sys.modules.get("app.database")
     engine = getattr(database, "engine", None) if database is not None else None
     if engine is not None:
-        _dispose(engine)
-    if _open_fd_count() > _FD_SWEEP_THRESHOLD:
-        _sweep_orphaned_engines()
+        _close(engine, "dispose")
+
+
+def _close_log_handlers() -> None:
+    """Dateihandler der ``erfassung.*``-Logger abhängen und schließen."""
+    manager = logging.Logger.manager
+    names = [
+        name
+        for name in list(manager.loggerDict)
+        if name == _LOGGER_PREFIX or name.startswith(f"{_LOGGER_PREFIX}.")
+    ]
+    targets = [logging.getLogger(name) for name in names]
+    targets.append(logging.getLogger())  # error.log hängt am Root-Logger
+    for logger in targets:
+        for handler in list(getattr(logger, "handlers", [])):
+            # Nur Dateihandler: Die Konsolen- und Capture-Handler von pytest
+            # bleiben unangetastet, sonst verlöre der Bericht seine Ausgabe.
+            if isinstance(handler, logging.FileHandler):
+                logger.removeHandler(handler)
+                _close(handler, "close")
+
+
+@pytest.fixture(autouse=True)
+def _release_process_resources():
+    """Datenbankpool und Logdateien nach jedem Test freigeben."""
+    yield
+    _dispose_engine()
+    _close_log_handlers()
