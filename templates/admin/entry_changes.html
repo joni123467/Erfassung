@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Änderungsprotokoll – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'entry_changes' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Änderungsprotokoll</h1>
+            <p class="card-header__hint">
+                Jeder Vorgang an einer Zeitbuchung – Anlage, Beenden, Änderung,
+                Freigabe, Ablehnung und Stornierung – mit Vorher/Nachher,
+                Bearbeiter und Begründung.
+            </p>
+        </div>
+        <form method="get" action="/admin/time-entries/changes" class="inline-form">
+            <label class="visually-hidden" for="change-action">Vorgang</label>
+            <select id="change-action" name="action">
+                <option value="">Alle Vorgänge</option>
+                {% for key, label in action_labels.items() %}
+                    <option value="{{ key }}"{% if key == selected_action %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <label class="visually-hidden" for="change-days">Zeitraum</label>
+            <select id="change-days" name="days">
+                {% for option in day_options %}
+                    <option value="{{ option }}"{% if option == selected_days %} selected{% endif %}>Letzte {{ option }} Tage</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="button small">Anzeigen</button>
+        </form>
+    </div>
+
+    <p class="card-header__hint">
+        Einträge dieser Liste werden nie geändert oder gelöscht. Der Zeitraum
+        bezieht sich auf das <strong>Buchungsdatum</strong>, nicht auf den
+        Zeitpunkt der Änderung – so bleibt eine späte Korrektur an einer alten
+        Buchung dort, wo man sie sucht.
+    </p>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Vorgang</th>
+                <th>Buchung</th>
+                <th>Mitarbeiter</th>
+                <th>Geändert am (UTC)</th>
+                <th>Bearbeiter</th>
+                <th>Begründung</th>
+                <th>Änderungen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for revision in revisions %}
+                {% set changes = revision_diff(parse_revision(revision.before_json), parse_revision(revision.after_json)) %}
+                <tr>
+                    <td><strong>{{ action_labels.get(revision.action, revision.action) }}</strong></td>
+                    <td>
+                        {% if revision.entry %}
+                            <a href="/admin/time-entries/{{ revision.entry_id }}/history">
+                                {{ revision.entry.work_date.strftime('%d.%m.%Y') }}
+                            </a>
+                        {% else %}
+                            <a href="/admin/time-entries/{{ revision.entry_id }}/history">Buchung {{ revision.entry_id }}</a>
+                        {% endif %}
+                    </td>
+                    <td>{{ revision.entry.user.full_name if revision.entry and revision.entry.user else '–' }}</td>
+                    <td>{{ revision.changed_at_utc.strftime('%d.%m.%Y %H:%M') }}</td>
+                    <td>{{ revision.actor_label or '–' }}</td>
+                    <td>{{ revision.reason or '–' }}</td>
+                    <td>
+                        {% if changes %}
+                            <ul class="revision-changes">
+                                {% for field, change in changes.items() %}
+                                    <li>
+                                        <strong>{{ field_labels.get(field, field) }}</strong>:
+                                        <span class="revision-changes__old">{{ change.vorher if change.vorher is not none else '–' }}</span>
+                                        →
+                                        <span class="revision-changes__new">{{ change.nachher if change.nachher is not none else '–' }}</span>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <span class="text-muted">–</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7">Keine Änderungen im gewählten Zeitraum.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

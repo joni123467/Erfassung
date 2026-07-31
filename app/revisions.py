@@ -23,10 +23,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from . import models
 
@@ -202,6 +202,52 @@ def history_for_user(
         .join(models.TimeEntry, models.TimeEntry.id == models.TimeEntryRevision.entry_id)
         .filter(models.TimeEntry.user_id == user_id)
         .order_by(models.TimeEntryRevision.changed_at_utc.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def recent(
+    db: Session,
+    *,
+    user_ids: Optional[list[int]] = None,
+    actions: Optional[list[str]] = None,
+    since: Optional[date] = None,
+    limit: int = 200,
+) -> list[models.TimeEntryRevision]:
+    """Letzte Vorgänge über **alle** Buchungen – das Änderungsprotokoll.
+
+    Die Historie je Buchung beantwortet „was ist mit dieser Buchung
+    passiert?". Diese Abfrage beantwortet die andere Frage: „was ist in den
+    letzten Tagen überhaupt geändert worden?" – ohne die Buchung schon zu
+    kennen.
+
+    ``user_ids`` bildet den Geltungsbereich ab (``None`` heißt „alle"), gefiltert
+    wird über die Buchung, nicht über den Bearbeiter: Gefragt ist, *wessen*
+    Zeiten angefasst wurden.
+    """
+    query = (
+        db.query(models.TimeEntryRevision)
+        .join(models.TimeEntry, models.TimeEntry.id == models.TimeEntryRevision.entry_id)
+        # Buchung und deren Person mitladen – die Liste zeigt beide je Zeile.
+        # Wer die Änderung vorgenommen hat, steht als Text in ``actor_label``.
+        .options(
+            joinedload(models.TimeEntryRevision.entry).joinedload(models.TimeEntry.user)
+        )
+    )
+    if user_ids is not None:
+        if not user_ids:
+            return []
+        query = query.filter(models.TimeEntry.user_id.in_(user_ids))
+    if actions:
+        query = query.filter(models.TimeEntryRevision.action.in_(actions))
+    if since is not None:
+        query = query.filter(models.TimeEntry.work_date >= since)
+    return (
+        query.order_by(
+            models.TimeEntryRevision.changed_at_utc.desc(),
+            models.TimeEntryRevision.id.desc(),
+        )
         .limit(limit)
         .all()
     )

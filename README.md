@@ -2,7 +2,17 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.14.1`
+**Version:** `0.14.2`
+
+> Seit 0.14.2: **Halbe Urlaubstage werden halb angerechnet.** In der
+> Adminauswertung, im Excel- und PDF-Export sowie über `POST /api/vacations`
+> zählten sie als ganze Tage – ein Antrag über zwei halbe Tage erschien mit
+> 16:00 statt 8:00 Stunden, und beim Überstundenurlaub landete sogar ein
+> falscher Wert in der Datenbank. Neu sind außerdem eine
+> **Urlaubsübersicht** für die Administration (Anspruch, genommen, verplant,
+> Resturlaub je Mitarbeitendem, eigenes Recht `Vacation.Overview`) und ein
+> **Änderungsprotokoll** für alle Stempelungen. Details in
+> [`docs/RELEASE_NOTES_0.14.2.md`](docs/RELEASE_NOTES_0.14.2.md).
 
 > Seit 0.14.1: **Der Einsatzort ist zurück.** Die Standortauswahl hing am
 > Benutzerkennzeichen „Remote/vor Ort" und verschwand ohne es komplett – ein
@@ -734,6 +744,53 @@ eintägigen Antrag genügt eines davon.
 Ein halber Tag bringt die halbe Tagessollzeit – in der Urlaubsübersicht, der
 Tagesgutschrift, den Auswertungen und beim Überstundenurlaub. In den Listen
 erscheint er als „½" hinter dem Datum. Bestandsanträge bleiben ganze Tage.
+
+Seit 0.14.2 gilt das auch in der **Adminauswertung**, im **Excel-** und
+**PDF-Export** sowie über `POST /api/vacations` – dort zählten halbe Tage
+vorher als ganze.
+
+### Urlaubsübersicht (seit 0.14.2)
+
+Unter *Administration → Auswertungen → **Urlaubsübersicht*** steht der
+Urlaubsstand aller Mitarbeitenden nebeneinander:
+
+| Spalte | Bedeutung |
+|--------|-----------|
+| Anspruch | Jahresanspruch plus Übertrag aus dem Vorjahr |
+| Genommen | genehmigte Anträge des Jahres |
+| Beantragt | noch offene Anträge – bereits verplant |
+| **Verbleibend** | Anspruch minus genommen minus beantragt |
+| Überstundenabbau | getrennt ausgewiesen: zehrt vom Zeitkonto, nicht vom Urlaub |
+
+Gerechnet wird mit derselben Funktion wie in der Ansicht der Person – zwei
+Zahlen für dieselbe Sache dürfen nicht auseinanderlaufen.
+
+Nötig ist das Recht **`Vacation.Overview`** („Urlaubsübersicht einsehen"). Es
+hat einen eigenen Geltungsbereich (*alle* oder *eigenes Team*) und ist bewusst
+von `Vacation.Manage` getrennt: Den Resturlaub eines Teams zu sehen ist etwas
+anderes, als über Anträge zu entscheiden. **Bestehende Rollen bekommen es
+nicht automatisch** – es ist in der Rollenverwaltung zu vergeben.
+
+### Änderungsprotokoll (seit 0.14.2)
+
+Unter *Administration → Auswertungen → **Änderungsprotokoll*** stehen alle
+Vorgänge über alle Buchungen: Anlage, Beenden, Änderung, Freigabe, Ablehnung
+und Stornierung – mit Vorher/Nachher, Bearbeiter, Zeitpunkt und Begründung.
+Filter nach Vorgang und Zeitraum, aus jeder Zeile ein Weg in die Historie der
+einzelnen Buchung.
+
+Der Zeitraum bezieht sich auf das **Buchungsdatum**, nicht auf den Zeitpunkt
+der Änderung: So bleibt eine späte Korrektur an einer alten Buchung dort, wo
+man sie sucht. Sichtbar mit `Time.View`.
+
+### Feiertage und Sollzeit
+
+Die Monatssollzeit zählt **jeden Werktag Mo–Fr**, auch gesetzliche Feiertage.
+Wer an einem Feiertag nicht arbeitet und keinen Urlaub bucht, bekommt dadurch
+ein Minus von einer Tagessollzeit. Das ist der Stand seit jeher und wurde
+bewusst nicht geändert: Ob ein Feiertag die Sollzeit senkt oder getrennt
+gutgeschrieben wird, ist eine betriebliche Entscheidung, und eine Umstellung
+würde alle bestehenden Salden rückwirkend verschieben.
 
 ## Funktionsbausteine
 

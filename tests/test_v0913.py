@@ -51,8 +51,8 @@ def client(tmp_path, monkeypatch):
 # --- version -----------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.14.1"
-    assert client.get("/health").json()["version"] == "0.14.1"
+    assert client.main.APP_VERSION == "0.14.2"
+    assert client.get("/health").json()["version"] == "0.14.2"
 
 
 # --- /sw.js delivery -----------------------------------------------------------
@@ -63,7 +63,7 @@ def test_sw_js_has_stamped_version_and_headers(client):
     body = response.text
     # Version im Skriptinhalt: nur so erkennen installierte PWAs Updates,
     # deren gecachte Seite noch eine alte Registrierungs-URL verwendet.
-    assert body.startswith('self.__ERFASSUNG_VERSION = "0.14.1";')
+    assert body.startswith('self.__ERFASSUNG_VERSION = "0.14.2";')
     assert "no-cache" in response.headers.get("cache-control", "")
     assert response.headers.get("service-worker-allowed") == "/"
 
@@ -71,7 +71,7 @@ def test_sw_js_has_stamped_version_and_headers(client):
 def test_sw_js_content_changes_per_version(client):
     """Zwei Versionen müssen unterschiedliche Skript-Bytes erzeugen."""
     body = client.get("/sw.js").text
-    other = body.replace('"0.14.1"', '"9.9.99"', 1)
+    other = body.replace('"0.14.2"', '"9.9.99"', 1)
     assert body != other  # trivially true, documents the byte-diff mechanism
     assert 'self.__ERFASSUNG_VERSION' in body
 
@@ -132,4 +132,4 @@ def test_sync_data_contains_version(client):
         follow_redirects=False,
     )
     payload = client.get("/mobile/sync-data?days=7").json()
-    assert payload["version"] == "0.14.1"
+    assert payload["version"] == "0.14.2"

@@ -172,8 +172,10 @@ def export_time_entries(
         for vacation in vacation_list:
             start_date = max(period_start or vacation.start_date, vacation.start_date)
             end_date = min(period_end or vacation.end_date, vacation.end_date)
-            credited = services.calculate_required_vacation_minutes(
+            # Halbe Tage zählen halb (korrigiert in 0.14.2).
+            credited = services.vacation_minutes_in_range(
                 vacation.user,
+                vacation,
                 start_date,
                 end_date,
             )

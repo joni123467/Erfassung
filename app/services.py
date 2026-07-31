@@ -35,6 +35,18 @@ def calculate_monthly_target_minutes(user: models.User | None, year: int, month:
 def calculate_required_vacation_minutes(
     user: models.User | None, start: date, end: date
 ) -> int:
+    """Sollminuten eines Zeitraums (Mo–Fr × Tagessoll).
+
+    **Nicht für die Urlaubsanrechnung verwenden.** Diese Funktion kennt keine
+    halben Tage – sie sieht den Antrag gar nicht, nur den Zeitraum. Genau
+    daran krankte bis 0.14.2 die Adminauswertung: Ein Antrag über zwei halbe
+    Tage erschien mit 16:00 statt 8:00 Stunden.
+
+    Für Urlaub gilt :func:`vacation_minutes_in_range` (Minuten) bzw.
+    :func:`vacation_days_in_range` (Tage). Der Name ist historisch; geblieben
+    ist die Funktion als Sollzeitrechnung, siehe
+    :func:`calculate_target_minutes_in_range`.
+    """
     if not user:
         return 0
     daily_minutes = int(round(user.daily_target_minutes or 0))
@@ -99,6 +111,27 @@ def vacation_days(vacation: models.VacationRequest) -> float:
     total = 0.0
     current = vacation.start_date
     while current <= vacation.end_date:
+        if current.weekday() < 5:
+            total += half_day_factor(vacation, current)
+        current += timedelta(days=1)
+    return total
+
+
+def vacation_days_in_range(
+    vacation: models.VacationRequest, start: date, end: date
+) -> float:
+    """Urlaubstage dieses Antrags **im Zeitraum** – halbe Tage als 0,5.
+
+    Wie :func:`vacation_days`, aber auf einen Ausschnitt begrenzt. Nötig für
+    Auswertungen über einen Monat, in den ein Antrag hineinragt.
+    """
+    overlap_start = max(start, vacation.start_date)
+    overlap_end = min(end, vacation.end_date)
+    if overlap_start > overlap_end:
+        return 0.0
+    total = 0.0
+    current = overlap_start
+    while current <= overlap_end:
         if current.weekday() < 5:
             total += half_day_factor(vacation, current)
         current += timedelta(days=1)

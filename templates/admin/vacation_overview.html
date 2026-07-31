@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Urlaubsübersicht – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'vacation_overview' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Urlaubsübersicht {{ selected_year }}</h1>
+            <p class="card-header__hint">
+                Anspruch, genommener und verbleibender Urlaub je Mitarbeitendem.
+                Halbe Tage zählen mit 0,5.
+            </p>
+        </div>
+        <form method="get" action="/admin/reports/vacations" class="inline-form">
+            <label class="visually-hidden" for="vacation-year">Jahr</label>
+            <select id="vacation-year" name="year" onchange="this.form.submit()">
+                {% for option in year_options %}
+                    <option value="{{ option }}"{% if option == selected_year %} selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit" class="button small">Anzeigen</button></noscript>
+        </form>
+    </div>
+
+    <p class="card-header__hint">
+        <strong>Verbleibend</strong> zieht genommenen <em>und</em> beantragten Urlaub
+        vom Anspruch ab – ein offener Antrag ist bereits verplant.
+        <strong>Überstundenabbau</strong> steht getrennt daneben: Er zehrt vom
+        Zeitkonto, nicht vom Urlaubsanspruch.
+    </p>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Mitarbeiter</th>
+                <th>Anspruch</th>
+                <th>davon Übertrag</th>
+                <th>Genommen</th>
+                <th>Beantragt</th>
+                <th>Verbleibend</th>
+                <th>Überstundenabbau</th>
+                <th>Offene Anträge</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+                <tr>
+                    <td>{{ row.user.full_name }}</td>
+                    <td>{{ row.summary.total_days|round(2) }}</td>
+                    <td>
+                        {% if row.summary.carryover_days %}
+                            {{ row.summary.carryover_days|round(2) }}
+                        {% else %}
+                            <span class="text-muted">–</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ row.summary.used_days|round(2) }}</td>
+                    <td>{{ row.summary.planned_days|round(2) }}</td>
+                    {# Kein Resturlaub mehr ist keine Störung, aber es soll auffallen. #}
+                    <td class="status-label{% if row.summary.remaining_days <= 0 %} status-rejected{% endif %}">
+                        <strong>{{ row.summary.remaining_days|round(2) }}</strong>
+                    </td>
+                    <td>
+                        {% if row.overtime_minutes %}
+                            {{ row.overtime_minutes|format_minutes }} Std
+                        {% else %}
+                            <span class="text-muted">–</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.pending %}
+                            <a href="/admin/approvals">{{ row.pending }}</a>
+                        {% else %}
+                            <span class="text-muted">–</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="8">Keine Mitarbeitenden im Geltungsbereich.</td></tr>
+            {% endfor %}
+            </tbody>
+            {% if rows %}
+                <tfoot>
+                <tr>
+                    <th>Summe</th>
+                    <th>{{ totals.total_days }}</th>
+                    <th></th>
+                    <th>{{ totals.used_days }}</th>
+                    <th>{{ totals.planned_days }}</th>
+                    <th>{{ totals.remaining_days }}</th>
+                    <th></th>
+                    <th></th>
+                </tr>
+                </tfoot>
+            {% endif %}
+        </table>
+    </div>
+</section>
+{% endblock %}

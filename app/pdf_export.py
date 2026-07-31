@@ -46,6 +46,13 @@ def _format_minutes(value: int) -> str:
     return f"{hours:02d}:{minutes:02d}"
 
 
+def _format_days(value: float) -> str:
+    """Urlaubstage deutsch: ganze Tage ohne Nachkomma, halbe mit Komma."""
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:.1f}".replace(".", ",")
+
+
 def _format_signed_minutes(value: int) -> str:
     minutes = int(value)
     sign = "-" if minutes < 0 else ""
@@ -74,16 +81,6 @@ _VACATION_STATUS_LABELS = {
 
 def _vacation_status_label(status: str) -> str:
     return _VACATION_STATUS_LABELS.get(status, str(status).title())
-
-
-def _workdays(start: date, end: date) -> int:
-    current = start
-    total = 0
-    while current <= end:
-        if current.weekday() < 5:
-            total += 1
-        current += timedelta(days=1)
-    return total
 
 
 # ── Shared layout system ─────────────────────────────────────────────────────
@@ -243,11 +240,13 @@ def _vacation_overview_rows(
         overlap_end = min(end, vacation.end_date)
         if overlap_start > overlap_end:
             continue
-        days = _workdays(overlap_start, overlap_end)
+        # Halbe Tage zählen halb – sowohl in der Tagesspalte als auch in der
+        # Anrechnung (korrigiert in 0.14.2, vorher standen dort ganze Tage).
+        days = services.vacation_days_in_range(vacation, overlap_start, overlap_end)
         vacation_type = "Überstundenabbau" if vacation.use_overtime else "Urlaub"
         if vacation.status == VacationStatus.APPROVED:
-            credited = services.calculate_required_vacation_minutes(
-                vacation.user, overlap_start, overlap_end
+            credited = services.vacation_minutes_in_range(
+                vacation.user, vacation, overlap_start, overlap_end
             )
             credited_label = f"{_format_minutes(credited)} Std"
         else:
@@ -260,7 +259,7 @@ def _vacation_overview_rows(
                 f"{overlap_start.strftime('%d.%m.%Y')} – {overlap_end.strftime('%d.%m.%Y')}",
                 vacation_type,
                 _vacation_status_label(vacation.status),
-                str(days),
+                _format_days(days),
                 credited_label,
                 vacation.comment or "–",
             ]
