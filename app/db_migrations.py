@@ -543,6 +543,26 @@ def _add_half_vacation_days(engine: Engine) -> None:
     )
 
 
+def _add_company_locations(engine: Engine) -> None:
+    """Standorte je Firma und Einsatzort an der Buchung (ab 0.13.0).
+
+    Bestandsdaten bleiben unangetastet: ``companies.is_internal`` ist ``0``
+    (jede vorhandene Firma ist ein Kunde), ``time_entries.location_id`` bleibt
+    ``NULL``. Eine Buchung ohne Standort verhält sich damit exakt wie bisher –
+    der Einsatzort ergibt sich weiterhin allein aus ``is_remote``.
+    """
+    if not db_schema.has_table(engine, "company_locations"):
+        models.Base.metadata.tables["company_locations"].create(bind=engine, checkfirst=True)
+
+    db_schema.add_column(
+        engine, "companies", "is_internal", "BOOLEAN", default="0", backfill_null_to="0"
+    )
+    db_schema.add_column(engine, "time_entries", "location_id", "INTEGER")
+    db_schema.add_column(
+        engine, "time_entries", "deleted_location_name", "VARCHAR(255)"
+    )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -559,6 +579,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (13, _add_remote_location_flags),
     (14, _migrate_groups_to_roles),
     (15, _add_half_vacation_days),
+    (16, _add_company_locations),
 ]
 
 

@@ -1,6 +1,14 @@
-{# Einsatzort einer Buchung: Umschalter statt kleiner Checkbox.
-   Die Checkbox bleibt das Formularfeld (offline-fähig, ohne JavaScript) –
-   sichtbar ist eine Schaltfläche, die Farbe und Beschriftung wechselt. #}
+{# Einsatzort einer Buchung.
+
+   Ohne gepflegte Standorte bleibt es beim Umschalter: Die Checkbox ist das
+   Formularfeld (offline-fähig, ohne JavaScript), sichtbar ist eine
+   Schaltfläche, die Farbe und Beschriftung wechselt.
+
+   Sind Standorte hinterlegt, wird daraus eine Auswahlliste im selben Gewand –
+   gleiche Pille, gleicher Punkt, gleiche Beschriftung „Einsatzort“. Bewusst
+   ein einziges Bedienelement statt Schalter *und* Liste: Auf dem Handy ist
+   jeder zusätzliche Griff einer zu viel. #}
+
 {% macro location_toggle(checked=False, block=False) -%}
 <label class="location-toggle{% if block %} location-toggle--block{% endif %}">
     <input type="checkbox" name="is_remote" value="1"{% if checked %} checked{% endif %}>
@@ -14,4 +22,29 @@
         </span>
     </span>
 </label>
+{%- endmacro %}
+
+{% macro location_picker(options=None, checked=False, selected=None, block=False) -%}
+{% if options %}
+<label class="location-toggle location-toggle--select{% if block %} location-toggle--block{% endif %}">
+    <span class="visually-hidden">Einsatzort</span>
+    <span class="location-toggle__face">
+        <span class="location-toggle__dot" aria-hidden="true"></span>
+        <span class="location-toggle__caption" aria-hidden="true">Einsatzort</span>
+        <select class="location-toggle__select" name="work_location">
+            <option value="onsite"{% if not selected and not checked %} selected{% endif %}>Vor Ort</option>
+            <option value="remote"{% if not selected and checked %} selected{% endif %}>Remote</option>
+            {% for group_name, group_locations in options %}
+                <optgroup label="{{ group_name }}">
+                    {% for location in group_locations %}
+                        <option value="{{ location.id }}"{% if selected == location.id %} selected{% endif %}>{{ location.name }}{% if location.city %} · {{ location.city }}{% endif %}</option>
+                    {% endfor %}
+                </optgroup>
+            {% endfor %}
+        </select>
+    </span>
+</label>
+{% else %}
+{{ location_toggle(checked=checked, block=block) }}
+{% endif %}
 {%- endmacro %}

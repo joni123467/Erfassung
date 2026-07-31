@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_components.html" import location_toggle %}
+{% from "_components.html" import location_toggle, location_picker %}
 {% block title %}Mobile Erfassung – Erfassung{% endblock %}
 {% block content %}
 <section
@@ -107,9 +107,15 @@
                             Auftrag: <strong data-field="company-name">{{ active_entry.company.name if active_entry and active_entry.company else '' }}</strong>.
                         </span>
                     </p>
-                    <p class="mobile-card__text" data-state="remote-active" {% if not (active_entry and active_entry.is_remote) %}hidden{% endif %}>
-                        <span class="mobile-badge mobile-badge--remote">Remote</span>
-                    </p>
+                    {% if active_entry and active_entry.location %}
+                        <p class="mobile-card__text">
+                            Einsatzort: <strong>{{ active_entry.location.name }}</strong>
+                        </p>
+                    {% else %}
+                        <p class="mobile-card__text" data-state="remote-active" {% if not (active_entry and active_entry.is_remote) %}hidden{% endif %}>
+                            <span class="mobile-badge mobile-badge--remote">Remote</span>
+                        </p>
+                    {% endif %}
                     <p class="mobile-card__text">Aktuelle Arbeitszeit: <span data-field="worked-duration">{{ active_entry.worked_minutes|format_minutes if active_entry else '0:00' }}</span> Std</p>
                     <p class="mobile-card__text" data-state="break-active" {% if not (active_entry and active_entry.break_started_at) %}hidden{% endif %}>
                         <span class="mobile-badge mobile-badge--break">Pause läuft</span>
@@ -128,7 +134,7 @@
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="start_work">
                         {% if can_flag_remote %}
-                            {{ location_toggle(block=True) }}
+                            {{ location_picker(options=location_options, block=True) }}
                         {% endif %}
                         <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
                     </form>
@@ -225,7 +231,7 @@
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
                             {% if can_flag_remote %}
-                                {{ location_toggle(block=True) }}
+                                {{ location_picker(options=location_options, block=True) }}
                             {% endif %}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
@@ -259,7 +265,7 @@
                             <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
                         </label>
                         {% if can_flag_remote %}
-                            {{ location_toggle(block=True) }}
+                            {{ location_picker(options=location_options, block=True) }}
                         {% endif %}
                         <div class="modal__actions modal-action-bar">
                             <button type="button" class="button ghost modal-action" data-close>

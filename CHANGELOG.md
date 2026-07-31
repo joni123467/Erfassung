@@ -5,6 +5,72 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.13.0] – 2026-07-31
+
+### Added – Standorte statt „Vor Ort“
+
+Der Einsatzort war bisher ein Ja/Nein: Remote oder vor Ort. Jetzt hat jede
+Firma beliebig viele Standorte mit Anschrift, und eine Buchung zeigt auf genau
+einen davon.
+
+- Neue Stammdaten je Firma: **Standorte** (Bezeichnung, Straße, PLZ, Ort,
+  Land) unter Administration → Firmen → *Firma bearbeiten*. Der erste Standort
+  wird automatisch **Hauptstandort** und ist beim Stempeln vorausgewählt;
+  Standorte lassen sich **schließen** statt löschen und bleiben dann in
+  Auswertungen erhalten.
+- Eine Firma lässt sich als **eigener Betrieb** markieren (`is_internal`). Ihre
+  Standorte stehen auch beim Stempeln **ohne Auftrag** zur Wahl – für die
+  eigenen Büros – und stehen in der Auswahl oben. Damit braucht es keinen
+  zweiten Katalog für eigene Adressen.
+- Beim Stempeln wird aus dem Umschalter eine **Auswahlliste in derselben
+  Pille**, sobald Standorte gepflegt sind: gleicher Punkt, gleiche
+  Beschriftung „Einsatzort“, gleiche Farben. Ohne Standorte bleibt es exakt
+  beim bisherigen Schalter. Bewusst ein Bedienelement statt Schalter *und*
+  Liste.
+- Der Einsatzort hängt **nicht** an der gewählten Firma: Wer für Kunde A
+  arbeitet, kann im eigenen Büro sitzen.
+- Laufende Buchung, Buchungslisten, Freigaben und Auswertungen zeigen den
+  Standortnamen (mit Anschrift im Dashboard). Die Spalte „Ort“ in PDF und
+  Excel erscheint jetzt auch, wenn nur Standorte und kein Remote genutzt wird.
+- `GET /mobile/sync-data` liefert die Standorte samt Anschrift; die
+  Offline-Shell schreibt sie beim Start in die Auswahllisten und nimmt den
+  Standort in die Warteschlange mit.
+
+**Bestandsdaten bleiben unberührt:** `location_id` ist bei allen vorhandenen
+Buchungen `NULL` und damit weiterhin „Remote“ bzw. „Vor Ort“; jede vorhandene
+Firma ist ein Kunde. Ein unbekannter oder geschlossener Standort wird beim
+Stempeln verworfen statt abgewiesen – eine Stempelung darf nie an einer
+Stammdatenfrage scheitern.
+
+Standorte gehören zum Lizenzbaustein **`orders`**. Ohne ihn bleibt es beim
+Umschalter.
+
+### Changed – Stempelkarte aufgeräumt
+
+Die Aktionsknöpfe lagen in einer einzigen umbrechenden Reihe; bei schmalem
+Fenster stand „Arbeitszeit beenden“ zwischen den Pausenknöpfen. Jetzt
+gruppiert: Pause, Auftrag, und die abschließende Aktion abgesetzt am rechten
+Rand. Auf schmalen Schirmen stapeln die Gruppen mit Trennlinie untereinander.
+Im Startzustand steht der Einsatzort in einer eigenen Zeile über den Knöpfen –
+er gilt für die Buchung, nicht für einen einzelnen Knopf.
+
+### Datenbank
+
+Migration **16** (`_add_company_locations`), in beiden Mechanismen gepflegt:
+neue Tabelle `company_locations`, `companies.is_internal` (Default `0`),
+`time_entries.location_id` und `time_entries.deleted_location_name`. Geprüft
+gegen eine 0.12.x-Datenbank – Spalten ergänzt, Tabelle angelegt, Buchungen
+unverändert.
+
+Wie bei Firmen bleibt der Name eines gelöschten Standorts an den betroffenen
+Buchungen erhalten (`deleted_location_name`), auch beim Löschen der ganzen
+Firma. War er der Hauptstandort, rückt der nächste nach.
+
+### Tests
+
+`tests/test_v0130.py` – 24 Tests. Details in
+[`docs/RELEASE_NOTES_0.13.0.md`](docs/RELEASE_NOTES_0.13.0.md).
+
 ## [0.12.2] – 2026-07-31
 
 ### Added – Änderungen wirken schnell

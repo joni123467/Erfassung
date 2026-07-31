@@ -113,7 +113,12 @@ def export_time_entries(
     entry_list = list(entries)
     # Spalte „Ort" nur, wenn der Einsatzort genutzt wird – sonst bleibt der
     # Export unverändert zur bisherigen Struktur.
-    show_location = any(bool(getattr(entry, "is_remote", False)) for entry in entry_list)
+    show_location = any(
+        bool(getattr(entry, "is_remote", False))
+        or getattr(entry, "location_id", None) is not None
+        or bool(getattr(entry, "deleted_location_name", ""))
+        for entry in entry_list
+    )
 
     headers = [
         "Mitarbeiter",

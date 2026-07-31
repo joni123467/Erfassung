@@ -309,12 +309,18 @@ def _make_doc(buffer: BytesIO) -> SimpleDocTemplate:
 
 
 def any_remote(entries: Iterable[TimeEntry]) -> bool:
-    """Ist mindestens eine Buchung als Remote erfasst?
+    """Trägt mindestens eine Buchung einen Einsatzort?
 
     Steuert die zusätzliche Spalte „Ort" in den Exporten: Wer den Einsatzort
-    nicht nutzt, bekommt die gewohnte Tabelle ohne zusätzliche Spalte.
+    nicht nutzt, bekommt die gewohnte Tabelle ohne zusätzliche Spalte. Seit
+    0.13.0 zählt dazu auch ein gewählter Standort, nicht mehr nur „Remote".
     """
-    return any(bool(getattr(entry, "is_remote", False)) for entry in entries)
+    return any(
+        bool(getattr(entry, "is_remote", False))
+        or getattr(entry, "location_id", None) is not None
+        or bool(getattr(entry, "deleted_location_name", ""))
+        for entry in entries
+    )
 
 
 def _entry_table(styles: dict, entries: Sequence[TimeEntry], doc_width: float) -> Table:
