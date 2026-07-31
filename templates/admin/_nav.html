@@ -74,13 +74,16 @@
         {% endif %}
     </div>
 {% elif license_state %}
-    {# Lizenzhinweis: „nicht lizenziert“ ist nur ein Hinweis, alles andere eine Warnung. #}
-    <div class="alert {{ 'alert-warning' if license_state.status in ('unlicensed', 'valid') else 'alert-danger' }} license-banner" role="status">
+    {# Lizenzhinweis: bald ablaufend ist eine Warnung, alles Übrige sperrt bereits. #}
+    <div class="alert {{ 'alert-warning' if license_state.status == 'valid' else 'alert-danger' }} license-banner" role="status">
         <span class="license-banner__text">
             {% if license_state.status == 'valid' %}
                 Die Lizenz läuft in {{ license_state.days_until_expiry }} Tag{{ '' if license_state.days_until_expiry == 1 else 'en' }} ab.
             {% else %}
-                Lizenz: {{ license_state.label }} – {{ license_state.reason }}
+                <strong>Lizenz: {{ license_state.label }}.</strong> {{ license_state.reason }}
+                Aufträge, Urlaubsplanung, Auswertungen und Terminals sind gesperrt,
+                neue Benutzer lassen sich nicht anlegen. Stempeln, die eigenen Daten
+                und die Sicherungen bleiben erreichbar.
             {% endif %}
         </span>
         {% if admin_permissions.system %}

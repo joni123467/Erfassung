@@ -5,6 +5,7 @@ import logging
 import base64
 import hashlib
 import hmac
+import re
 from calendar import monthrange
 from collections import Counter
 from datetime import date, datetime, time, timedelta
@@ -165,9 +166,9 @@ class LicenseFeatureMiddleware:
     kein Endpunkt versehentlich ungeschützt bleiben, und neue Unterseiten
     eines Bereichs sind automatisch mit abgedeckt.
 
-    Ohne hinterlegte Lizenz ist alles offen – ein Update darf einen laufenden
-    Betrieb nicht beschneiden. Erst eine gültige Lizenz entscheidet, und eine
-    gemeldete Sperre wirkt erst nach der Übergangsfrist.
+    Freigeschaltet wird nur, was im Lizenzdokument steht: Ohne gültige Lizenz
+    ist kein zubuchbarer Bereich erreichbar. Eine gemeldete Sperre wirkt erst
+    nach der Übergangsfrist.
     """
 
     #: Pfadpräfix → benötigter Baustein. Alles Übrige gehört zur Basis:
@@ -184,6 +185,13 @@ class LicenseFeatureMiddleware:
         ("/api/terminals", "terminals"),
     )
 
+    #: Einzelne Endpunkte, die sich am Präfix nicht erkennen lassen. Die
+    #: Benutzer-API gehört zur Basis, ihr Excel-Export aber zu den
+    #: Auswertungen – deshalb hier und nicht in ``ROUTES``.
+    PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+        (re.compile(r"^/api/users/[^/]+/excel/?$"), "reports"),
+    )
+
     def __init__(self, app):
         self.app = app
 
@@ -191,6 +199,9 @@ class LicenseFeatureMiddleware:
     def required_feature(cls, path: str) -> Optional[str]:
         for prefix, feature in cls.ROUTES:
             if path == prefix or path.startswith(prefix + "/"):
+                return feature
+        for pattern, feature in cls.PATTERNS:
+            if pattern.match(path):
                 return feature
         return None
 
@@ -202,9 +213,13 @@ class LicenseFeatureMiddleware:
         if feature is None:
             await self.app(scope, receive, send)
             return
+        # Ein Fehler in der Prüfung selbst darf keinen arbeitenden Kunden
+        # aussperren. Erreichbar ist dieser Zweig nur bei einem Programmfehler:
+        # eine fehlende Lizenzdatei ergibt regulär „nicht lizenziert“ – und die
+        # sperrt.
         try:
             allowed = licensing.has_feature(feature)
-        except Exception:  # pragma: no cover - die Prüfung darf nie sperren
+        except Exception:  # pragma: no cover - siehe Kommentar oben
             allowed = True
         if allowed:
             await self.app(scope, receive, send)
@@ -1279,7 +1294,10 @@ def _check_license_on_startup() -> None:
         else:
             logging_setup.log_license(detail)
     elif state.status == licensing.STATUS_UNLICENSED:
-        logging_setup.log_license(f"{detail} – {state.reason}")
+        logging_setup.log_license(
+            f"{detail} – {state.reason} Die zubuchbaren Bereiche sind gesperrt.",
+            level=logging.WARNING,
+        )
     else:
         logging_setup.log_license(f"{detail} – {state.reason}", level=logging.WARNING)
 
@@ -1958,6 +1976,7 @@ def mobile_sync_data(
     companies = crud.get_companies(db)
     active_entry = crud.get_open_time_entry(db, user.id)
     metrics = services.calculate_dashboard_metrics(db, user.id, today.replace(day=1))
+    vacation_licensed = has_license_feature("vacation")
 
     payload = {
         "version": APP_VERSION,
@@ -1983,7 +2002,11 @@ def mobile_sync_data(
             for company in companies
         ],
         "entries": [_serialize_mobile_entry(entry) for entry in entries],
-        "vacations": [_serialize_mobile_vacation(vacation) for vacation in vacations],
+        "vacations": (
+            [_serialize_mobile_vacation(vacation) for vacation in vacations]
+            if vacation_licensed
+            else []
+        ),
         "active_entry": _serialize_mobile_entry(active_entry) if active_entry else None,
         # Berechtigungen für die mobile App / Offline-Shell, damit die UI
         # nicht erlaubte Aktionen gar nicht erst anbietet.
@@ -1991,7 +2014,10 @@ def mobile_sync_data(
             "create_companies": _can_create_companies(user),
             "manual_time_entries": _can_submit_manual_entries(user),
             "edit_own_notes": _can_edit_own_notes(user),
-            "request_vacations": _can_request_vacations(user),
+            # Ohne lizenzierte Urlaubsplanung gibt es nichts zu beantragen –
+            # die Offline-Shell soll den Antrag gar nicht erst anbieten und ihn
+            # nicht in die Warteschlange legen.
+            "request_vacations": _can_request_vacations(user) and vacation_licensed,
             "flag_remote": _can_flag_remote(user),
         },
         "metrics": {
@@ -1999,13 +2025,15 @@ def mobile_sync_data(
             "target_minutes": metrics.target_minutes,
             "balance_minutes": (metrics.total_work_minutes + metrics.vacation_minutes) - metrics.target_minutes,
             "vacation_minutes": metrics.vacation_minutes,
+            # Ohne Lizenz kein Urlaubskonto in der Offline-Ansicht; die
+            # Mobilansicht blendet den Block dann von selbst aus.
             "vacation_summary": {
                 "total_days": metrics.vacation_summary.total_days,
                 "used_days": metrics.vacation_summary.used_days,
                 "planned_days": metrics.vacation_summary.planned_days,
                 "remaining_days": metrics.vacation_summary.remaining_days,
                 "carryover_days": metrics.vacation_summary.carryover_days,
-            },
+            } if vacation_licensed else None,
         },
     }
     return JSONResponse(payload)
@@ -2843,7 +2871,24 @@ def _license_features() -> dict[str, bool]:
         state = licensing.current_status()
         return {key: state.has_feature(key) for key in licensing.FEATURES}
     except Exception:  # pragma: no cover - die Oberfläche darf nie daran scheitern
+        # Gleiche Entscheidung wie in der Middleware: Ein Programmfehler in der
+        # Prüfung sperrt niemanden aus. Fehlt die Lizenz, greift der reguläre
+        # Weg und liefert überall ``False``.
         return dict.fromkeys(licensing.FEATURES, True)
+
+
+def has_license_feature(name: str) -> bool:
+    """Für Vorlagen außerhalb des Administrationsbereichs.
+
+    Der Administrationsbereich bekommt die ganze Übersicht als
+    ``license_features`` in den Kontext; Buchungs-, Mobil- und
+    Dashboard-Vorlagen haben keinen gemeinsamen Kontextaufbau und fragen
+    deshalb hier einzeln nach.
+    """
+    return _license_features().get(name, False)
+
+
+templates.env.globals["has_license_feature"] = has_license_feature
 
 
 def _license_banner() -> Optional[licensing.LicenseStatus]:

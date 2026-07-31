@@ -19,11 +19,17 @@ Ablauf
 Was durchgesetzt wird
 ---------------------
 
-Nur die Benutzerzahl (``max_users``) und der Ablauf (``expires_at``). Eine
-Installation ohne Lizenz läuft bewusst weiter – ein Update darf einen
-bestehenden Betrieb nicht lahmlegen –, zeigt aber im Administrationsbereich
-einen Hinweis. Ist die Lizenz abgelaufen oder ungültig, lassen sich keine
-neuen Benutzer mehr anlegen; alles Übrige bleibt nutzbar.
+Benutzerzahl (``max_users``), Ablauf (``expires_at``) und die
+**Funktionsbausteine** (``features``). Freigeschaltet wird ausschließlich, was
+im Lizenzdokument steht: Ohne gültige Lizenz ist **kein** zubuchbarer Baustein
+nutzbar, und es lassen sich keine neuen Benutzer anlegen.
+
+Offen bleibt in jedem Fall die Basis – Stempeln, die eigene Zeitübersicht, die
+Verwaltung der bereits angelegten Benutzer, Sicherungen und die Lizenzseite
+selbst. Der Grund ist nicht Kulanz, sondern Datenschutz im Wortsinn: Wer nicht
+stempeln kann, verliert Arbeitszeit, die sich nicht nachholen lässt, und wer
+nicht sichern kann, verliert sie endgültig. Eine Lizenzfrage darf keine Daten
+kosten.
 
 Grenze
 ------
@@ -466,26 +472,25 @@ class LicenseStatus:
         return remaining is not None and remaining <= 0
 
     @property
-    def features_enforced(self) -> bool:
-        """Werden Funktionsbausteine überhaupt durchgesetzt?
+    def add_ons_available(self) -> bool:
+        """Kann diese Lizenz überhaupt Bausteine freischalten?
 
-        Nur mit gültiger Lizenz. Eine Installation ohne Lizenz bleibt bewusst
-        offen – ein Update darf einen laufenden Betrieb nicht beschneiden.
+        Nur eine gültige Lizenz kann das, und nur solange keine Übergangsfrist
+        abgelaufen ist. Ohne Lizenz gibt es nichts freizuschalten.
         """
-        return self.status == STATUS_VALID
+        return self.status == STATUS_VALID and not self.grace_expired
 
     def has_feature(self, name: str) -> bool:
         """Ist dieser Baustein nutzbar?
 
-        Ohne Lizenz ist alles offen; mit gültiger Lizenz entscheidet das
-        Dokument. Nach abgelaufener Übergangsfrist einer Sperre ist alles
-        Zubuchbare zu.
+        Ausschließlich das Lizenzdokument entscheidet. Ohne Lizenz, mit
+        abgelaufener oder ungültiger Lizenz und nach abgelaufener
+        Übergangsfrist einer Sperre ist kein zubuchbarer Baustein nutzbar.
+        Die Basis – Stempeln, eigene Zeitübersicht, Benutzerverwaltung,
+        Sicherungen – hängt nicht an dieser Prüfung.
         """
-        if self.grace_expired:
-            return False
-        if not self.features_enforced:
-            return True
-        return name in self.features
+        return self.add_ons_available and name in self.features
+
     def to_dict(self) -> dict[str, Any]:
         """Für die API – ohne Aktivierungsschlüssel und ohne Signatur."""
 
@@ -505,6 +510,9 @@ class LicenseStatus:
             "users_in_use": self.users_in_use,
             "users_remaining": self.users_remaining,
             "features": list(self.features),
+            # Was das Dokument nennt (``features``) und was daraus tatsächlich
+            # nutzbar ist, kann auseinanderfallen – etwa nach einer Sperre.
+            "feature_access": {key: self.has_feature(key) for key in FEATURES},
             "issued_at": stamp(self.issued_at),
             "expires_at": stamp(self.expires_at),
             "days_until_expiry": self.days_until_expiry,
@@ -647,9 +655,9 @@ def license_request_url(db: Any = None) -> str:
 def has_feature(name: str, status: Optional[LicenseStatus] = None) -> bool:
     """Ist dieser Funktionsbaustein nutzbar?
 
-    Ohne hinterlegte Lizenz ist alles offen – ein Update darf einen laufenden
-    Betrieb nicht beschneiden. Mit gültiger Lizenz entscheidet das Dokument.
-    Nach abgelaufener Übergangsfrist einer Sperre ist alles Zubuchbare zu.
+    Nur eine gültige Lizenz schaltet frei; ohne Lizenz ist kein zubuchbarer
+    Baustein nutzbar. Nach abgelaufener Übergangsfrist einer Sperre ist
+    ebenfalls alles Zubuchbare zu.
     """
     return (status or current_status()).has_feature(name)
 
@@ -659,12 +667,20 @@ def has_feature(name: str, status: Optional[LicenseStatus] = None) -> bool:
 def user_limit_error(db: Any, *, additional: int = 1) -> Optional[str]:
     """Meldung, falls ``additional`` weitere Benutzer nicht erlaubt sind.
 
-    ``None`` heißt: anlegen ist erlaubt. Eine Installation ohne Lizenz wird
-    absichtlich nicht blockiert – siehe Modulbeschreibung.
+    ``None`` heißt: anlegen ist erlaubt. Ohne gültige Lizenz lassen sich keine
+    neuen Benutzer anlegen. Die bereits angelegten bleiben unangetastet und
+    voll nutzbar – niemand wird durch eine Lizenzfrage ausgesperrt.
+
+    Die Grundausstattung einer frischen Installation entsteht über
+    ``_seed_default_records`` und geht nicht durch diese Prüfung; eine noch
+    nicht aktivierte Installation lässt sich also einrichten und aktivieren.
     """
     status = current_status(db)
     if status.status == STATUS_UNLICENSED:
-        return None
+        return (
+            "Für diese Installation ist keine Lizenz hinterlegt. Es lassen sich keine "
+            "neuen Benutzer anlegen, bis die Installation aktiviert wurde."
+        )
     if status.status == STATUS_EXPIRED:
         return (
             "Die Lizenz ist abgelaufen. Es lassen sich keine neuen Benutzer anlegen, "

@@ -23,6 +23,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+import licensed_env
+
 
 def _fresh_app(tmp_path, monkeypatch):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -37,6 +39,8 @@ def _fresh_app(tmp_path, monkeypatch):
     for name in [m for m in sys.modules if m.startswith("app")]:
         del sys.modules[name]
     import app.main as main
+
+    licensed_env.activate()
 
     return main
 

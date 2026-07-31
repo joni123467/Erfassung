@@ -328,16 +328,16 @@ def test_canonical_json_matches_the_license_server_rules(licensing):
 
 
 def test_has_feature_follows_the_license(licensing, keypair):
-    """Seit 0.12.0 gilt: ohne Lizenz alles offen, mit Lizenz entscheidet sie.
+    """Nur das Lizenzdokument schaltet frei – ohne Lizenz nichts.
 
-    Bis 0.11.x war es umgekehrt – ohne gültige Lizenz galt jedes Merkmal als
-    gesperrt. Das hätte mit den Funktionsbausteinen bedeutet, dass ein Update
-    einer unlizenzierten Installation reihenweise Bereiche schließt. Genau das
-    soll nicht passieren.
+    0.12.0 hatte eine unlizenzierte Installation bewusst offen gelassen, damit
+    ein Update keinen laufenden Betrieb beschneidet. Damit war die Lizenz aber
+    folgenlos: Wer keine hatte, konnte mehr als wer eine ohne Bausteine hatte.
+    Seit 0.12.1 entscheidet ausschließlich das Dokument.
     """
     private_key, _ = keypair
-    # Ohne hinterlegte Lizenz bleibt alles nutzbar.
-    assert licensing.has_feature("reports") is True
+    # Ohne hinterlegte Lizenz ist kein zubuchbarer Baustein nutzbar.
+    assert licensing.has_feature("reports") is False
 
     _store(licensing, _document(private_key, licensing.deployment_id(), features=["reports"]))
     assert licensing.has_feature("reports") is True
@@ -625,10 +625,12 @@ def _db():
     return database.SessionLocal()
 
 
-def test_no_license_does_not_block_anything(licensing, main):
+def test_without_a_license_no_new_users(licensing, main):
+    """Ohne Lizenz keine neuen Benutzer – die vorhandenen bleiben unberührt."""
     db = _db()
     try:
-        assert licensing.user_limit_error(db) is None
+        message = licensing.user_limit_error(db)
+        assert message and "keine Lizenz" in message
     finally:
         db.close()
 

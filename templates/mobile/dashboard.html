@@ -71,6 +71,7 @@
             aria-selected="{{ 'true' if tab == 'salden' else 'false' }}"
             role="tab"
         >Salden</a>
+        {% if has_license_feature('vacation') %}
         <a
             href="#urlaub"
             class="mobile-tab {% if tab == 'urlaub' %}is-active{% endif %}"
@@ -80,6 +81,7 @@
             aria-selected="{{ 'true' if tab == 'urlaub' else 'false' }}"
             role="tab"
         >Urlaub</a>
+        {% endif %}
     </nav>
 
     <div class="mobile-panels">
@@ -331,6 +333,7 @@
             </div>
         </section>
 
+        {% if has_license_feature('vacation') %}
         <section class="mobile-panel {% if tab == 'urlaub' %}is-active{% endif %}" id="mobile-panel-urlaub" data-tab-panel="urlaub" role="tabpanel" aria-labelledby="mobile-tab-urlaub" {% if tab != 'urlaub' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Urlaub beantragen</h2>
@@ -439,6 +442,7 @@
                 <p class="mobile-empty-state" data-vacation-empty {% if vacation_items %}hidden{% endif %}>Bisher keine Urlaubsanträge erstellt.</p>
             </div>
         </section>
+        {% endif %}
     </div>
 </section>
 

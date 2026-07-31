@@ -107,10 +107,17 @@
             </tbody>
         </table>
     </div>
-    {% if not state.features_enforced %}
+    {% if not state.add_ons_available %}
         <p class="card-header__hint">
-            Ohne hinterlegte Lizenz ist alles offen – ein Update darf einen
-            laufenden Betrieb nicht beschneiden.
+            {% if state.grace_expired %}
+                Die Übergangsfrist der Sperre ist abgelaufen – kein zubuchbarer
+                Bereich ist derzeit nutzbar.
+            {% else %}
+                Ohne gültige Lizenz ist kein zubuchbarer Bereich nutzbar, und es
+                lassen sich keine neuen Benutzer anlegen. Stempeln, die eigene
+                Zeitübersicht, die vorhandenen Benutzer und die Sicherungen
+                bleiben erreichbar, damit keine Arbeitszeit verloren geht.
+            {% endif %}
         </p>
     {% endif %}
 </section>

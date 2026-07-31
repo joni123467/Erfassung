@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+import licensed_env
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
@@ -31,6 +33,8 @@ def client(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
     import app.main as main
+
+    licensed_env.activate()
 
     with TestClient(main.app) as test_client:
         from app import crud, database, security
@@ -70,8 +74,8 @@ def login(client):
 # --- version ---------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.12.0"
-    assert client.get("/health").json()["version"] == "0.12.0"
+    assert client.main.APP_VERSION == "0.12.1"
+    assert client.get("/health").json()["version"] == "0.12.1"
 
 
 # --- navigation: TimeMoto removed, Terminals added -------------------------
@@ -295,6 +299,8 @@ def test_legacy_timemoto_config_migrated(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
     import app.main as main
+
+    licensed_env.activate()
 
     with TestClient(main.app):
         from app import crud, database

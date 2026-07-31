@@ -5,6 +5,77 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.12.1] – 2026-07-30
+
+### Changed – Ohne Lizenz keine zubuchbare Funktion
+
+0.12.0 hat die Funktionsbausteine eingeführt, eine unlizenzierte Installation
+aber offen gelassen. Das war widersprüchlich: Wer **keine** Lizenz hatte,
+konnte mehr als wer eine ohne Bausteine hatte – die Lizenz war damit folgenlos.
+Ab sofort entscheidet ausschließlich das Lizenzdokument.
+
+- `LicenseStatus.has_feature()` liefert nur noch `True`, wenn eine **gültige**
+  Lizenz den Baustein nennt. „Nicht lizenziert“, „abgelaufen“ und „ungültig“
+  schalten nichts mehr frei; nach abgelaufener Übergangsfrist einer Sperre
+  bleibt es wie bisher bei `False`.
+- Neu: `LicenseStatus.add_ons_available` ersetzt `features_enforced` – die
+  Frage lautet jetzt „kann diese Lizenz überhaupt etwas freischalten?“ statt
+  „wird überhaupt durchgesetzt?“.
+- `user_limit_error()` weist auch ohne hinterlegte Lizenz ab: Ohne Aktivierung
+  lassen sich keine neuen Benutzer anlegen. Über die Oberfläche mit
+  Klartextmeldung, über `POST /api/users` mit **HTTP 402**.
+- Auch außerhalb des Administrationsbereichs verschwindet Gesperrtes aus der
+  Oberfläche: der Urlaubsreiter unter „Buchungen“, die Urlaubsübersicht auf
+  dem Dashboard und Reiter samt Antragsformular in der Mobilansicht. Diese
+  Vorlagen haben keinen gemeinsamen Kontextaufbau und fragen über die neue
+  Jinja-Funktion `has_license_feature('vacation')` einzeln nach. Auch
+  `GET /mobile/sync-data` liefert ohne Lizenz keine Urlaubsanträge, kein
+  Urlaubskonto und `request_vacations: false` – die Offline-Shell stellt einen
+  gesperrten Antrag damit gar nicht erst in die Warteschlange.
+- `GET /api/license` liefert zusätzlich `feature_access` – was tatsächlich
+  nutzbar ist, im Unterschied zu `features` aus dem Dokument. Beides fällt
+  etwa nach einer Sperre auseinander.
+- Der Hinweisbalken nennt die Folge beim Namen, statt nur den Status zu
+  melden; die Lizenzseite erklärt, was offen bleibt und warum.
+- Der Startlauf protokolliert „nicht lizenziert“ als Warnung.
+
+### Fixed
+
+- `GET /api/users/{id}/excel` war nicht lizenzpflichtig, obwohl es eine
+  Auswertung ist: Am Pfadpräfix ließ es sich nicht von der Benutzer-API
+  unterscheiden, die zur Basis gehört. Die Middleware kennt dafür jetzt
+  zusätzlich Muster (`LicenseFeatureMiddleware.PATTERNS`).
+
+**Unverändert offen bleibt die Basis** – Stempeln, eigene Zeitübersicht, die
+bereits angelegten Benutzer, Sicherungen, Systemeinstellungen und die
+Lizenzseite selbst. Wer nicht stempeln kann, verliert Arbeitszeit, die sich
+nicht nachholen lässt; wer nicht sichern kann, verliert sie endgültig. Eine
+Lizenzfrage darf keine Daten kosten und niemanden aus seinen eigenen Daten
+aussperren. Die Grundausstattung einer frischen Installation entsteht beim
+ersten Start und geht nicht durch die Lizenzprüfung – eine noch nicht
+aktivierte Installation lässt sich also einrichten und aktivieren.
+
+> **Wirkung auf Bestandsinstallationen:** Eine Installation ohne Lizenz
+> verliert mit diesem Update Aufträge, Urlaubsplanung, Auswertungen und
+> Terminals sowie die Möglichkeit, neue Benutzer anzulegen. Vorhandene Daten
+> bleiben unangetastet und werden nach einer Aktivierung wieder erreichbar.
+
+### Tests
+
+`tests/test_v0121.py` – 27 Tests: jeder zubuchbare Bereich ohne Lizenz zu
+(Oberfläche und API), Basis offen, Navigation ohne die gesperrten Punkte,
+Benutzeranlage abgewiesen, Stempeln und Anmelden weiterhin möglich,
+abgelaufene und ungültige Lizenz schalten nichts frei, gültige Lizenz öffnet
+weiterhin genau das Genannte, `feature_access` in der API.
+Neu ist außerdem `tests/licensed_env.py`: Die Fachtests der zubuchbaren
+Bereiche liefen bisher ohne Lizenz, weil ohne Lizenz alles offen war. Sie
+aktivieren ihre Testinstanz jetzt mit einem selbst signierten Dokument mit
+allen Bausteinen und prüfen damit weiterhin Fachlogik statt Lizenzierung.
+
+Angepasst: `test_has_feature_follows_the_license` und
+`test_without_a_license_no_new_users` in `tests/test_v0110.py` sowie
+`test_without_a_license_no_module_is_reachable` in `tests/test_v0120.py`.
+
 ## [0.12.0] – 2026-07-30
 
 ### Added – Funktionsbausteine
