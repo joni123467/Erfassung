@@ -12,26 +12,68 @@ mit ``OSError: [Errno 24] Too many open files`` ab – und zwar erst beim
 Aufräumen am Ende, sodass pytest gar keine Zusammenfassung mehr schreibt. Ein
 grüner Lauf ist dann nicht mehr von einem roten zu unterscheiden.
 
-Deshalb wird nach jedem Test die gerade geladene Engine geschlossen. Das ist
-reine Testhygiene und ändert nichts am Verhalten der Anwendung.
+Deshalb wird nach jedem Test aufgeräumt. Das ist reine Testhygiene und ändert
+nichts am Verhalten der Anwendung.
 """
 
 from __future__ import annotations
 
+import gc
+import os
 import sys
 
 import pytest
 
+#: Ab so vielen offenen Dateideskriptoren wird zusätzlich der Heap nach
+#: verwaisten Engines durchsucht. Das Limit des Containers liegt bei 4096;
+#: der Schwellwert lässt genug Luft und hält die teure Suche selten.
+_FD_SWEEP_THRESHOLD = 1500
+
+
+def _open_fd_count() -> int:
+    """Offene Dateideskriptoren des Prozesses – oder 0, wenn nicht ermittelbar."""
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except OSError:  # pragma: no cover - andere Plattformen
+        return 0
+
+
+def _dispose(engine: object) -> None:
+    try:
+        engine.dispose()  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - Aufräumen darf keinen Test kippen
+        pass
+
+
+def _sweep_orphaned_engines() -> None:
+    """Verwaiste Engines auf dem Heap schließen.
+
+    Nicht jede Engine hängt an ``app.database``: Der datenbankübergreifende
+    Restore baut eigene Engines für Quelle und Ziel, und ein Modulneuladen
+    lässt die vorherige Engine unerreichbar, aber mit offenem Pool zurück.
+    Diese Suche ist teuer, deshalb läuft sie erst, wenn wirklich viele
+    Deskriptoren offen sind.
+    """
+    try:
+        from sqlalchemy.engine import Engine
+    except Exception:  # pragma: no cover
+        return
+    gc.collect()
+    for obj in gc.get_objects():
+        try:
+            if isinstance(obj, Engine):
+                _dispose(obj)
+        except ReferenceError:  # pragma: no cover - Objekt verschwand beim Iterieren
+            continue
+
 
 @pytest.fixture(autouse=True)
 def _dispose_database_engine():
-    """Verbindungspool der zuletzt geladenen Engine nach jedem Test schließen."""
+    """Verbindungspools nach jedem Test schließen."""
     yield
     database = sys.modules.get("app.database")
     engine = getattr(database, "engine", None) if database is not None else None
-    if engine is None:
-        return
-    try:
-        engine.dispose()
-    except Exception:  # pragma: no cover - Aufräumen darf keinen Test kippen
-        pass
+    if engine is not None:
+        _dispose(engine)
+    if _open_fd_count() > _FD_SWEEP_THRESHOLD:
+        _sweep_orphaned_engines()
