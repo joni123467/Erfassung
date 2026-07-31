@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+import licensed_env
+
 
 def _fresh_app(tmp_path, monkeypatch, env: dict | None = None):
     """(Re)import the application with a clean module state and given ENV."""
@@ -38,6 +40,8 @@ def _fresh_app(tmp_path, monkeypatch, env: dict | None = None):
     for name in [m for m in sys.modules if m.startswith("app")]:
         del sys.modules[name]
     import app.main as main
+
+    licensed_env.activate()
     return main
 
 
@@ -107,8 +111,8 @@ def _make_backup(client) -> str:
 # --- version ---------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.12.0"
-    assert client.get("/health").json()["version"] == "0.12.0"
+    assert client.main.APP_VERSION == "0.12.1"
+    assert client.get("/health").json()["version"] == "0.12.1"
 
 
 # --- Docker ENV first-initialisation ---------------------------------------
@@ -214,7 +218,7 @@ def test_backup_is_logical_with_metadata(client):
     # No raw database file is the primary artefact (§8).
     assert not any(n.endswith("erfassung.db") or n.endswith(".sql") for n in names)
     meta = backup_manager.read_metadata(path)
-    assert meta["app_version"] == "0.12.0"
+    assert meta["app_version"] == "0.12.1"
     assert meta["backup_format_version"] == 1
     assert "users" in meta["counts"] and meta["counts"]["users"] >= 1
 

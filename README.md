@@ -2,7 +2,15 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.12.0`
+**Version:** `0.12.1`
+
+> Seit 0.12.1: **Ohne Lizenz keine zubuchbare Funktion.** 0.12.0 hatte eine
+> unlizenzierte Installation offen gelassen – damit war die Lizenz folgenlos,
+> denn *keine* Lizenz gab mehr Rechte als eine ohne Bausteine. Jetzt schaltet
+> ausschließlich das Lizenzdokument frei, und ohne gültige Lizenz lassen sich
+> auch keine neuen Benutzer anlegen. Die Basis – Stempeln, eigene
+> Zeitübersicht, vorhandene Benutzer, Sicherungen – bleibt in jedem Fall offen.
+> Details in [`docs/RELEASE_NOTES_0.12.1.md`](docs/RELEASE_NOTES_0.12.1.md).
 
 > Seit 0.12.0: **Funktionsbausteine und regelmäßige Lizenzprüfung** – eine
 > Lizenz schaltet `orders`, `vacation`, `reports` und `terminals` frei;
@@ -388,9 +396,9 @@ frei, damit eine andere Installation aktiviert werden kann.
 
 | Zustand | Wirkung |
 |---------|---------|
-| **Nicht lizenziert** | Nur ein Hinweis im Administrationsbereich. Sonst nichts – ein Update darf einen laufenden Betrieb nicht stilllegen. |
-| **Lizenziert** | Neue Benutzer nur bis `max_users` (`0` = unbegrenzt). Ab 30 Tagen vor Ablauf erscheint eine Warnung. |
-| **Abgelaufen / ungültig** | Keine neuen Benutzer. Stempeln, Auswertungen, Urlaub und Sicherungen bleiben uneingeschränkt nutzbar. |
+| **Nicht lizenziert** | Keine neuen Benutzer, kein zubuchbarer Baustein. Die Basis bleibt offen. |
+| **Lizenziert** | Neue Benutzer nur bis `max_users` (`0` = unbegrenzt); freigeschaltet ist, was das Dokument nennt. Ab 30 Tagen vor Ablauf erscheint eine Warnung. |
+| **Abgelaufen / ungültig** | Keine neuen Benutzer, kein zubuchbarer Baustein. Stempeln, eigene Zeitübersicht, vorhandene Benutzer und Sicherungen bleiben uneingeschränkt nutzbar. |
 
 Über die Oberfläche wird die Grenze mit Klartextmeldung abgewiesen, über
 `POST /api/users` mit **HTTP 402**. Bestehende Benutzer werden nie gesperrt
@@ -535,15 +543,29 @@ Zubuchbar sind vier Bausteine:
 | `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
 | `terminals` | RFID-Terminals und Geräte-Synchronisation |
 
-Eine Lizenz ohne jeden Baustein ist damit eine reine **Stempel-Lizenz**.
+Eine Lizenz ohne jeden Baustein ist damit eine reine **Stempel-Lizenz** – und
+genau so viel kann eine Installation ohne Lizenz auch.
 
 Gesperrte Bereiche verschwinden aus der Navigation; wer die Adresse direkt
 aufruft, landet mit einem Hinweis auf dem Dashboard. Die API antwortet mit
 **HTTP 402**. Abgesichert ist das über eine Middleware, nicht Route für Route –
 so kann kein Endpunkt versehentlich offen bleiben.
 
-> **Ohne hinterlegte Lizenz ist alles offen.** Ein Update darf einen laufenden
-> Betrieb nicht beschneiden. Erst eine gültige Lizenz entscheidet, was zu ist.
+Das gilt nicht nur für die Administration: Ohne `vacation` verschwinden der
+Urlaubsreiter unter „Buchungen“, die Urlaubsübersicht auf dem Dashboard sowie
+Reiter und Antragsformular der Mobilansicht. Auch `GET /mobile/sync-data`
+liefert dann keine Urlaubsdaten und meldet `request_vacations: false`, damit
+die Offline-Shell einen gesperrten Antrag nicht in die Warteschlange stellt.
+
+> **Ohne gültige Lizenz ist kein zubuchbarer Baustein nutzbar** – das gilt für
+> „nicht lizenziert“ genauso wie für „abgelaufen“ und „ungültig“. Freischalten
+> kann nur das Lizenzdokument.
+
+Was dabei **nicht** gesperrt wird, steht oben unter „Immer enthalten“. Der
+Grund ist nicht Kulanz: Wer nicht stempeln kann, verliert Arbeitszeit, die
+sich nicht nachholen lässt, und wer nicht sichern kann, verliert sie
+endgültig. Eine Lizenzfrage darf keine Daten kosten – und niemanden aus seinen
+eigenen Daten aussperren.
 
 ### Regelmäßige Prüfung
 

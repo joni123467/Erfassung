@@ -16,6 +16,8 @@ from datetime import date, time
 
 import pytest
 
+import licensed_env
+
 
 def _fresh_app(tmp_path, monkeypatch, env: dict | None = None):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -31,6 +33,8 @@ def _fresh_app(tmp_path, monkeypatch, env: dict | None = None):
     for name in [m for m in sys.modules if m.startswith("app")]:
         del sys.modules[name]
     import app.main as main
+
+    licensed_env.activate()
     return main
 
 
@@ -144,8 +148,8 @@ def _closed_entry(user_id, start, end, *, is_remote=False, notes="Büro", day=DA
 # --- version & schema ------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.12.0"
-    assert client.get("/health").json()["version"] == "0.12.0"
+    assert client.main.APP_VERSION == "0.12.1"
+    assert client.get("/health").json()["version"] == "0.12.1"
 
 
 def test_columns_exist(client):

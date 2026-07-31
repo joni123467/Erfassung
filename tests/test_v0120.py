@@ -185,10 +185,29 @@ GATED = [
 ]
 
 
-def test_without_a_license_everything_stays_open(client):
-    """Ein Update darf einen laufenden Betrieb nicht beschneiden."""
+def test_without_a_license_no_module_is_reachable(client):
+    """Ohne Lizenz keine Funktion – jeder zubuchbare Bereich ist zu.
+
+    Seit 0.12.1. Vorher stand hier das Gegenteil: Eine Installation ohne
+    Lizenz war vollständig offen, damit ein Update keinen laufenden Betrieb
+    beschneidet. Damit war die Lizenz allerdings wirkungslos – gar keine
+    Lizenz gab mehr Rechte als eine ohne Bausteine.
+    """
     _login(client)
     for path, _ in GATED:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 303, path
+        assert response.headers["location"].startswith("/dashboard")
+
+
+def test_without_a_license_the_base_stays_open(client):
+    """Stempeln, eigene Daten und Sicherungen hängen an keiner Lizenz.
+
+    Eine Lizenzfrage darf keine Arbeitszeit kosten: Wer nicht stempeln kann,
+    verliert Daten, die sich nicht nachholen lassen.
+    """
+    _login(client)
+    for path in ("/dashboard", "/records", "/admin/users", "/admin/system/backups"):
         assert client.get(path, follow_redirects=False).status_code == 200, path
 
 

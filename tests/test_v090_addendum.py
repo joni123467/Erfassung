@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+import licensed_env
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
@@ -26,6 +28,8 @@ def client(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
     import app.main as main
+
+    licensed_env.activate()
 
     with TestClient(main.app) as test_client:
         from app import crud, database, security

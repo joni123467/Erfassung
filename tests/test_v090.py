@@ -15,6 +15,8 @@ import tempfile
 
 import pytest
 
+import licensed_env
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
@@ -29,6 +31,8 @@ def client(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
     import app.main as main
+
+    licensed_env.activate()
 
     with TestClient(main.app) as test_client:
         # Disable the forced password change for the seeded admin so we can
@@ -71,7 +75,7 @@ def login(client, username="admin", password="Admin!0000"):
 # --- Version ---------------------------------------------------------------
 
 def test_version_is_090(client):
-    assert client.main.APP_VERSION == "0.12.0"
+    assert client.main.APP_VERSION == "0.12.1"
 
 
 def test_health_check(client):
@@ -79,7 +83,7 @@ def test_health_check(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["version"] == "0.12.0"
+    assert body["version"] == "0.12.1"
     assert body["checks"]["database"] is True
     assert body["checks"]["volumes"] is True
 

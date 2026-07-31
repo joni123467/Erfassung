@@ -434,3 +434,11 @@ Eintrag fehlt.
   umbruchfähige Paragraphs mit Escaping.
 - **Changelog**: jede nutzersichtbare Änderung in `CHANGELOG.md`
   dokumentieren (Keep-a-Changelog-Format, deutsch).
+- **Lizenz in Tests**: Aufträge, Urlaubsplanung, Auswertungen und Terminals
+  sind ohne gültige Lizenz gesperrt (seit 0.12.1). Jede Testdatei, die diese
+  Bereiche aufruft, ruft in ihrer App-Fixture `licensed_env.activate()` auf –
+  direkt nach `import app.main as main`. Ohne das antwortet die Anwendung mit
+  303 auf das Dashboard bzw. HTTP 402 und der Test scheitert an einer
+  Lizenzfrage statt an der Fachlogik. Ausgenommen sind die Lizenztests selbst
+  (`test_v0110.py`, `test_v0120.py`, `test_v0121.py`), die ihre Lizenzen
+  bewusst selbst anlegen.

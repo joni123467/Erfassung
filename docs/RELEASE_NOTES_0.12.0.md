@@ -44,6 +44,10 @@ gehört ohne weiteres Zutun zu `reports`.
 
 > **Ohne hinterlegte Lizenz ist alles offen.** Ein Update darf einen laufenden
 > Betrieb nicht beschneiden. Erst eine gültige Lizenz entscheidet.
+>
+> ⚠️ **Gilt nur für 0.12.0.** Seit 0.12.1 schaltet ausschließlich das
+> Lizenzdokument frei – ohne gültige Lizenz ist kein zubuchbarer Baustein
+> nutzbar. Siehe [`RELEASE_NOTES_0.12.1.md`](RELEASE_NOTES_0.12.1.md).
 
 ## Regelmäßige Prüfung
 
