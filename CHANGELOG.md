@@ -5,6 +5,38 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.18.0] – 2026-08-01
+
+### Fixed
+
+- Ausgleichsfeststellungen werden beim Start, vor der Compliance-Übersicht
+  und nach Änderungen relevanter Buchungen mit dem aktuellen Referenzdatum
+  fortgeschrieben. Spätere kurze Tage können alte Vorgänge erledigen; Fristen
+  können ohne neue Buchung fällig oder überfällig werden.
+- Tatsächlich geleistete Arbeit wird in der §-3-Auswertung nicht mehr durch
+  einen gleichzeitig eingetragenen Feiertag, Urlaub oder Ersatzruhetag aus
+  dem Nenner und der Summe entfernt.
+- Ein Ersatzruhetag muss nach dem Beschäftigungstag liegen und darf keine
+  nicht stornierte Arbeitszeitbuchung enthalten.
+- Die Wochenvariante des §-3-Ausgleichs ist auf maximal 24 Wochen begrenzt;
+  sechs Kalendermonate werden nicht mehr fälschlich als 26 Wochen angenähert.
+- HTTP-5xx-Antworten beim Abruf des öffentlichen Lizenzschlüssels werden als
+  vorübergehende Nichterreichbarkeit verständlich gemeldet.
+
+### Changed
+
+- Die Ausgleichsberechnung bleibt bewusst als konservativer, vorwärts
+  gerichteter 24-Wochen-Zeitraum je Überschreitungstag dokumentiert. Eine
+  abweichende tarifliche Periodisierung wird nicht automatisch unterstellt.
+- Neue Regressionstests prüfen Feiertagsarbeit im Durchschnitt,
+  Ersatzruhetage und die Auflösung gespeicherter Ausgleichsfeststellungen.
+
+### Datenbank und Migration
+
+- Keine Schemaänderung und keine neue Datenbankmigration. Bestehende
+  Buchungen, Pausen, Revisionen, Compliance-Feststellungen und Historien
+  bleiben unverändert erhalten; die Zustände werden idempotent neu bewertet.
+
 ## [0.17.0] – 2026-08-01
 
 ### Fixed – der §-3-Ausgleich rechnete mit dem falschen Nenner

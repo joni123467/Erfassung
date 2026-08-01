@@ -1,4 +1,4 @@
-"""Tests für 0.17.0 – Ausgleich, Compliance-Recht, Historie, Zeitzone.
+"""Tests für 0.18.0 – Ausgleich, Compliance-Recht, Historie, Zeitzone.
 
 Was dieses Release schließt:
 
@@ -231,8 +231,8 @@ def _entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0170(client):
-    assert client.app.version == "0.17.0"
-    assert client.get("/health").json()["version"] == "0.17.0"
+    assert client.app.version == "0.18.0"
+    assert client.get("/health").json()["version"] == "0.18.0"
 
 
 # ── 1. Ausgleich nach § 3 ArbZG: der Nenner ───────────────────────────────
@@ -1148,3 +1148,93 @@ def test_no_secrets_in_the_logs(client):
         text = log.read_text(encoding="utf-8", errors="ignore")
         assert "Admin!0000" not in text
         assert "password_hash" not in text
+
+# ── 0.18.0 – erneute Logikprüfung ─────────────────────────────────────────
+
+
+def test_work_on_an_excluded_holiday_still_counts(client):
+    """Ein Feiertag neutralisiert nie tatsächlich geleistete Arbeitszeit."""
+    from app import compensation, crud, schemas
+
+    holiday = DAY
+    db = _db()
+    try:
+        crud.upsert_holidays(
+            db, [schemas.HolidayCreate(name="Eigener Feiertag", date=holiday, region="DE")]
+        )
+    finally:
+        db.close()
+    _entry(start=time(6, 0), end=time(16, 0), day=holiday)
+    db = _db()
+    try:
+        report = compensation.build_report(db, _admin_id(), holiday)
+        item = next(item for item in report.days if item.day == holiday)
+        assert item.counts is True
+        assert item.minutes == 10 * 60
+        assert report.total_minutes >= 10 * 60
+    finally:
+        db.close()
+
+
+def test_the_work_day_itself_cannot_be_its_rest_day(client):
+    from app import compliance
+
+    _entry(start=time(8, 0), end=time(14, 0), day=SUNDAY)
+    flag_id = _flag_for(SUNDAY, "sunday_work").id
+    with pytest.raises(compliance.ExceptionError):
+        _document(
+            flag_id,
+            reason="Notdienst",
+            legal_basis="§ 10 ArbZG",
+            replacement_rest_date=SUNDAY,
+            handling_state="rest_granted",
+        )
+
+
+def test_a_day_with_work_cannot_be_a_replacement_rest_day(client):
+    from app import compliance
+
+    rest_day = SUNDAY + timedelta(days=3)
+    _entry(start=time(8, 0), end=time(14, 0), day=SUNDAY)
+    _entry(start=time(8, 0), end=time(12, 0), day=rest_day)
+    flag_id = _flag_for(SUNDAY, "sunday_work").id
+    with pytest.raises(compliance.ExceptionError):
+        _document(
+            flag_id,
+            reason="Notdienst",
+            legal_basis="§ 10 ArbZG",
+            replacement_rest_date=rest_day,
+            handling_state="rest_granted",
+        )
+
+
+def test_a_later_short_day_resolves_the_stored_compensation_flag(client):
+    from app import compliance, models
+
+    excess_day = DAY
+    short_day = DAY + timedelta(days=1)
+    _entry(start=time(6, 0), end=time(16, 0), day=excess_day)
+    db = _db()
+    try:
+        compliance.refresh_day(db, _admin_id(), excess_day, reference_date=excess_day)
+    finally:
+        db.close()
+    _entry(start=time(8, 0), end=time(14, 0), day=short_day)
+    db = _db()
+    try:
+        compliance.refresh_open_compensations(db, reference_date=short_day)
+        flags = (
+            db.query(models.ComplianceFlag)
+            .filter(models.ComplianceFlag.user_id == _admin_id())
+            .filter(models.ComplianceFlag.work_date == excess_day)
+            .filter(models.ComplianceFlag.code.in_((
+                models.ComplianceCode.COMPENSATION_REQUIRED,
+                models.ComplianceCode.COMPENSATION_DUE,
+                models.ComplianceCode.COMPENSATION_OVERDUE,
+            )))
+            .all()
+        )
+        assert flags
+        assert all(flag.state == models.ComplianceState.RESOLVED for flag in flags)
+    finally:
+        db.close()

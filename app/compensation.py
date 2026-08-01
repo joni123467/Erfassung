@@ -316,9 +316,15 @@ def build_report(
             reason = EXCLUDED_SUNDAY
         else:
             reason = excluded.get(current)
-        report.days.append(
-            WorkdayEntry(day=current, minutes=per_day.get(current, 0), excluded=reason)
-        )
+        minutes = per_day.get(current, 0)
+        # An einem Ausfalltag tatsächlich geleistete Arbeit darf niemals aus
+        # der Arbeitsschutzrechnung verschwinden. Feiertag, Urlaub oder ein
+        # geplanter Ersatzruhetag neutralisieren nur einen *arbeitsfreien* Tag.
+        # Sonntage bleiben als Nicht-Werktage aus dem §-3-Nenner; ihre Grenzen
+        # werden gesondert über § 11 Abs. 2/§ 3 geprüft.
+        if minutes > 0 and reason != EXCLUDED_SUNDAY:
+            reason = None
+        report.days.append(WorkdayEntry(day=current, minutes=minutes, excluded=reason))
         current += timedelta(days=1)
     return report
 

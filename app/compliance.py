@@ -338,6 +338,7 @@ def evaluate_day(
     work_date: date,
     *,
     holiday_dates: Optional[set[date]] = None,
+    reference_date: Optional[date] = None,
 ) -> list[dict[str, object]]:
     """Alle Kennzeichnungen eines Arbeitstags ermitteln.
 
@@ -426,7 +427,12 @@ def evaluate_day(
     rest = _rest_finding(db, user_id, work_date, entries)
     if rest:
         findings.append(rest)
-    findings.extend(_compensation_findings(db, user_id, work_date, entries))
+    findings.extend(
+        _compensation_findings(
+            db, user_id, work_date, entries,
+            reference_date=reference_date or work_date,
+        )
+    )
     return findings
 
 
@@ -443,7 +449,12 @@ def compensation_report(db: Session, user_id: int, reference: date):
 
 
 def _compensation_findings(
-    db: Session, user_id: int, work_date: date, entries: list[models.TimeEntry]
+    db: Session,
+    user_id: int,
+    work_date: date,
+    entries: list[models.TimeEntry],
+    *,
+    reference_date: date,
 ) -> list[dict[str, object]]:
     """Ausgleichsprüfung je **Überschreitungstag** (ab 0.17.0).
 
@@ -469,17 +480,17 @@ def _compensation_findings(
 
     from . import compensation
 
-    cases = compensation.build_cases(db, user_id, work_date)
+    cases = compensation.build_cases(db, user_id, reference_date)
     case = next((item for item in cases if item.work_date == work_date), None)
     if case is None:
         return []
 
-    report = compensation.build_report(db, user_id, work_date)
-    state = case.state(work_date)
+    report = compensation.build_report(db, user_id, reference_date)
+    state = case.state(reference_date)
     if state == models.CompensationState.RESOLVED:
         return []
 
-    remaining = case.remaining_days(work_date)
+    remaining = case.remaining_days(reference_date)
     detail = (
         f"{_format_minutes(case.excess_minutes)} über acht Stunden, davon "
         f"{_format_minutes(case.open_minutes)} noch offen. "
@@ -595,7 +606,13 @@ def fingerprint(finding: dict[str, object]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:64]
 
 
-def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.ComplianceFlag]:
+def refresh_day(
+    db: Session,
+    user_id: int,
+    work_date: date,
+    *,
+    reference_date: Optional[date] = None,
+) -> list[models.ComplianceFlag]:
     """Kennzeichnungen eines Tages neu bewerten und **fortschreiben**.
 
     Bis 0.14.2 wurden offene Kennzeichnungen bei jeder Neuberechnung physisch
@@ -614,7 +631,9 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
     der Regelprüfung scheitern.
     """
     try:
-        findings = evaluate_day(db, user_id, work_date)
+        findings = evaluate_day(
+            db, user_id, work_date, reference_date=reference_date
+        )
         existing = (
             db.query(models.ComplianceFlag)
             .filter(models.ComplianceFlag.user_id == user_id)
@@ -745,6 +764,51 @@ def refresh_for_entry(db: Session, entry: models.TimeEntry) -> None:
         )
         if has_entries:
             refresh_day(db, entry.user_id, following)
+    # Ein kurzer neuer Tag kann einen älteren Überschreitungstag ausgleichen;
+    # eine Korrektur kann den Ausgleich wieder öffnen. Deshalb nicht nur den
+    # neuen Tag, sondern alle noch relevanten Ausgleichsfälle fortschreiben.
+    refresh_open_compensations(
+        db, reference_date=max(date.today(), entry.work_date)
+    )
+
+
+def refresh_open_compensations(
+    db: Session, *, reference_date: Optional[date] = None
+) -> int:
+    """Alle noch relevanten §-3-Ausgleichstage auf den heutigen Stand bringen.
+
+    Ein Ausgleichsvorgang altert auch ohne neue Buchung: ``required`` wird vor
+    Fristablauf ``due`` und danach ``overdue``. Umgekehrt kann ein späterer
+    kurzer Werktag ihn erledigen. Die frühere Tagesprüfung am ursprünglichen
+    Buchungsdatum konnte keinen dieser Übergänge sehen. Dieser idempotente Lauf
+    bewertet deshalb sämtliche Überschreitungstage im maximal nötigen
+    Rückblick neu. Aufgerufen wird er beim Start und vor der Compliance-Liste.
+    """
+    from . import compensation
+
+    reference = reference_date or date.today()
+    rules = compensation.load_rules()
+    earliest = reference - timedelta(days=rules.days * 2)
+    entries = _countable(
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.work_date >= earliest)
+        .filter(models.TimeEntry.work_date <= reference)
+        .all()
+    )
+    totals: dict[tuple[int, date], int] = {}
+    for entry in entries:
+        key = (int(entry.user_id), entry.work_date)
+        totals[key] = totals.get(key, 0) + entry.worked_minutes
+
+    refreshed = 0
+    for (user_id, work_date), minutes in sorted(totals.items()):
+        if work_date.weekday() == 6 or minutes <= models.MAX_DAILY_MINUTES:
+            continue
+        refresh_day(
+            db, user_id, work_date, reference_date=reference
+        )
+        refreshed += 1
+    return refreshed
 
 
 def open_flags(
@@ -972,9 +1036,9 @@ def _validate_rest_day(
     * **Nicht doppelt verwendet.** Ein Tag gleicht genau eine Beschäftigung
       aus. Sonst ließen sich zwei Sonntage mit einem freien Mittwoch abgelten.
     """
-    if rest_day < flag.work_date:
+    if rest_day <= flag.work_date:
         raise ExceptionError(
-            "Der Ersatzruhetag darf nicht vor dem betroffenen Arbeitstag liegen."
+            "Der Ersatzruhetag muss nach dem betroffenen Arbeitstag liegen."
         )
     window = REST_DAY_DEADLINE_DAYS.get(flag.code)
     if window is not None:
@@ -995,6 +1059,17 @@ def _validate_rest_day(
     if rest_day in crud.get_holiday_dates_in_range(db, rest_day, rest_day):
         raise ExceptionError(
             "Ein gesetzlicher Feiertag kann kein Ersatzruhetag sein."
+        )
+    worked = (
+        db.query(models.TimeEntry.id)
+        .filter(models.TimeEntry.user_id == flag.user_id)
+        .filter(models.TimeEntry.work_date == rest_day)
+        .filter(models.TimeEntry.status != models.TimeEntryStatus.CANCELLED)
+        .first()
+    )
+    if worked is not None:
+        raise ExceptionError(
+            "An diesem Tag ist Arbeitszeit gebucht; er kann kein Ersatzruhetag sein."
         )
     duplicate = (
         db.query(models.ComplianceFlag)
@@ -1156,5 +1231,6 @@ __all__ = [
     "reference",
     "refresh_day",
     "refresh_for_entry",
+    "refresh_open_compensations",
     "shift_break_minutes",
 ]
