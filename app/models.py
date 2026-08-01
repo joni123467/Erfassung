@@ -388,9 +388,31 @@ class ComplianceCode:
     #: Ausgleichszeitraum liegt der werktägliche Durchschnitt über acht
     #: Stunden.
     AVERAGE_OVER_8H = "average_over_8h"
+    #: Ausgleich erforderlich, Frist läuft noch (ab 0.17.0).
+    COMPENSATION_REQUIRED = "compensation_required"
     #: Der Ausgleichszeitraum läuft ab und der Überhang ist noch nicht
     #: abgebaut – eine Vorwarnung, solange Ausgleich noch möglich ist.
     COMPENSATION_DUE = "compensation_due"
+    #: Die Frist ist abgelaufen, ohne dass ausgeglichen wurde (ab 0.17.0).
+    COMPENSATION_OVERDUE = "compensation_overdue"
+
+
+class CompensationState:
+    """Zustand eines Ausgleichsvorgangs nach § 3 Satz 2 ArbZG (ab 0.17.0).
+
+    Bewusst getrennt vom Lebenszyklus einer Feststellung
+    (:class:`ComplianceState`): Der eine sagt, wie es um den **Ausgleich**
+    steht, der andere, wie es um die **Bearbeitung der Kennzeichnung** steht.
+    """
+
+    #: Ausgleich nötig, Frist läuft.
+    REQUIRED = "compensation_required"
+    #: Frist läuft bald ab.
+    DUE = "compensation_due"
+    #: Frist abgelaufen, Ausgleich fehlt.
+    OVERDUE = "compensation_overdue"
+    #: Rechtzeitig ausgeglichen.
+    RESOLVED = "compensation_resolved"
 
 
 class PeriodStatus:
@@ -854,6 +876,12 @@ class ComplianceFlag(Base):
     handling_state = Column(String(32), nullable=False, default="open")
 
     user = relationship("User", foreign_keys=[user_id])
+    logs = relationship(
+        "ComplianceLog",
+        back_populates="flag",
+        cascade="all, delete-orphan",
+        order_by="ComplianceLog.id",
+    )
 
     @property
     def is_open(self) -> bool:
@@ -868,6 +896,58 @@ class ComplianceFlag(Base):
             ComplianceState.CHANGED,
             ComplianceState.REOPENED,
         )
+
+
+class ComplianceAction:
+    """Vorgänge an einer Compliance-Feststellung (ab 0.17.0)."""
+
+    DETECTED = "detected"
+    CHANGED = "changed"
+    RESOLVED = "resolved"
+    REOPENED = "reopened"
+    ACKNOWLEDGED = "acknowledged"
+    EXCEPTION_DOCUMENTED = "exception_documented"
+    REST_DAY_SET = "rest_day_set"
+    COMPENSATION_ASSIGNED = "compensation_assigned"
+    #: Bestandsvermerk bei der Migration – die Feststellung gab es schon,
+    #: bevor die Historie eingeführt wurde.
+    MIGRATED = "migrated"
+
+
+class ComplianceLog(Base):
+    """Append-only Historie einer Compliance-Feststellung (ab 0.17.0).
+
+    Bis 0.16.0 wurden Ausnahmegrund, Rechtsgrundlage, Ersatzruhetag und
+    Bearbeitungsstand **überschrieben**. Wer eine Begründung nachträglich
+    änderte, hinterließ keine Spur – bei einer arbeitsrechtlichen Bewertung
+    genau das falsche Verhalten.
+
+    Diese Tabelle wird ausschließlich beschrieben. Es gibt in der Anwendung
+    keinen Weg, einen Eintrag zu ändern oder zu löschen; die Feststellung
+    selbst darf sich ändern, ihre Geschichte nicht.
+    """
+
+    __tablename__ = "compliance_logs"
+    __table_args__ = (
+        Index("ix_compliance_log_flag", "flag_id", "changed_at_utc"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    flag_id = Column(
+        Integer, ForeignKey("compliance_flags.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    action = Column(String(32), nullable=False)
+    changed_at_utc = Column(DateTime, nullable=False, default=datetime.utcnow)
+    #: ``NULL`` heißt: kein angemeldeter Mensch (Migration, Regelprüfung).
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_label = Column(String(255), nullable=True)
+    reason = Column(String(500), nullable=True)
+    source = Column(String(64), nullable=True)
+    before_json = Column(Text, nullable=True)
+    after_json = Column(Text, nullable=True)
+
+    flag = relationship("ComplianceFlag", back_populates="logs")
 
 
 class PayrollPeriod(Base):

@@ -127,6 +127,56 @@ class LoggingConfig:
         return config
 
 
+def is_valid_timezone(name: object) -> bool:
+    """Gültiger IANA-Zeitzonenname?
+
+    Bewusst über :mod:`zoneinfo` geprüft statt über eine eigene Liste: Die
+    Zeitzonendatenbank ändert sich, eine gepflegte Liste veraltet.
+    """
+    if not isinstance(name, str) or not name.strip():
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(name.strip())
+    except Exception:
+        return False
+    return True
+
+
+def _coerce_timezone(value: Any, fallback: str) -> str:
+    return value.strip() if is_valid_timezone(value) else fallback
+
+
+#: Vorschlagsliste für das Einstellungsformular – **keine** Beschränkung.
+#: Gespeichert wird jeder Name, den :func:`is_valid_timezone` akzeptiert; die
+#: Liste deckt nur die Zonen ab, die in der Praxis vorkommen.
+COMMON_TIMEZONES = (
+    "Europe/Berlin",
+    "Europe/Vienna",
+    "Europe/Zurich",
+    "Europe/London",
+    "Europe/Warsaw",
+    "Europe/Prague",
+    "Europe/Amsterdam",
+    "Europe/Paris",
+    "Europe/Madrid",
+    "Europe/Rome",
+    "Europe/Bucharest",
+    "Europe/Istanbul",
+    "UTC",
+)
+
+
+#: Zulässiger Bereich für ``SystemSettings.compensation_weeks``.
+#:
+#: § 3 nennt „sechs Kalendermonate oder 24 Wochen". 26 Wochen bilden die
+#: Monatsvariante näherungsweise ab; weniger als vier Wochen wäre kein
+#: Ausgleichszeitraum mehr.
+COMPENSATION_MIN_WEEKS = 4
+COMPENSATION_MAX_WEEKS = 26
+COMPENSATION_DEFAULT_WEEKS = 24
+
 #: Zulässiger Bereich für ``SystemSettings.shift_break_minutes``.
 SHIFT_BREAK_MIN_MINUTES = 60
 SHIFT_BREAK_MAX_MINUTES = 720
@@ -156,6 +206,22 @@ class SystemSettings:
     #: Stunde wäre jede längere Mittagspause ein Feierabend, über zwölf Stunden
     #: bliebe von der Ruhezeitprüfung nichts übrig.
     shift_break_minutes: int = 360
+    #: Betriebszeitzone (ab 0.17.0) – IANA-Name, z. B. ``Europe/Berlin``.
+    #:
+    #: Sie gilt für das ganze Unternehmen. Kundenstandorte ändern sie nicht.
+    #: Eine Änderung wirkt **nur auf neue Buchungen**; bestehende behalten ihr
+    #: gespeichertes ``tz_name``, damit vergangene Zeiten nicht nachträglich
+    #: verrutschen.
+    timezone: str = "Europe/Berlin"
+    #: Ausgleichszeitraum nach § 3 Satz 2 ArbZG in Wochen.
+    compensation_weeks: int = 24
+    #: Behandlung von Ausfalltagen im Nenner – siehe
+    #: :class:`app.compensation.CompensationRules`. Das Gesetz lässt das offen;
+    #: die Vorgaben nehmen Feiertage, Urlaub und Ersatzruhetage heraus, weil
+    #: keiner von ihnen Mehrarbeit ausgleichen soll.
+    compensation_exclude_holidays: bool = True
+    compensation_exclude_vacation: bool = True
+    compensation_exclude_rest_days: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -180,6 +246,25 @@ class SystemSettings:
             config.shift_break_minutes,
             minimum=SHIFT_BREAK_MIN_MINUTES,
             maximum=SHIFT_BREAK_MAX_MINUTES,
+        )
+        config.timezone = _coerce_timezone(payload.get("timezone"), config.timezone)
+        config.compensation_weeks = _coerce_int(
+            payload.get("compensation_weeks"),
+            config.compensation_weeks,
+            minimum=COMPENSATION_MIN_WEEKS,
+            maximum=COMPENSATION_MAX_WEEKS,
+        )
+        config.compensation_exclude_holidays = _coerce_bool(
+            payload.get("compensation_exclude_holidays"),
+            config.compensation_exclude_holidays,
+        )
+        config.compensation_exclude_vacation = _coerce_bool(
+            payload.get("compensation_exclude_vacation"),
+            config.compensation_exclude_vacation,
+        )
+        config.compensation_exclude_rest_days = _coerce_bool(
+            payload.get("compensation_exclude_rest_days"),
+            config.compensation_exclude_rest_days,
         )
         return config
 
@@ -442,7 +527,20 @@ def save_logging_config(config: LoggingConfig) -> None:
 
 
 def load_system_settings() -> SystemSettings:
-    return SystemSettings.from_dict(_read_json(_SYSTEM_PATH))
+    """Systemeinstellungen aus dem config-Volume.
+
+    Fehlt die Datei (Erstinstallation), dient ``ERFASSUNG_TIMEZONE`` als
+    Vorbelegung der Betriebszeitzone. Ist sie vorhanden, gewinnt sie – die
+    Umgebungsvariable überschreibt **nie** eine gespeicherte Konfiguration.
+    """
+    payload = _read_json(_SYSTEM_PATH)
+    if not payload:
+        import os
+
+        env_zone = (os.environ.get("ERFASSUNG_TIMEZONE") or "").strip()
+        if is_valid_timezone(env_zone):
+            payload = {"timezone": env_zone}
+    return SystemSettings.from_dict(payload)
 
 
 def save_system_settings(settings: SystemSettings) -> None:
@@ -475,6 +573,19 @@ def validate_import(payload: Any) -> tuple[bool, str]:
     level = (logging_section or {}).get("level")
     if level is not None and (not isinstance(level, str) or level.upper() not in VALID_LEVELS):
         return False, f"Ungültiges Log-Level: {level!r}."
+    zone = (system_section or {}).get("timezone")
+    if zone is not None and not is_valid_timezone(zone):
+        return False, f"Unbekannte Zeitzone: {zone!r}."
+    weeks = (system_section or {}).get("compensation_weeks")
+    if weeks is not None:
+        if isinstance(weeks, bool) or not isinstance(weeks, int):
+            return False, "Ausgleichszeitraum muss eine ganze Zahl in Wochen sein."
+        if not (COMPENSATION_MIN_WEEKS <= weeks <= COMPENSATION_MAX_WEEKS):
+            return (
+                False,
+                f"Ausgleichszeitraum muss zwischen {COMPENSATION_MIN_WEEKS} und "
+                f"{COMPENSATION_MAX_WEEKS} Wochen liegen.",
+            )
     shift = (system_section or {}).get("shift_break_minutes")
     if shift is not None:
         # Bewusst streng: Ein unsinniger Wert würde die Regelprüfung still

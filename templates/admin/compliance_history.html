@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Historie der Kennzeichnung – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'compliance' %}
+{% include "admin/_nav.html" %}
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h1>Historie der Kennzeichnung</h1>
+            <p class="card-header__hint">
+                {{ flag.work_date.strftime('%d.%m.%Y') }}
+                · {{ flag.user.full_name if flag.user else '–' }}
+                · {{ compliance_label(flag.code) }}
+                <small class="text-muted">{{ compliance_reference(flag.code) }}</small>
+            </p>
+        </div>
+        <a class="button ghost" href="/admin/compliance">Zur Übersicht</a>
+    </div>
+
+    <p class="card-header__hint">
+        Jede Feststellung, Einordnung, Ausnahmebegründung und jeder Ersatzruhetag
+        steht hier mit Vorher- und Nachher-Stand. Einträge dieser Liste werden
+        nie geändert oder gelöscht – eine Korrektur ist immer ein neuer Eintrag.
+    </p>
+
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead>
+            <tr>
+                <th>Vorgang</th>
+                <th>Zeitpunkt (UTC)</th>
+                <th>Bearbeiter</th>
+                <th>Quelle</th>
+                <th>Begründung</th>
+                <th>Änderungen</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+                {% set log = row.log %}
+                <tr>
+                    <td><strong>{{ action_label(log.action) }}</strong></td>
+                    <td>{{ log.changed_at_utc.strftime('%d.%m.%Y %H:%M') }}</td>
+                    <td>{{ log.actor_label or '–' }}</td>
+                    <td>{{ log.source or '–' }}</td>
+                    <td>{{ log.reason or '–' }}</td>
+                    <td>
+                        {% if row.changes %}
+                            <ul class="revision-changes">
+                                {% for field, change in row.changes.items() %}
+                                    <li>
+                                        <strong>{{ field_label(field) }}</strong>:
+                                        <span class="revision-changes__old">{{ change.vorher if change.vorher is not none else '–' }}</span>
+                                        →
+                                        <span class="revision-changes__new">{{ change.nachher if change.nachher is not none else '–' }}</span>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <span class="text-muted">–</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="6">Keine Historie vorhanden.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

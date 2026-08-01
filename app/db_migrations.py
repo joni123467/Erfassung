@@ -780,6 +780,47 @@ def _add_finding_keys_and_holiday_notes(engine: Engine) -> None:
         )
 
 
+def _add_compliance_logs(engine: Engine) -> None:
+    """Append-only Historie der Compliance-Bewertung (ab 0.17.0).
+
+    Bis 0.16.0 wurden Ausnahmegrund, Rechtsgrundlage, Ersatzruhetag und
+    Bearbeitungsstand an der Feststellung **überschrieben**. Wer eine
+    Begründung nachträglich austauschte, hinterließ keine Spur. Diese Migration
+    legt ``compliance_logs`` an; ab hier wird jede Änderung ergänzt statt
+    ersetzt.
+
+    Für den **Bestand** wird je vorhandener Feststellung genau ein
+    ``migrated``-Vermerk geschrieben. Er behauptet nicht, die frühere Historie
+    zu kennen – er hält den Stand fest, wie er bei der Umstellung vorlag, und
+    macht damit sichtbar, ab welchem Zeitpunkt die Historie lückenlos ist.
+
+    Idempotent: Die Tabelle wird mit ``checkfirst`` angelegt, und der
+    Bestandsvermerk wird nur für Feststellungen geschrieben, die noch keinen
+    haben. Datenerhaltend: An ``compliance_flags`` ändert sich nichts.
+    """
+    models.Base.metadata.tables["compliance_logs"].create(bind=engine, checkfirst=True)
+
+    if not db_schema.has_table(engine, "compliance_flags"):
+        return
+
+    # Kein ``INSERT … SELECT`` mit Zeitfunktion: ``NOW()``/``datetime('now')``
+    # heißen je Backend anders. Der Zeitstempel kommt deshalb als Parameter.
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO compliance_logs "
+                "(flag_id, action, changed_at_utc, actor_label, reason, source, after_json) "
+                "SELECT f.id, 'migrated', :now, 'System', "
+                "'Bestandsvermerk bei Einfuehrung der Compliance-Historie (0.17.0)', "
+                "'migration', NULL FROM compliance_flags f "
+                "WHERE NOT EXISTS ("
+                "SELECT 1 FROM compliance_logs l WHERE l.flag_id = f.id"
+                ")"
+            ),
+            {"now": datetime.utcnow()},
+        )
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -800,6 +841,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (17, _add_compliance_and_revisions),
     (18, _add_compliance_lifecycle),
     (19, _add_finding_keys_and_holiday_notes),
+    (20, _add_compliance_logs),
 ]
 
 

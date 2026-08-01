@@ -172,7 +172,26 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
             Permission(
                 key="Time.View",
                 label="Zeitübersichten einsehen",
-                description="Zeitkonten, Berichte und Exporte einsehen.",
+                description=(
+                    "Zeitkonten, Berichte, Exporte und Regelverstöße einsehen. "
+                    "Reines Leserecht – zum Bearbeiten von Compliance-Daten "
+                    "wird zusätzlich „Compliance bearbeiten“ benötigt."
+                ),
+                scoped=True,
+            ),
+            # Bewusst getrennt von ``Time.View``: Wer Zahlen sehen darf, darf
+            # deswegen nicht die arbeitsrechtliche Bewertung verändern. Einen
+            # Verstoß einzuordnen, eine Ausnahme zu begründen oder einen
+            # Ersatzruhetag einzutragen sind Entscheidungen des Arbeitgebers –
+            # sie gehören nicht in ein Leserecht.
+            Permission(
+                key="Time.Compliance.Manage",
+                label="Compliance bearbeiten",
+                description=(
+                    "Regelverstöße einordnen, Sonn-/Feiertagsausnahmen "
+                    "begründen, Ersatzruhetage eintragen und Ausgleiche "
+                    "dokumentieren."
+                ),
                 scoped=True,
             ),
         ),

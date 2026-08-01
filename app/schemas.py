@@ -218,6 +218,70 @@ class TimeEntryCreate(TimeEntryBase):
     """
 
 
+class AdministrativeTimeEntryCreate(BaseModel):
+    """Was eine Verwaltungskraft für **andere** setzen darf (ab 0.17.0).
+
+    ``Time.Edit`` ist ein Korrekturrecht, kein Importrecht. Bis 0.16.0 lief die
+    Verwaltung über dasselbe vollständige Schema wie der Terminalimport – wer
+    fremde Buchungen korrigieren durfte, konnte damit auch ``source``,
+    ``external_id`` und die UTC-Originalstempel frei setzen. Genau diese drei
+    Angaben belegen aber, **woher** eine Buchung stammt: Eine von Hand
+    angelegte Buchung ließe sich als Terminalstempelung ausgeben, und die
+    Herkunft ist bei einer Prüfung das erste, worauf man schaut.
+
+    **Nicht enthalten und damit nicht setzbar:** ``source``, ``external_id``,
+    ``started_at_utc``, ``ended_at_utc``, ``tz_name``. Der Server setzt die
+    Quelle auf ``manual`` und rechnet die UTC-Stempel aus den eingegebenen
+    Ortszeiten und der zentralen Betriebszeitzone.
+
+    Weiterhin enthalten – und das ist Absicht: ``status`` und ``is_manual``.
+    Freigeben und einen Nachtrag kennzeichnen gehört zur Korrektur.
+
+    Der Terminal- und Importpfad benutzt unverändert :class:`TimeEntryCreate`;
+    er läuft nicht über diese HTTP-Schnittstelle.
+    """
+
+    user_id: int
+    work_date: date
+    start_time: time
+    end_time: time
+    break_minutes: int = 0
+    break_started_at: Optional[time] = None
+    company_id: Optional[int] = None
+    location_id: Optional[int] = None
+    is_remote: bool = False
+    is_open: bool = False
+    is_manual: bool = False
+    notes: str = ""
+    status: str = models.TimeEntryStatus.APPROVED
+
+    @field_validator("break_minutes")
+    @classmethod
+    def validate_break(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("Pausenminuten dürfen nicht negativ sein")
+        if value > 24 * 60:
+            raise ValueError("Pausenminuten sind unplausibel")
+        return value
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        allowed = {
+            models.TimeEntryStatus.APPROVED,
+            models.TimeEntryStatus.PENDING,
+            models.TimeEntryStatus.REJECTED,
+        }
+        if value not in allowed:
+            raise ValueError("Unbekannter Status")
+        return value
+
+    @field_validator("notes")
+    @classmethod
+    def validate_notes(cls, value: str) -> str:
+        return (value or "")[:255]
+
+
 class SelfServiceTimeEntryCreate(BaseModel):
     """Was ein Beschäftigter für **sich selbst** nachtragen darf (ab 0.16.0).
 

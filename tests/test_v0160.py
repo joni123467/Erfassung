@@ -252,8 +252,8 @@ def _self_entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0160(client):
-    assert client.app.version == "0.16.0"
-    assert client.get("/health").json()["version"] == "0.16.0"
+    assert client.app.version == "0.17.0"
+    assert client.get("/health").json()["version"] == "0.17.0"
 
 
 # ── 1. Selbstbedienungsrechte ─────────────────────────────────────────────
@@ -721,7 +721,8 @@ def test_a_lower_shift_gap_changes_the_evaluation(client):
 
 
 def test_the_compensation_report_names_its_period(client):
-    from app import compliance, models
+    """Seit 0.17.0 ist der Nenner **Werktage**, nicht „Tage mit Buchung"."""
+    from app import compliance
 
     _entry(start=time(6, 0), end=time(15, 0))
     db = _db()
@@ -730,17 +731,14 @@ def test_the_compensation_report_names_its_period(client):
     finally:
         db.close()
     assert report.end == DAY
-    assert (report.end - report.start).days + 1 == models.COMPENSATION_DAYS
-    assert report.workdays == 1
+    assert (report.end - report.start).days + 1 == report.rules.days
+    # 24 Wochen sind 144 Werktage (Mo–Sa) abzüglich der Ausnahmen.
+    assert report.denominator > 100
 
 
-def test_a_single_long_day_is_flagged_but_averages_out(client):
-    """Ein einzelner Zehnstundentag hat keinen Ausgleich nötig …
-
-    … solange genug normale Tage danebenstehen. Bei nur einem Arbeitstag im
-    Zeitraum liegt der Schnitt aber über acht Stunden.
-    """
-    from app import compliance, models
+def test_a_single_long_day_is_required_but_not_overdue(client):
+    """Seit 0.17.0: ausgleichspflichtig, aber nicht sofort überfällig."""
+    from app import models
 
     _entry(start=time(6, 0), end=time(16, 0))    # zehn Stunden
     db = _db()
@@ -749,28 +747,24 @@ def test_a_single_long_day_is_flagged_but_averages_out(client):
     finally:
         db.close()
     assert models.ComplianceCode.OVER_8H in codes
-    assert models.ComplianceCode.AVERAGE_OVER_8H in codes
+    assert models.ComplianceCode.COMPENSATION_REQUIRED in codes
+    assert models.ComplianceCode.COMPENSATION_OVERDUE not in codes
 
 
-def test_enough_normal_days_compensate(client):
-    """Mit genügend Achtstundentagen stimmt der Durchschnitt wieder."""
+def test_the_average_stays_compliant_with_free_workdays(client):
+    """Über nicht gearbeitete Werktage läuft der Ausgleich."""
     from app import compliance, models
 
     _entry(start=time(6, 0), end=time(16, 0))    # zehn Stunden am Stichtag
-    for offset in range(1, 8):
-        earlier = DAY - timedelta(days=offset)
-        if earlier.weekday() == 6:
-            continue
-        _entry(start=time(8, 0), end=time(14, 0), day=earlier)   # sechs Stunden
-
     db = _db()
     try:
         report = compliance.compensation_report(db, _admin_id(), DAY)
         codes = _codes(db, _admin_id(), DAY)
     finally:
         db.close()
+    # Ein einzelner langer Tag unter über hundert freien Werktagen reißt den
+    # Schnitt nicht.
     assert report.is_compliant, report.average_minutes
-    assert models.ComplianceCode.AVERAGE_OVER_8H not in codes
     # Der Tagesverstoß bleibt – er wird gekennzeichnet, nicht wegdiskutiert.
     assert models.ComplianceCode.OVER_8H in codes
 
@@ -787,8 +781,10 @@ def test_sunday_work_stays_out_of_the_average(client):
         report = compliance.compensation_report(db, _admin_id(), DAY)
     finally:
         db.close()
-    assert report.workdays == 0
+    # Die Sonntagsarbeit taucht in der Summe nicht auf …
     assert report.total_minutes == 0
+    # … und der Sonntag steht auch nicht im Nenner.
+    assert all(item.day.weekday() != 6 for item in report.counted_days)
 
 
 def test_work_over_eight_hours_is_never_blocked(client):

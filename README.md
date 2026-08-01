@@ -2,7 +2,21 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.16.0`
+**Version:** `0.17.0`
+
+> Seit 0.17.0: **Der §-3-Ausgleich rechnet über Werktage statt über
+> Buchungstage** und bekommt eine **eigene Frist je Überschreitungstag** – ein
+> einzelner Zehnstundentag ist ausgleichspflichtig, aber nicht sofort
+> überfällig. Die arbeitsrechtliche Bewertung braucht das **neue Recht
+> `Time.Compliance.Manage`**; `Time.View` ist nur noch ein Leserecht.
+> Sonn-/Feiertagsausnahmen werden **geprüft** (Pflichtfelder, Fristen des
+> § 11 Abs. 3 ArbZG, kein doppelter Ersatzruhetag), und jede Änderung landet in
+> einer **append-only Historie**, die auch in der DSGVO-Auskunft steht.
+> `Time.Edit` ist ein Korrekturrecht: Quelle, externe ID und UTC-Stempel bleiben
+> dem **internen Terminal-/Importpfad** vorbehalten. Die **Betriebszeitzone**
+> liegt jetzt persistent im config-Volume und wird bei jeder Änderung
+> auditiert. Details in
+> [`docs/RELEASE_NOTES_0.17.0.md`](docs/RELEASE_NOTES_0.17.0.md).
 
 > Seit 0.16.0: **Selbstbedienung braucht jetzt auch über die API ein Recht.**
 > 0.15.0 sicherte die Schnittstelle gegen Fremdzugriffe ab – für die eigene
@@ -380,10 +394,10 @@ Berechtigungen**.
 
 | Kategorie | Key | Bereich wählbar |
 |-----------|-----|-----------------|
-| Eigene Zeiterfassung | `Own.Time.Edit`, `Own.Comment.Edit`, `Own.Vacation.Request` | – |
+| Eigene Zeiterfassung | `Own.Time.Edit`, `Own.Time.Cancel`, `Own.Comment.Edit`, `Own.Vacation.Request` | – |
 | Aufträge & Firmen | `Company.Create`, `Company.Manage` | – |
-| Zeiten & Freigaben | `Time.Approve`, `Time.Edit`, `Time.View` | ✔ |
-| Urlaub | `Vacation.Manage` | ✔ |
+| Zeiten & Freigaben | `Time.Approve`, `Time.Edit`, `Time.View`, `Time.Compliance.Manage` | ✔ |
+| Urlaub | `Vacation.Manage`, `Vacation.Overview` | ✔ |
 | Benutzerverwaltung | `User.View`, `User.Create`, `User.Edit`, `User.Delete` | ✔ |
 | System | `System.Groups`, `System.Terminals`, `System.Roles`, `System.Settings`, `System.Backup` | – |
 
@@ -496,6 +510,7 @@ Der Unterschied zwischen 401 und 403 ist Absicht: „nicht angemeldet" und
 | `POST /api/vacations/{id}/status` | `Vacation.Manage` |
 | `GET /api/license` | `System.Settings` |
 | `GET /api/me/export` | nur die eigene Person |
+| `POST /admin/compliance/{id}/acknowledge` und `/exception` | `Time.Compliance.Manage` – `Time.View` genügt nicht |
 
 Die eigene Person kommt immer ohne Sonderrecht an ihre **Daten** – Lesen ist
 Selbstbedienung, kein Privileg. **Schreiben** braucht seit 0.16.0 auch für die
@@ -519,8 +534,24 @@ Alles andere setzt der Server:
 | `location_id` | nur, wenn der Standort zur gebuchten Firma gehört |
 
 Damit kann sich niemand selbst freigeben oder eine Buchung als
-Terminalstempelung ausgeben. Für die Verwaltung (`Time.Edit`) und für
-Terminaltreiber gilt weiterhin das vollständige Schema.
+Terminalstempelung ausgeben.
+
+### Was die Verwaltung bestimmen darf (seit 0.17.0)
+
+`Time.Edit` ist ein **Korrekturrecht, kein Importrecht**. Bis 0.16.0 lief die
+Verwaltung über dasselbe vollständige Schema wie der Terminalimport – wer
+fremde Buchungen korrigieren durfte, konnte damit die Herkunft frei setzen und
+eine Handbuchung als Terminalstempelung ausgeben.
+
+| Feld | Verwaltung (`Time.Edit`) | interner Terminal-/Importpfad |
+|------|--------------------------|-------------------------------|
+| `status`, `is_manual` | setzbar | setzbar |
+| `source` | fest `admin` | frei |
+| `external_id` | immer leer | frei |
+| `started_at_utc`, `ended_at_utc`, `tz_name` | vom Server aus Ortszeit und Betriebszeitzone | frei |
+
+Der Terminalimport ruft `crud.create_time_entry` direkt auf und läuft nicht
+über diese Schnittstelle; an der Treiberarchitektur ändert sich nichts.
 
 ### Stornieren
 
@@ -834,24 +865,39 @@ Minuten, zulässig 60–720). Er liegt persistent im config-Volume, wird beim
 Import validiert, und jede Änderung erzeugt einen Audit-Eintrag – sie verändert
 die Bewertung von Pausen und Ruhezeiten rückwirkend.
 
-### Ausgleich nach § 3 ArbZG (seit 0.16.0)
+### Ausgleich nach § 3 ArbZG (überarbeitet in 0.17.0)
 
 Mehr als acht Stunden werktäglich sind zulässig, wenn sie ausgeglichen werden.
-Die Anwendung wertet das rollierend über **24 Wochen** aus:
+§ 3 Satz 2 stellt dabei auf den **werktäglichen** Durchschnitt ab – und
+Werktage sind Montag bis Samstag, ob gearbeitet wurde oder nicht.
 
-- Gezählt werden nur **Werktage mit Arbeit**; Sonntage bleiben außen vor
-  (§ 3 spricht von werktäglicher Arbeitszeit), und Tage ohne Buchung senken den
-  Durchschnitt nicht künstlich.
-- Die Kennzeichnung nennt **Zeitraum, Anzahl der Tage und Durchschnitt**.
-- `average_over_8h` meldet einen fehlenden Ausgleich, `compensation_due` warnt,
-  bevor der Zeitraum ausgeschöpft ist.
+Bis 0.16.0 lief der Durchschnitt über die **Tage mit Buchungen**. Wer an vier
+Tagen je zehn Stunden arbeitete und sonst frei hatte, kam damit auf zehn
+Stunden Durchschnitt und galt als überfällig, obwohl er über den Zeitraum weit
+darunter lag. Seit 0.17.0 rechnet `app/compensation.py`:
+
+- Der Nenner sind die **Werktage des Zeitraums**, nicht die Buchungstage.
+  Sonntage zählen nie mit.
+- **Feiertage, Urlaub und Ersatzruhetage** fallen aus dem Nenner – keiner von
+  ihnen soll Mehrarbeit ausgleichen. Umschaltbar unter *Administration →
+  System → Einstellungen*.
+- Der Bericht nennt **Zeitraum, Nenner, Durchschnitt und jede Herausnahme**.
+- Jeder Tag über acht Stunden ist ein **eigener Vorgang mit eigener Frist**:
+  `compensation_required` (Frist läuft), `compensation_due` (Frist läuft ab),
+  `compensation_overdue` (Frist verstrichen).
+- Freie Kapazität wird **FIFO** zugeordnet – der älteste offene Vorgang hat die
+  kürzeste Restlaufzeit. Das Gesetz schreibt keine Reihenfolge vor; diese ist
+  die für die Beschäftigten günstigere.
 
 **Offene Festlegung:** Das Gesetz nennt „sechs Kalendermonate **oder** 24
-Wochen" gleichrangig. Diese Umsetzung wählt 24 Wochen (Wochenraster passt zur
-werktäglichen Betrachtung); die Monatsvariante wäre bis zu zwei Wochen länger.
-Wer sie braucht, legt das über `models.COMPENSATION_WEEKS` fest.
+Wochen" gleichrangig. Diese Umsetzung wählt das Wochenraster; der Zeitraum ist
+seit 0.17.0 einstellbar (4–26 Wochen, Vorgabe 24).
 
-### Sonn- und Feiertagsarbeit dokumentieren (seit 0.16.0)
+**Offene Entscheidung:** Krankheitstage bleiben im Nenner, weil die Anwendung
+keine Arbeitsunfähigkeit erfasst. Das ist eine fehlende Datenquelle, keine
+fachliche Festlegung.
+
+### Sonn- und Feiertagsarbeit dokumentieren (geprüft seit 0.17.0)
 
 Sonntagsarbeit ist nicht verboten, sondern erlaubnispflichtig (§ 10 ArbZG), und
 § 11 Abs. 3 verlangt einen Ersatzruhetag. Zu einer entsprechenden
@@ -862,9 +908,33 @@ Kennzeichnung lassen sich unter *Regelverstöße* festhalten:
 - **Ersatzruhetag**,
 - **Bearbeitungsstand** (offen, begründet, Ersatzruhetag gewährt, nicht nötig).
 
-Alle Felder sind optional. Die geleistete Arbeit bleibt unberührt gespeichert
-und gekennzeichnet – die Anwendung entscheidet nicht, ob eine Ausnahme greift,
-sie hält fest, worauf sich der Betrieb beruft.
+Das Bearbeiten braucht seit 0.17.0 das Recht **`Time.Compliance.Manage`** im
+passenden Geltungsbereich – `Time.View` ist nur ein Leserecht.
+
+Die Felder sind seit 0.17.0 nicht mehr beliebig. Pflicht je Bearbeitungsstand:
+
+| Stand | verlangt |
+|---|---|
+| Offen | – |
+| Begründet | Ausnahmegrund **und** Rechts-/Betriebsgrundlage |
+| Ersatzruhetag gewährt | zusätzlich den Ersatzruhetag |
+| Kein Ersatzruhetag nötig | eine Begründung |
+
+Der Ersatzruhetag wird gegen § 11 Abs. 3 geprüft: nicht **vor** dem Arbeitstag,
+**innerhalb der Frist** (zwei Wochen bei Sonntagsarbeit, acht Wochen bei einem
+auf einen Werktag fallenden Feiertag, jeweils einschließlich des
+Beschäftigungstages), **kein Sonntag und kein Feiertag**, und **nicht doppelt
+verwendet** – ein Tag gleicht genau eine Beschäftigung aus.
+
+Jede Änderung landet in einer **append-only Historie** (`compliance_logs`) mit
+Vorher- und Nachher-Stand; über die Anwendung lässt sich davon nichts ändern
+oder löschen. Einsehbar unter *Regelverstöße → Bewertungshistorie* und Teil
+der Auskunft nach Art. 15 DSGVO.
+
+Die geleistete Arbeit bleibt unberührt gespeichert und gekennzeichnet – die
+Anwendung entscheidet nicht, ob eine Ausnahme greift (§ 7 und § 14 ArbZG,
+Tarifverträge und Bewilligungen sind nicht maschinell entscheidbar), sie hält
+fest, worauf sich der Betrieb beruft.
 
 Nachtarbeit über Mitternacht bleibt eine Schicht. Gerechnet wird durchgehend
 in UTC, damit die Zeitumstellung das Ergebnis nicht verschiebt.
@@ -881,6 +951,9 @@ Kennzeichnung in `compliance_flags` und unter Administration → **Regelverstö�
 | Ruhezeit | unter 11 Stunden zwischen zwei Tagen |
 | Pause | tatsächliche Pause unter dem Sollwert |
 | Sonn-/Feiertagsarbeit | Buchung an einem Sonntag oder Feiertag |
+| Ausgleich erforderlich | Tag über 8 Stunden, Frist nach § 3 Satz 2 läuft noch |
+| Ausgleichsfrist läuft ab | Frist endet bald, der Überhang steht noch |
+| Ausgleich überfällig | Frist verstrichen, ohne dass ausgeglichen wurde |
 
 Kennzeichnungen lassen sich mit Notiz **zur Kenntnis nehmen**; gelöscht werden
 sie nicht. Seit 0.15.0 haben sie einen Lebenszyklus:
@@ -897,8 +970,16 @@ sie nicht. Seit 0.15.0 haben sie einen Lebenszyklus:
 Arbeitszeit, Pause oder Schweregrad, öffnet sich die Feststellung automatisch
 wieder – eine Einordnung von gestern deckt keinen Verstoß von heute zu.
 
-Zum Einordnen genügt nicht die Kenntnis der Kennzeichnung: Der Server prüft,
-ob die betroffene Person im Geltungsbereich von `Time.View` liegt.
+Zum Einordnen genügt weder die Kenntnis der Kennzeichnung noch ein
+Leserecht. Seit 0.17.0 verlangt jede Änderung an der Bewertung – einordnen,
+Ausnahme begründen, Ersatzruhetag eintragen – das Recht
+**`Time.Compliance.Manage`** *und* den passenden Geltungsbereich auf die
+betroffene Person. Fehlt eines von beidem, antwortet der Server mit **403** und
+schreibt einen Security- und einen Audit-Eintrag; die Formulare erscheinen
+ohne das Recht gar nicht erst.
+
+Jede Änderung landet zusätzlich in `compliance_logs` – siehe
+[Sonn- und Feiertagsarbeit](#sonn--und-feiertagsarbeit-dokumentieren-geprüft-seit-0170).
 
 ### Abschluss- und Korrekturworkflow
 
@@ -920,8 +1001,8 @@ und wird protokolliert.
   auf ausdrückliche Anweisung.
 - **Selbstauskunft**: `/api/me/export` liefert alle zur eigenen Person
   gespeicherten Daten als JSON (Person, Buchungen, Änderungshistorie,
-  Kennzeichnungen, Urlaub, Zugriffe auf diese Daten). Für die Verwaltung gibt
-  es `/admin/users/{id}/export`.
+  Kennzeichnungen samt **Bewertungshistorie**, Urlaub, Zugriffe auf diese
+  Daten). Für die Verwaltung gibt es `/admin/users/{id}/export`.
 - **Kein GPS**: Es wird **keine** Ortung durchgeführt und **kein**
   Bewegungsprofil geführt. Gespeichert wird nur der beim Stempeln bewusst
   gewählte Standort – und der gehört zu genau einer Firma.
@@ -929,9 +1010,23 @@ und wird protokolliert.
 ### Zeitstempel und Nachtarbeit
 
 Zeitstempel werden zusätzlich in **UTC** mit der **ursprünglichen Zeitzone**
-(`tz_name`) gespeichert; die Zeitzone stellt `ERFASSUNG_TIMEZONE` ein
-(Voreinstellung `Europe/Berlin`). Buchungen über Mitternacht werden korrekt als
-eine Schicht gerechnet.
+(`tz_name`) gespeichert. Buchungen über Mitternacht werden korrekt als eine
+Schicht gerechnet; gerechnet wird durchgehend in UTC, damit die Zeitumstellung
+das Ergebnis nicht verschiebt (`app/worktime.py` ist seit 0.16.0 die einzige
+Quelle für Dauern).
+
+**Betriebszeitzone.** Seit 0.17.0 steht sie in der Systemkonfiguration im
+config-Volume und ist unter *Administration → System → Einstellungen*
+einstellbar. Reihenfolge: gespeicherte Konfiguration → `ERFASSUNG_TIMEZONE` →
+Vorgabe `Europe/Berlin`. Die Umgebungsvariable ist damit nur noch eine
+Vorbelegung bei der **Erstinstallation** – eine gespeicherte Konfiguration
+überschreibt sie nie, wie bei der Datenbankkonfiguration auch.
+
+Sie gilt für das ganze Unternehmen; ein Kundenstandort ändert sie nicht. Eine
+Änderung wirkt **ausschließlich auf neue Buchungen**: Bestehende tragen ihr
+`tz_name` mit sich und werden nicht umgeschrieben, sonst verschöben sich
+vergangene Zeiten rückwirkend. Jede Änderung wird auditiert; eine unbekannte
+Zone wird abgelehnt und die bisherige bleibt bestehen.
 
 ### Bestand bleibt
 
