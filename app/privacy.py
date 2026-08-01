@@ -196,6 +196,15 @@ def subject_export(db: Session, user: models.User) -> dict[str, Any]:
         .order_by(models.ComplianceFlag.work_date)
         .all()
     )
+    # Die Historie hängt an den Feststellungen dieser Person – aufsteigend,
+    # damit die Auskunft den Verlauf in der Reihenfolge zeigt, in der er
+    # entstanden ist.
+    compliance_logs = (
+        db.query(models.ComplianceLog)
+        .filter(models.ComplianceLog.flag_id.in_([flag.id for flag in flags] or [0]))
+        .order_by(models.ComplianceLog.id)
+        .all()
+    )
     accesses = (
         db.query(models.DataAccessLog)
         .filter(models.DataAccessLog.subject_user_id == user.id)
@@ -213,7 +222,8 @@ def subject_export(db: Session, user: models.User) -> dict[str, Any]:
         "erstellt_am": datetime.utcnow().isoformat(),
         "hinweis": (
             "Auskunft nach Art. 15 DSGVO. Enthält alle zu dieser Person "
-            "gespeicherten Zeiterfassungsdaten samt Änderungshistorie und den "
+            "gespeicherten Zeiterfassungsdaten samt Änderungshistorie, der "
+            "arbeitsrechtlichen Bewertung mit ihrem Verlauf und den "
             "protokollierten Zugriffen auf diese Daten."
         ),
         "person": {
@@ -278,8 +288,28 @@ def subject_export(db: Session, user: models.User) -> dict[str, Any]:
                 "beschreibung": flag.detail,
                 "eingeordnet_am": _stamp(flag.acknowledged_at),
                 "einordnung": flag.acknowledgement,
+                # Ab 0.17.0 auch die arbeitsrechtliche Bewertung selbst: Wer
+                # eine Sonntagsarbeit als zulässig eingestuft hat und worauf er
+                # sich dabei berief, gehört zu den Daten über diese Person.
+                "ausnahmegrund": flag.exception_reason,
+                "rechtsgrundlage": flag.legal_basis,
+                "ersatzruhetag": _stamp(flag.replacement_rest_date),
+                "bearbeitungsstand": flag.handling_state,
             }
             for flag in flags
+        ],
+        "compliance_historie": [
+            {
+                "kennzeichnung": log.flag_id,
+                "vorgang": log.action,
+                "zeitpunkt_utc": _stamp(log.changed_at_utc),
+                "bearbeiter": log.actor_label,
+                "begruendung": log.reason,
+                "quelle": log.source,
+                "vorher": json.loads(log.before_json) if log.before_json else None,
+                "nachher": json.loads(log.after_json) if log.after_json else None,
+            }
+            for log in compliance_logs
         ],
         "urlaub": [
             {

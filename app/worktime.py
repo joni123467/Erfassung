@@ -38,7 +38,26 @@ _UTC = timezone.utc
 
 
 def timezone_name() -> str:
-    """Konfigurierte Betriebszeitzone."""
+    """Konfigurierte Betriebszeitzone (ab 0.17.0 persistent).
+
+    Reihenfolge: gespeicherte Systemkonfiguration → ``ERFASSUNG_TIMEZONE`` →
+    Vorgabe. Die Umgebungsvariable dient damit nur noch als Vorbelegung bei der
+    **Erstinstallation**; eine bereits gespeicherte Konfiguration überschreibt
+    sie nie. Das entspricht der Regel, die für die Datenbankkonfiguration
+    schon gilt.
+
+    Eine Änderung wirkt ausschließlich auf **neue** Buchungen: Bestehende
+    tragen ihr ``tz_name`` mit sich, und das wird nicht nachträglich
+    umgeschrieben – sonst verschöben sich vergangene Zeiten.
+    """
+    try:
+        from . import app_config
+
+        stored = (app_config.load_system_settings().timezone or "").strip()
+        if stored:
+            return stored
+    except Exception:  # pragma: no cover - Konfigurationsfehler darf nichts kippen
+        pass
     return (os.environ.get(TIMEZONE_ENV) or "").strip() or DEFAULT_TIMEZONE
 
 

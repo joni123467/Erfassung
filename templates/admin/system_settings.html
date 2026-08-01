@@ -110,6 +110,57 @@
                     {{ shift_break_min }}–{{ shift_break_max }}.
                 </p>
             </div>
+            <div class="field">
+                <label for="timezone-name">Betriebszeitzone</label>
+                <input type="text" id="timezone-name" name="timezone_name"
+                       list="timezone-options" maxlength="64"
+                       value="{{ system_settings.timezone }}">
+                <datalist id="timezone-options">
+                    {% for zone in timezone_choices %}
+                        <option value="{{ zone }}"></option>
+                    {% endfor %}
+                </datalist>
+                <p class="form-hint">
+                    IANA-Name, z.&nbsp;B. <code>Europe/Berlin</code>. Sie gilt für
+                    das ganze Unternehmen – ein Kundenstandort ändert sie nicht.
+                    Sie bestimmt, welchem Kalendertag eine Buchung zugerechnet
+                    wird, und damit jede Tages-, Wochen- und Ausgleichsauswertung.
+                    <strong>Eine Änderung wirkt nur auf neue Buchungen</strong>:
+                    Bestehende behalten ihre gespeicherte Zeitzone, damit
+                    vergangene Zeiten nicht nachträglich verrutschen.
+                    Jede Änderung wird protokolliert.
+                </p>
+            </div>
+        </fieldset>
+
+        <fieldset class="settings-group">
+            <legend>Ausgleich nach §&nbsp;3 ArbZG</legend>
+            <div class="field">
+                <label for="compensation-weeks">Ausgleichszeitraum (Wochen)</label>
+                <input type="number" id="compensation-weeks" name="compensation_weeks"
+                       min="{{ compensation_min_weeks }}" max="{{ compensation_max_weeks }}"
+                       value="{{ system_settings.compensation_weeks }}">
+                <p class="form-hint">
+                    §&nbsp;3 Satz&nbsp;2 ArbZG nennt „sechs Kalendermonate oder
+                    24&nbsp;Wochen". Voreinstellung {{ compensation_default_weeks }}
+                    Wochen; ein Tarifvertrag oder eine Betriebsvereinbarung kann
+                    etwas anderes vorsehen. Zulässig
+                    {{ compensation_min_weeks }}–{{ compensation_max_weeks }}.
+                </p>
+            </div>
+            <div class="settings-checks">
+                <label class="checkbox-inline"><input type="checkbox" name="compensation_exclude_holidays" {% if system_settings.compensation_exclude_holidays %}checked{% endif %}> Feiertage aus dem Nenner nehmen</label>
+                <label class="checkbox-inline"><input type="checkbox" name="compensation_exclude_vacation" {% if system_settings.compensation_exclude_vacation %}checked{% endif %}> Urlaubstage aus dem Nenner nehmen</label>
+                <label class="checkbox-inline"><input type="checkbox" name="compensation_exclude_rest_days" {% if system_settings.compensation_exclude_rest_days %}checked{% endif %}> Ersatzruhetage aus dem Nenner nehmen</label>
+            </div>
+            <p class="form-hint">
+                Der Durchschnitt wird über die <strong>Werktage</strong>
+                (Mo–Sa) des Zeitraums gebildet, nicht über die Tage mit
+                Buchungen. Ausfalltage bleiben unberücksichtigt: Keiner von
+                ihnen soll Mehrarbeit ausgleichen. Das Gesetz lässt diese Frage
+                offen – die Einstellung hält die betriebliche Festlegung fest
+                und ersetzt keine rechtliche Prüfung.
+            </p>
         </fieldset>
 
         <div class="settings-form__actions">

@@ -42,11 +42,20 @@
                         </td>
                         <td>
                             {{ flag.detail }}
+                            <a href="/admin/compliance/{{ flag.id }}/history">Bewertungshistorie</a>
                             {% if flag.entry_id %}
-                                <a href="/admin/time-entries/{{ flag.entry_id }}/history">Historie</a>
+                                <a href="/admin/time-entries/{{ flag.entry_id }}/history">Buchungshistorie</a>
                             {% endif %}
                         </td>
                         <td>
+                            {# Ohne ``Time.Compliance.Manage`` bleibt die Seite eine
+                               reine Übersicht: kein Formular, keine Schaltfläche.
+                               Der Server prüft dasselbe Recht noch einmal. #}
+                            {% if not can_manage_compliance %}
+                                <span class="text-muted">
+                                    {{ handling_states.get(flag.handling_state, flag.handling_state) }}
+                                </span>
+                            {% else %}
                             <form method="post" action="/admin/compliance/{{ flag.id }}/acknowledge"
                                   class="compliance-form">
                                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
@@ -87,6 +96,7 @@
                                         <button type="submit" class="button small">Speichern</button>
                                     </form>
                                 </details>
+                            {% endif %}
                             {% endif %}
                         </td>
                     </tr>

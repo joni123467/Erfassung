@@ -5,6 +5,100 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.17.0] – 2026-08-01
+
+### Fixed – der §-3-Ausgleich rechnete mit dem falschen Nenner
+
+§ 3 Satz 2 ArbZG stellt auf den **werktäglichen** Durchschnitt ab; Werktage
+sind Mo–Sa, ob gearbeitet wurde oder nicht. 0.16.0 mittelte über die Tage mit
+Buchungen und meldete deshalb Verstöße, die es nicht gab.
+
+- Neues Modul `app/compensation.py`: Der Nenner sind die **Werktage** des
+  Zeitraums. Sonntage zählen nie mit.
+- Feiertage, Urlaub und Ersatzruhetage fallen aus dem Nenner (konfigurierbar) –
+  keiner von ihnen soll Mehrarbeit ausgleichen.
+- `CompensationReport.describe()` nennt Zeitraum, Nenner, Durchschnitt und jede
+  Herausnahme. Eine Zahl ohne Herleitung ist bei einer Arbeitsschutzgrenze
+  wenig wert.
+- **Offene Entscheidung, dokumentiert:** Krankheitstage bleiben im Nenner, weil
+  die Anwendung keine Arbeitsunfähigkeit erfasst. Fehlende Datenquelle, keine
+  fachliche Festlegung.
+
+### Fixed – Ausgleichsfristen hingen am Zeitraum statt am Tag
+
+Das rollierende Fenster ist immer gleich lang; die Restlaufzeit war
+zwangsläufig null. Es ließ sich nicht sagen, *was* bis *wann* auszugleichen
+ist.
+
+- Jeder Tag über acht Stunden ist ein eigener Vorgang mit eigener Frist.
+- Neue Kennzeichnungen `compensation_required`, `compensation_due`,
+  `compensation_overdue`. Ein einzelner Zehnstundentag ist
+  ausgleichspflichtig, aber nicht sofort überfällig.
+- Zuordnung **FIFO**, ausdrücklich festgelegt und begründet: Der älteste
+  Vorgang hat die kürzeste Restlaufzeit.
+
+### Security – `Time.View` konnte die arbeitsrechtliche Bewertung ändern
+
+Verstöße einzuordnen, Ausnahmen zu begründen und Ersatzruhetage einzutragen
+sind Arbeitgeberentscheidungen. Sie gehören nicht in ein Leserecht.
+
+- **Neues Recht `Time.Compliance.Manage`** (scoped). `Time.View` ist ab jetzt
+  ausschließlich ein Leserecht.
+- Recht **und** Geltungsbereich werden geprüft; ein direkter `POST` ohne beides
+  liefert 403 und schreibt Security- und Audit-Eintrag.
+- Ohne das Recht zeigt die Übersichtsseite keine Formulare mehr.
+- Systemrollen synchronisieren sich beim Start, eigene Rollen bleiben
+  unverändert.
+
+### Security – `Time.Edit` war zugleich ein Importrecht
+
+Wer fremde Buchungen korrigieren durfte, konnte `source`, `external_id` und die
+UTC-Originalstempel frei setzen – eine Handbuchung ließ sich als
+Terminalstempelung ausgeben.
+
+- Neues Schema `AdministrativeTimeEntryCreate`: `status` und `is_manual`
+  bleiben setzbar, `source` wird fest `admin`, `external_id` bleibt leer, die
+  UTC-Stempel entstehen aus Ortszeit und zentraler Betriebszeitzone.
+- Der interne Terminal-/Importpfad ruft `crud` direkt auf und bleibt
+  unverändert; an der Treiberarchitektur ändert sich nichts.
+
+### Added – Sonn-/Feiertagsausnahmen werden geprüft
+
+- Pflichtfelder je Bearbeitungsstand; „Kein Ersatzruhetag nötig" verlangt
+  ausdrücklich eine Begründung.
+- Ersatzruhetag nach § 11 Abs. 3 ArbZG: nicht vor dem Arbeitstag, innerhalb
+  der Frist (zwei Wochen bei Sonntagsarbeit, acht bei Werktagsfeiertagen),
+  kein Sonntag, kein Feiertag, nicht doppelt verwendet.
+- Abgelehnte Eingaben nennen den konkreten Grund im Klartext.
+
+### Added – append-only Historie der Compliance-Bewertung
+
+- Neue Tabelle `compliance_logs` mit Vorgang, Zeitpunkt, Person, Quelle,
+  Begründung sowie Vorher-/Nachher-Stand. Über die Anwendung nicht änderbar
+  oder löschbar.
+- Neue Seite *Bewertungshistorie* (Leserecht `Time.View` im Geltungsbereich,
+  mit Zugriffsprotokoll).
+- Teil der Auskunft nach Art. 15 DSGVO.
+- **Migration 20** legt die Tabelle an und schreibt je Bestandsfeststellung
+  einen `migrated`-Vermerk – idempotent, datenerhaltend, portabel.
+
+### Added – Betriebszeitzone persistent und auditierbar
+
+- Neu in der Systemkonfiguration (config-Volume) und im Einstellungsformular.
+  Reihenfolge: gespeicherte Konfiguration → `ERFASSUNG_TIMEZONE` → Vorgabe.
+- Prüfung über `zoneinfo`; eine unbekannte Zone wird abgelehnt, die bisherige
+  bleibt bestehen, die Ablehnung steht im Audit-Protokoll.
+- Jede Änderung wird auditiert. Sie wirkt **nur auf neue Buchungen** –
+  bestehende behalten ihr `tz_name`, damit vergangene Zeiten nicht verrutschen.
+- Ebenfalls einstellbar und auditiert: Ausgleichszeitraum in Wochen (4–26) und
+  die Behandlung der Ausfalltage.
+
+### Fixed – Systemeinstellungen wurden beim Speichern zurückgesetzt
+
+Das Formular baute die Konfiguration aus den Vorgaben neu auf; jeder Wert, den
+es nicht selbst mitschickte, ging verloren. Jetzt setzt das Speichern auf dem
+bisherigen Stand auf.
+
 ## [0.16.0] – 2026-07-31
 
 ### Security – Selbstbedienung kannte keine Rechte

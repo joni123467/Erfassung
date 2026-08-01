@@ -479,6 +479,9 @@ def ensure_schema() -> None:
             "payroll_periods",
             "period_confirmations",
             "data_access_log",
+            # Append-only Historie der Compliance-Bewertung (ab 0.17.0);
+            # Bestandsvermerke setzt die Migration 20.
+            "compliance_logs",
         ):
             if _table not in table_names:
                 models.Base.metadata.tables[_table].create(bind=connection)
@@ -3143,6 +3146,16 @@ def _can_edit_time_entries(user: models.User) -> bool:
     return permission_service.has(user, "Time.Edit")
 
 
+def _can_manage_compliance(user: models.User) -> bool:
+    """Darf der Benutzer die arbeitsrechtliche Bewertung verändern?
+
+    Bewusst nicht ``Time.View``: Wer Auswertungen lesen darf, trifft damit
+    keine Arbeitgeberentscheidung. Einordnung, Ausnahmegrund, Rechtsgrundlage
+    und Ersatzruhetag sind solche Entscheidungen (ab 0.17.0).
+    """
+    return permission_service.has(user, "Time.Compliance.Manage")
+
+
 def _can_manage_companies(user: models.User) -> bool:
     return permission_service.has(user, "Company.Manage")
 
@@ -3321,6 +3334,63 @@ def _self_service_entry(
     )
 
 
+#: Herkunft einer über die Verwaltung angelegten Buchung. Fest gesetzt, damit
+#: sie sich in Export und Historie von einer Terminalstempelung unterscheidet.
+ADMIN_ENTRY_SOURCE = "admin"
+
+
+def _administrative_entry(
+    db: Session, actor: models.User, raw: schemas.TimeEntryCreate
+) -> schemas.TimeEntryCreate:
+    """Fremde Buchung auf das eindampfen, was Verwaltung bestimmen darf (0.17.0).
+
+    ``Time.Edit`` korrigiert – es importiert nicht. Drei Angaben bleiben
+    deshalb dem internen Terminal- und Importpfad vorbehalten:
+
+    * ``source`` wird auf ``manual`` gesetzt. Eine von Hand angelegte Buchung
+      darf sich nicht als Terminalstempelung ausgeben; die Herkunft ist bei
+      einer Prüfung das erste, worauf man schaut.
+    * ``external_id`` bleibt leer. Sie ist der Schlüssel des Fremdsystems –
+      eine frei gewählte ID könnte einen echten Terminalimport überschreiben
+      oder blockieren.
+    * Die UTC-Stempel entstehen aus den eingegebenen Ortszeiten und der
+      **zentralen Betriebszeitzone**, nicht aus einer Client-Angabe. Sonst
+      ließen sich Ortszeit und UTC-Stempel gegeneinander verschieben – und
+      Anzeige und Regelprüfung sähen verschiedene Arbeitszeiten.
+
+    Der Terminalimport ruft ``crud`` direkt auf und ist davon nicht berührt;
+    die Treiberarchitektur bleibt unverändert.
+    """
+    trusted = schemas.AdministrativeTimeEntryCreate.model_validate(
+        raw.model_dump(include=set(schemas.AdministrativeTimeEntryCreate.model_fields))
+    )
+    tz_name = worktime.timezone_name()
+    started = datetime.combine(trusted.work_date, trusted.start_time)
+    ended = datetime.combine(trusted.work_date, trusted.end_time)
+    if ended < started:
+        ended += timedelta(days=1)
+    return schemas.TimeEntryCreate(
+        user_id=trusted.user_id,
+        work_date=trusted.work_date,
+        start_time=trusted.start_time,
+        end_time=trusted.end_time,
+        break_minutes=trusted.break_minutes,
+        break_started_at=trusted.break_started_at,
+        company_id=trusted.company_id,
+        location_id=_validated_location(db, trusted.company_id, trusted.location_id),
+        is_remote=bool(trusted.is_remote),
+        is_open=bool(trusted.is_open),
+        is_manual=bool(trusted.is_manual),
+        notes=trusted.notes,
+        status=trusted.status,
+        source=ADMIN_ENTRY_SOURCE,
+        external_id=None,
+        started_at_utc=worktime.to_utc_naive(started, tz_name),
+        ended_at_utc=None if trusted.is_open else worktime.to_utc_naive(ended, tz_name),
+        tz_name=tz_name,
+    )
+
+
 def _permission_scope(user: models.User, key: str) -> str:
     return permission_service.scope(user, key)
 
@@ -3343,6 +3413,57 @@ def _user_in_permission_scope(
     if key not in group_permissions.PERMISSIONS_BY_KEY:
         raise KeyError(f"Unbekannte Berechtigung: {key!r}")
     return permission_service.can_access_user(db, user, key, target_user_id)
+
+
+def _compliance_write_allowed(
+    db: Session,
+    user: models.User,
+    flag: Optional[models.ComplianceFlag],
+    *,
+    action: str,
+    flag_id: int,
+) -> bool:
+    """Darf ``user`` diese Kennzeichnung bearbeiten? (ab 0.17.0)
+
+    Zwei Hürden, beide nötig: das Recht ``Time.Compliance.Manage`` und der
+    passende Geltungsbereich auf die betroffene Person. ``Time.View`` reicht
+    ausdrücklich nicht mehr – ein Leserecht trifft keine Arbeitgeber­entscheidung.
+
+    Eine unbekannte ``flag_id`` gilt für die Rechteprüfung als zulässig: Wer das
+    Recht hat, soll ein ehrliches „nicht gefunden" bekommen. Wer es nicht hat,
+    erfährt auch das nicht.
+    """
+    if not _can_manage_compliance(user):
+        logging_setup.log_security(
+            f"{action} ohne Recht Time.Compliance.Manage abgewiesen "
+            f"(Kennzeichnung {flag_id})",
+            level=logging.WARNING,
+            user=user,
+        )
+        logging_setup.log_audit(
+            f"{action} abgewiesen – Recht fehlt",
+            user=user,
+            detail=f"Kennzeichnung {flag_id}",
+        )
+        return False
+    if flag is None:
+        return True
+    if not _user_in_permission_scope(
+        db, user, "Time.Compliance.Manage", flag.user_id
+    ):
+        logging_setup.log_security(
+            f"{action} ausserhalb des Geltungsbereichs abgewiesen "
+            f"(Kennzeichnung {flag_id}, Zielperson {flag.user_id})",
+            level=logging.WARNING,
+            user=user,
+        )
+        logging_setup.log_audit(
+            f"{action} abgewiesen – ausserhalb des Geltungsbereichs",
+            user=user,
+            detail=f"Kennzeichnung {flag_id}",
+        )
+        return False
+    return True
 
 
 def _manageable_groups(db: Session, user: models.User) -> list[models.Group]:
@@ -4387,6 +4508,58 @@ def admin_compliance_page(request: Request, db: Session = Depends(database.get_d
         compliance_label=compliance.label,
         compliance_reference=compliance.reference,
         handling_states=compliance.HANDLING_STATES,
+        can_manage_compliance=_can_manage_compliance(user),
+        admin_active="compliance",
+        active_tab="reports",
+    )
+
+
+@app.get("/admin/compliance/{flag_id}/history", response_class=HTMLResponse)
+def compliance_history_page(
+    request: Request, flag_id: int, db: Session = Depends(database.get_db)
+):
+    """Vollständige Historie einer Feststellung (ab 0.17.0).
+
+    Reine Anzeige – dafür genügt ``Time.View`` im passenden Geltungsbereich.
+    Bearbeiten darf sie ohnehin niemand: Die Historie wird nur ergänzt.
+    """
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    flag = compliance.get_flag(db, flag_id)
+    if flag is None:
+        return RedirectResponse(
+            url=_build_redirect("/admin/compliance", error="Kennzeichnung nicht gefunden"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if not _can_view_time_reports(user) or not _user_in_permission_scope(
+        db, user, "Time.View", flag.user_id
+    ):
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    if flag.user_id != user.id:
+        _log_data_access(
+            db, actor=user, subject_id=flag.user_id, scope="compliance_history",
+            detail=f"Kennzeichnung {flag_id} vom {flag.work_date:%d.%m.%Y}",
+        )
+    rows = [
+        {
+            "log": log,
+            "changes": revisions.diff(
+                revisions.parse(log.before_json), revisions.parse(log.after_json)
+            ),
+        }
+        for log in compliance.history(db, flag_id)
+    ]
+    return _admin_template(
+        "admin/compliance_history.html",
+        request,
+        user,
+        flag=flag,
+        rows=rows,
+        compliance_label=compliance.label,
+        compliance_reference=compliance.reference,
+        action_label=compliance.action_label,
+        field_label=compliance.field_label,
         admin_active="compliance",
         active_tab="reports",
     )
@@ -4406,25 +4579,20 @@ def document_compliance_exception(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_view_time_reports(user):
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     target = compliance.get_flag(db, flag_id)
+    # Erst das Recht, dann der Geltungsbereich – und beides vor jeder Auskunft
+    # darüber, ob es die Kennzeichnung überhaupt gibt.
+    if not _compliance_write_allowed(
+        db, user, target, action="Ausnahmedokumentation", flag_id=flag_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Zum Bearbeiten von Compliance-Daten fehlt dir die Berechtigung",
+        )
     if target is None:
         return RedirectResponse(
             url=_build_redirect("/admin/compliance", error="Kennzeichnung nicht gefunden"),
             status_code=status.HTTP_303_SEE_OTHER,
-        )
-    # Derselbe Schutz wie beim Einordnen: Die Kenntnis einer ID genügt nicht.
-    if not _user_in_permission_scope(db, user, "Time.View", target.user_id):
-        logging_setup.log_security(
-            f"Ausnahmedokumentation ausserhalb des Geltungsbereichs abgewiesen "
-            f"(Kennzeichnung {flag_id}, Zielperson {target.user_id})",
-            level=logging.WARNING,
-            user=user,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Diese Kennzeichnung liegt ausserhalb deines Geltungsbereichs",
         )
     parsed_rest: Optional[date] = None
     if replacement_rest_date:
@@ -4444,6 +4612,19 @@ def document_compliance_exception(
             legal_basis=legal_basis,
             replacement_rest_date=parsed_rest,
             handling_state=handling_state,
+        )
+    except compliance.ExceptionError as exc:
+        # Der Text kommt aus der Prüfung selbst und benennt den konkreten
+        # Grund (fehlende Rechtsgrundlage, Ersatzruhetag ausserhalb der Frist,
+        # …). Eine pauschale Meldung wäre hier wertlos.
+        logging_setup.log_audit(
+            "Ausnahmedokumentation abgewiesen",
+            user=user,
+            detail=f"Kennzeichnung {flag_id}: {exc}",
+        )
+        return RedirectResponse(
+            url=_build_redirect("/admin/compliance", error=str(exc)),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
     except ValueError:
         return RedirectResponse(
@@ -4471,34 +4652,23 @@ def acknowledge_compliance_flag(
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    if not _can_view_time_reports(user):
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     # Die Kenntnis einer flag_id darf nicht genügen: Eine Kennzeichnung gehört
-    # zu einer Person, und über deren Zeitdaten entscheidet der Geltungsbereich
-    # von ``Time.View``. Ohne diese Prüfung liesse sich über eine geratene ID
-    # ein fremder Verstoss einordnen – und der Verstoss selbst verriete
-    # Arbeitszeit, Datum und Schweregrad.
+    # zu einer Person, und über deren Zeitdaten entscheidet der Geltungsbereich.
+    # Ohne diese Prüfung liesse sich über eine geratene ID ein fremder Verstoss
+    # einordnen – und der Verstoss selbst verriete Arbeitszeit, Datum und
+    # Schweregrad.
     target = compliance.get_flag(db, flag_id)
+    if not _compliance_write_allowed(
+        db, user, target, action="Einordnung", flag_id=flag_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Zum Bearbeiten von Compliance-Daten fehlt dir die Berechtigung",
+        )
     if target is None:
         return RedirectResponse(
             url=_build_redirect("/admin/compliance", error="Kennzeichnung nicht gefunden"),
             status_code=status.HTTP_303_SEE_OTHER,
-        )
-    if not _user_in_permission_scope(db, user, "Time.View", target.user_id):
-        logging_setup.log_security(
-            f"Einordnung einer fremden Kennzeichnung abgewiesen "
-            f"(Kennzeichnung {flag_id}, Zielperson {target.user_id})",
-            level=logging.WARNING,
-            user=user,
-        )
-        logging_setup.log_audit(
-            "Einordnung abgewiesen – ausserhalb des Geltungsbereichs",
-            user=user,
-            detail=f"Kennzeichnung {flag_id}",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Diese Kennzeichnung liegt ausserhalb deines Geltungsbereichs",
         )
     try:
         flag = compliance.acknowledge(db, flag_id, user=user, note=note)
@@ -6264,9 +6434,11 @@ def create_time_entry(
       externe ID, UTC-Stempel aus der Betriebszeitzone. Ein Beschäftigter kann
       sich damit keine freigegebene Buchung anlegen und keine Terminalquelle
       vortäuschen.
-    * **Für andere** ist ``Time.Edit`` samt Geltungsbereich nötig; dort gilt
-      das vollständige Schema, weil Verwaltung und Import genau diese Felder
-      brauchen.
+    * **Für andere** ist ``Time.Edit`` samt Geltungsbereich nötig. Ab 0.17.0
+      wird auch dieser Pfad eingedampft: ``status`` und ``is_manual`` bleiben
+      wählbar, ``source``, ``external_id`` und die UTC-Stempel nicht.
+      ``Time.Edit`` ist ein Korrekturrecht – der Terminal- und Importpfad
+      läuft nicht über diese Schnittstelle.
     """
     actor = _api_user(request, db)
     own = entry.user_id == actor.id
@@ -6275,7 +6447,7 @@ def create_time_entry(
         payload = _self_service_entry(db, actor, entry)
     else:
         _api_require_scope(request, db, actor, "Time.Edit", entry.user_id)
-        payload = entry
+        payload = _administrative_entry(db, actor, entry)
     user = crud.get_user(db, payload.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
@@ -6773,6 +6945,10 @@ def admin_system_settings(request: Request, db: Session = Depends(database.get_d
         shift_break_min=app_config.SHIFT_BREAK_MIN_MINUTES,
         shift_break_max=app_config.SHIFT_BREAK_MAX_MINUTES,
         shift_break_default=app_config.SHIFT_BREAK_DEFAULT_MINUTES,
+        compensation_min_weeks=app_config.COMPENSATION_MIN_WEEKS,
+        compensation_max_weeks=app_config.COMPENSATION_MAX_WEEKS,
+        compensation_default_weeks=app_config.COMPENSATION_DEFAULT_WEEKS,
+        timezone_choices=app_config.COMMON_TIMEZONES,
         level_choices=LOG_LEVEL_CHOICES,
         db_backend=system_info.database_status(db)["type"],
     )
@@ -6800,6 +6976,11 @@ def admin_system_settings_save(
     sync_full_on_start: Optional[str] = Form(None),
     auto_holiday_management: Optional[str] = Form(None),
     shift_break_minutes: int = Form(app_config.SHIFT_BREAK_DEFAULT_MINUTES),
+    timezone_name: str = Form(""),
+    compensation_weeks: int = Form(app_config.COMPENSATION_DEFAULT_WEEKS),
+    compensation_exclude_holidays: Optional[str] = Form(None),
+    compensation_exclude_vacation: Optional[str] = Form(None),
+    compensation_exclude_rest_days: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user, redirect = _require_system_admin(request, db)
@@ -6827,34 +7008,108 @@ def admin_system_settings_save(
             "auto_cleanup_days": auto_cleanup_days,
         }
     )
-    system_settings = app_config.SystemSettings.from_dict(
+    previous = app_config.load_system_settings()
+    # Auf dem **bisherigen** Stand aufsetzen statt auf den Vorgaben: Sonst
+    # setzte jedes Speichern des Formulars alle Werte zurück, die es nicht
+    # selbst mitschickt.
+    payload = previous.to_dict()
+    payload.update(
         {
             "sync_enabled": _parse_checkbox(sync_enabled),
             "sync_interval_minutes": sync_interval_minutes,
             "sync_full_on_start": _parse_checkbox(sync_full_on_start),
             "auto_holiday_management": _parse_checkbox(auto_holiday_management),
             "shift_break_minutes": shift_break_minutes,
+            "compensation_weeks": compensation_weeks,
+            "compensation_exclude_holidays": _parse_checkbox(
+                compensation_exclude_holidays
+            ),
+            "compensation_exclude_vacation": _parse_checkbox(
+                compensation_exclude_vacation
+            ),
+            "compensation_exclude_rest_days": _parse_checkbox(
+                compensation_exclude_rest_days
+            ),
         }
     )
-    previous_shift = app_config.load_system_settings().shift_break_minutes
+    # Eine unbekannte Zeitzone wird nicht übernommen – ``_coerce_timezone``
+    # behielte sonst still den alten Wert, ohne dass es jemand merkt.
+    wanted_zone = (timezone_name or "").strip()
+    zone_rejected = bool(wanted_zone) and not app_config.is_valid_timezone(wanted_zone)
+    if wanted_zone and not zone_rejected:
+        payload["timezone"] = wanted_zone
+    system_settings = app_config.SystemSettings.from_dict(payload)
     # Audit the change while the previous logging policy is still active, so the
     # entry is never lost when the new settings disable audit logging.
     logging_setup.log_audit(
         "Systemeinstellungen geändert", user=user, detail=f"level={logging_config.level}"
     )
-    if previous_shift != system_settings.shift_break_minutes:
+    if previous.shift_break_minutes != system_settings.shift_break_minutes:
         # Die Schichtgrenze verändert die Bewertung von Pausen und Ruhezeiten
         # rückwirkend – das gehört ausdrücklich ins Audit-Protokoll.
         logging_setup.log_audit(
             "Schichtgrenze geändert",
             user=user,
             detail=(
-                f"{previous_shift} → {system_settings.shift_break_minutes} Minuten"
+                f"{previous.shift_break_minutes} → "
+                f"{system_settings.shift_break_minutes} Minuten"
+            ),
+        )
+    if previous.timezone != system_settings.timezone:
+        # Die Betriebszeitzone bestimmt, welchem Kalendertag eine Buchung
+        # zugerechnet wird – und damit jede Tages-, Wochen- und
+        # Ausgleichsauswertung. Wer sie ändert, muss benannt sein.
+        logging_setup.log_audit(
+            "Betriebszeitzone geändert",
+            user=user,
+            detail=(
+                f"{previous.timezone} → {system_settings.timezone} "
+                "(wirkt nur auf neue Buchungen)"
+            ),
+        )
+    if previous.compensation_weeks != system_settings.compensation_weeks:
+        logging_setup.log_audit(
+            "Ausgleichszeitraum geändert",
+            user=user,
+            detail=(
+                f"{previous.compensation_weeks} → "
+                f"{system_settings.compensation_weeks} Wochen (§ 3 ArbZG)"
+            ),
+        )
+    changed_exclusions = [
+        field
+        for field in (
+            "compensation_exclude_holidays",
+            "compensation_exclude_vacation",
+            "compensation_exclude_rest_days",
+        )
+        if getattr(previous, field) != getattr(system_settings, field)
+    ]
+    if changed_exclusions:
+        logging_setup.log_audit(
+            "Ausfalltage im Ausgleich geändert",
+            user=user,
+            detail=", ".join(
+                f"{field}={getattr(system_settings, field)}"
+                for field in changed_exclusions
             ),
         )
     app_config.save_logging_config(logging_config)
     app_config.save_system_settings(system_settings)
     logging_setup.configure_logging(logging_config)
+    if zone_rejected:
+        logging_setup.log_audit(
+            "Betriebszeitzone abgelehnt",
+            user=user,
+            detail=f"unbekannte Zeitzone, {previous.timezone} bleibt bestehen",
+        )
+        return RedirectResponse(
+            url=_build_redirect(
+                "/admin/system/settings",
+                error="Unbekannte Zeitzone – die bisherige bleibt bestehen",
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     return RedirectResponse(
         url="/admin/system/settings?msg=Einstellungen+gespeichert", status_code=status.HTTP_303_SEE_OTHER
     )

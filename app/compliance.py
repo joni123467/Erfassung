@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import json
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
@@ -67,7 +68,9 @@ LABELS: dict[str, str] = {
     models.ComplianceCode.SUNDAY_WORK: "Sonntagsarbeit",
     models.ComplianceCode.HOLIDAY_WORK: "Feiertagsarbeit",
     models.ComplianceCode.AVERAGE_OVER_8H: "Ausgleich fehlt (Ø über 8 Stunden)",
-    models.ComplianceCode.COMPENSATION_DUE: "Ausgleichszeitraum läuft ab",
+    models.ComplianceCode.COMPENSATION_REQUIRED: "Ausgleich erforderlich",
+    models.ComplianceCode.COMPENSATION_DUE: "Ausgleichsfrist läuft ab",
+    models.ComplianceCode.COMPENSATION_OVERDUE: "Ausgleich überfällig",
 }
 
 REFERENCES: dict[str, str] = {
@@ -78,7 +81,9 @@ REFERENCES: dict[str, str] = {
     models.ComplianceCode.SUNDAY_WORK: "§9 ArbZG",
     models.ComplianceCode.HOLIDAY_WORK: "§9 ArbZG",
     models.ComplianceCode.AVERAGE_OVER_8H: "§3 Satz 2 ArbZG",
+    models.ComplianceCode.COMPENSATION_REQUIRED: "§3 Satz 2 ArbZG",
     models.ComplianceCode.COMPENSATION_DUE: "§3 Satz 2 ArbZG",
+    models.ComplianceCode.COMPENSATION_OVERDUE: "§3 Satz 2 ArbZG",
 }
 
 
@@ -425,132 +430,72 @@ def evaluate_day(
     return findings
 
 
-class CompensationReport:
-    """Auswertung des Ausgleichszeitraums nach § 3 Satz 2 ArbZG.
+def compensation_report(db: Session, user_id: int, reference: date):
+    """Ausgleichszeitraum nach § 3 ArbZG – siehe :mod:`app.compensation`.
 
-    Das Gesetz erlaubt bis zu zehn Stunden werktäglich, „wenn innerhalb von
-    sechs Kalendermonaten oder innerhalb von 24 Wochen im Durchschnitt acht
-    Stunden werktäglich nicht überschritten werden". Diese Auswertung macht
-    genau das nachvollziehbar: Sie sagt, **welcher Zeitraum** betrachtet wurde,
-    **welche Tage** eingeflossen sind und **wie viel Ausgleich** noch fehlt.
+    Die Rechnung liegt seit 0.17.0 in einem eigenen Modul, weil sie mehr ist
+    als eine Summe: Sie muss Werktage von Ausfalltagen unterscheiden und jede
+    Ausnahme benennen können.
     """
+    from . import compensation
 
-    __slots__ = ("start", "end", "workdays", "total_minutes", "allowance_minutes")
-
-    def __init__(
-        self, start: date, end: date, workdays: int, total_minutes: int
-    ) -> None:
-        self.start = start
-        self.end = end
-        self.workdays = workdays
-        self.total_minutes = total_minutes
-        #: Zulässige Gesamtarbeitszeit: acht Stunden je **Werktag** mit Arbeit.
-        self.allowance_minutes = workdays * models.MAX_DAILY_MINUTES
-
-    @property
-    def average_minutes(self) -> int:
-        """Werktäglicher Durchschnitt im Zeitraum."""
-        if self.workdays <= 0:
-            return 0
-        return int(round(self.total_minutes / self.workdays))
-
-    @property
-    def excess_minutes(self) -> int:
-        """Noch auszugleichender Überhang; 0, wenn der Schnitt passt."""
-        return max(self.total_minutes - self.allowance_minutes, 0)
-
-    @property
-    def is_compliant(self) -> bool:
-        return self.excess_minutes <= 0
-
-
-def compensation_report(
-    db: Session, user_id: int, reference: date
-) -> CompensationReport:
-    """Rollierender Ausgleichszeitraum, der am ``reference``-Tag endet.
-
-    Gezählt werden nur **Werktage mit Arbeit** (Montag bis Samstag im Sinne des
-    ArbZG, das den Samstag als Werktag kennt). Tage ohne Buchung senken den
-    Durchschnitt nicht künstlich – sonst ließe sich jede Überschreitung durch
-    eine lange Abwesenheit wegrechnen.
-    """
-    start = reference - timedelta(days=models.COMPENSATION_DAYS - 1)
-    entries = _countable(
-        db.query(models.TimeEntry)
-        .filter(models.TimeEntry.user_id == user_id)
-        .filter(models.TimeEntry.work_date >= start)
-        .filter(models.TimeEntry.work_date <= reference)
-        .all()
-    )
-    per_day: dict[date, int] = {}
-    for entry in entries:
-        if entry.work_date.weekday() == 6:
-            # Sonntag ist kein Werktag im Sinne des § 3 ArbZG. Die Arbeit wird
-            # gespeichert und als Sonntagsarbeit gekennzeichnet, geht aber
-            # nicht in den werktäglichen Durchschnitt ein.
-            continue
-        per_day[entry.work_date] = per_day.get(entry.work_date, 0) + entry.worked_minutes
-    worked_days = {day: minutes for day, minutes in per_day.items() if minutes > 0}
-    return CompensationReport(
-        start=start,
-        end=reference,
-        workdays=len(worked_days),
-        total_minutes=sum(worked_days.values()),
-    )
+    return compensation.build_report(db, user_id, reference)
 
 
 def _compensation_findings(
     db: Session, user_id: int, work_date: date, entries: list[models.TimeEntry]
 ) -> list[dict[str, object]]:
-    """Ausgleichsprüfung – nur an Tagen, an denen sie etwas aussagt.
+    """Ausgleichsprüfung je **Überschreitungstag** (ab 0.17.0).
 
-    Ausgewertet wird an Tagen mit mehr als acht Stunden: Erst dann stellt sich
-    die Frage nach dem Ausgleich überhaupt. Blockiert wird nichts.
+    Bis 0.16.0 gab es nur eine Gesamtbetrachtung mit einer Restlaufzeit, die
+    rechnerisch immer null war: Das rollierende Fenster ist stets gleich lang,
+    also blieb nie etwas übrig. Jetzt hat jeder Tag über acht Stunden seinen
+    eigenen Vorgang mit eigener Frist – so lässt sich überhaupt sagen, *was*
+    bis *wann* auszugleichen ist.
+
+    Ein einzelner Zehnstundentag ist damit **ausgleichspflichtig**, aber nicht
+    sofort überfällig: Überfällig wird er erst, wenn die Frist verstrichen ist.
+    Blockiert oder gekürzt wird nie etwas.
     """
     if not entries:
         return []
     day_minutes = sum(entry.worked_minutes for entry in entries)
     if day_minutes <= models.MAX_DAILY_MINUTES:
         return []
-
-    report = compensation_report(db, user_id, work_date)
-    if report.workdays <= 0:
+    if work_date.weekday() == 6:
+        # Sonntagsarbeit wird nach § 9 gekennzeichnet, geht aber nicht in den
+        # werktäglichen Durchschnitt ein.
         return []
 
-    span = (
-        f"{report.start.strftime('%d.%m.%Y')}–{report.end.strftime('%d.%m.%Y')}, "
-        f"{report.workdays} Arbeitstage, Ø {_format_minutes(report.average_minutes)}"
-    )
-    if not report.is_compliant:
-        return [{
-            "code": models.ComplianceCode.AVERAGE_OVER_8H,
-            "severity": SEVERITY_WARNING,
-            "entry_id": entries[-1].id,
-            "detail": (
-                f"Der werktägliche Durchschnitt liegt über 8 Stunden: {span}. "
-                f"Auszugleichen sind {_format_minutes(report.excess_minutes)} "
-                f"bis zum Ende des Ausgleichszeitraums."
-            ),
-        }]
+    from . import compensation
 
-    # Der Schnitt stimmt – aber läuft der Zeitraum bald ab und steht noch ein
-    # Überhang aus den letzten Wochen im Raum? Dann früh warnen, solange
-    # Ausgleich noch möglich ist.
-    remaining = models.COMPENSATION_DAYS - (
-        (report.end - report.start).days + 1
+    cases = compensation.build_cases(db, user_id, work_date)
+    case = next((item for item in cases if item.work_date == work_date), None)
+    if case is None:
+        return []
+
+    report = compensation.build_report(db, user_id, work_date)
+    state = case.state(work_date)
+    if state == models.CompensationState.RESOLVED:
+        return []
+
+    remaining = case.remaining_days(work_date)
+    detail = (
+        f"{_format_minutes(case.excess_minutes)} über acht Stunden, davon "
+        f"{_format_minutes(case.open_minutes)} noch offen. "
+        f"Auszugleichen bis {case.deadline.strftime('%d.%m.%Y')} "
+        f"({remaining} Tage). Grundlage: {report.describe()}."
     )
-    headroom = report.allowance_minutes - report.total_minutes
-    if headroom < models.MAX_DAILY_MINUTES and remaining <= models.COMPENSATION_WARNING_DAYS:
-        return [{
-            "code": models.ComplianceCode.COMPENSATION_DUE,
-            "severity": SEVERITY_INFO,
-            "entry_id": entries[-1].id,
-            "detail": (
-                f"Der Ausgleichszeitraum ist fast ausgeschöpft: {span}. "
-                f"Es bleiben {_format_minutes(max(headroom, 0))} Spielraum."
-            ),
-        }]
-    return []
+    severity = {
+        models.CompensationState.OVERDUE: SEVERITY_CRITICAL,
+        models.CompensationState.DUE: SEVERITY_WARNING,
+    }.get(state, SEVERITY_INFO)
+    return [{
+        "code": state,
+        "severity": severity,
+        "entry_id": entries[-1].id,
+        "detail": detail,
+    }]
 
 
 def _rest_finding(
@@ -713,9 +658,15 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
                     updated_at=now,
                 )
                 db.add(flag)
+                db.flush()
+                log_change(
+                    db, flag, models.ComplianceAction.DETECTED,
+                    after=_flag_snapshot(flag), source="rule_engine",
+                )
                 touched.append(flag)
                 continue
 
+            before_state = _flag_snapshot(flag)
             unchanged = flag.fingerprint == digest
             # Bestandsfeststellungen bekommen ihren Schlüssel nachgereicht.
             flag.finding_key = key
@@ -740,15 +691,29 @@ def refresh_day(db: Session, user_id: int, work_date: date) -> list[models.Compl
                 flag.acknowledged_by_id = None
             else:
                 flag.state = models.ComplianceState.CHANGED
+            log_change(
+                db, flag,
+                models.ComplianceAction.REOPENED
+                if flag.state == models.ComplianceState.REOPENED
+                else models.ComplianceAction.CHANGED,
+                before=before_state, after=_flag_snapshot(flag),
+                source="rule_engine",
+            )
             touched.append(flag)
 
         # Nicht mehr vorhandene Feststellungen werden erledigt, nicht gelöscht.
         for key, flag in by_key.items():
             if key in seen or flag.state == models.ComplianceState.RESOLVED:
                 continue
+            resolved_before = _flag_snapshot(flag)
             flag.state = models.ComplianceState.RESOLVED
             flag.resolved_at = now
             flag.updated_at = now
+            log_change(
+                db, flag, models.ComplianceAction.RESOLVED,
+                before=resolved_before, after=_flag_snapshot(flag),
+                source="rule_engine",
+            )
             touched.append(flag)
 
         db.commit()
@@ -817,6 +782,129 @@ def open_flags(
     )
 
 
+#: Felder, deren Änderung in der Historie festgehalten wird.
+_LOGGED_FIELDS = (
+    "state", "severity", "detail", "fingerprint",
+    "acknowledged_at", "acknowledged_by_id", "acknowledgement",
+    "exception_reason", "legal_basis", "replacement_rest_date",
+    "handling_state", "resolved_at", "reopened_at", "revision_no",
+)
+
+
+def _flag_snapshot(flag: models.ComplianceFlag) -> dict[str, object]:
+    """Fachlicher Stand einer Feststellung als einfache Werte."""
+    data: dict[str, object] = {}
+    for field in _LOGGED_FIELDS:
+        value = getattr(flag, field, None)
+        data[field] = value.isoformat() if hasattr(value, "isoformat") else value
+    return data
+
+
+def log_change(
+    db: Session,
+    flag: models.ComplianceFlag,
+    action: str,
+    *,
+    actor: object = None,
+    reason: str = "",
+    before: Optional[dict[str, object]] = None,
+    after: Optional[dict[str, object]] = None,
+    source: Optional[str] = None,
+    commit: bool = False,
+) -> models.ComplianceLog:
+    """Einen Vorgang an einer Feststellung historisieren (append-only).
+
+    Die Historie wird ausschließlich ergänzt. Es gibt keinen Weg über die
+    Anwendung, einen Eintrag zu ändern oder zu löschen – bei einer
+    arbeitsrechtlichen Bewertung ist die Geschichte so wichtig wie der
+    aktuelle Stand.
+    """
+    name = None
+    if actor is not None:
+        name = getattr(actor, "full_name", None) or getattr(actor, "username", None)
+    entry = models.ComplianceLog(
+        flag_id=flag.id,
+        action=action,
+        changed_at_utc=datetime.utcnow(),
+        actor_id=getattr(actor, "id", None),
+        actor_label=str(name) if name else "System",
+        reason=(reason or "").strip()[:500] or None,
+        source=source,
+        before_json=json.dumps(before, ensure_ascii=False) if before is not None else None,
+        after_json=json.dumps(after, ensure_ascii=False) if after is not None else None,
+    )
+    db.add(entry)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return entry
+
+
+#: Vorgänge der Compliance-Historie in Klartext.
+ACTION_LABELS = {
+    models.ComplianceAction.DETECTED: "Festgestellt",
+    models.ComplianceAction.CHANGED: "Datenstand geändert",
+    models.ComplianceAction.RESOLVED: "Nicht mehr vorhanden",
+    models.ComplianceAction.REOPENED: "Wieder geöffnet",
+    models.ComplianceAction.ACKNOWLEDGED: "Eingeordnet",
+    models.ComplianceAction.EXCEPTION_DOCUMENTED: "Ausnahme dokumentiert",
+    models.ComplianceAction.REST_DAY_SET: "Ersatzruhetag gesetzt",
+    models.ComplianceAction.COMPENSATION_ASSIGNED: "Ausgleich zugeordnet",
+    models.ComplianceAction.MIGRATED: "Bestandsvermerk",
+}
+
+#: Felder der Feststellung in Klartext – für die Vorher/Nachher-Anzeige.
+FIELD_LABELS = {
+    "state": "Zustand",
+    "severity": "Schwere",
+    "detail": "Beschreibung",
+    "fingerprint": "Prüfsumme",
+    "acknowledged_at": "Eingeordnet am",
+    "acknowledged_by_id": "Eingeordnet von",
+    "acknowledgement": "Einordnung",
+    "exception_reason": "Ausnahmegrund",
+    "legal_basis": "Rechts-/Betriebsgrundlage",
+    "replacement_rest_date": "Ersatzruhetag",
+    "handling_state": "Bearbeitungsstand",
+    "resolved_at": "Erledigt am",
+    "reopened_at": "Wieder geöffnet am",
+    "revision_no": "Fassung",
+}
+
+
+def action_label(action: str) -> str:
+    return ACTION_LABELS.get(action, action)
+
+
+def field_label(field: str) -> str:
+    return FIELD_LABELS.get(field, field)
+
+
+def history(db: Session, flag_id: int) -> list[models.ComplianceLog]:
+    """Vollständige Historie einer Feststellung, älteste zuerst."""
+    return (
+        db.query(models.ComplianceLog)
+        .filter(models.ComplianceLog.flag_id == flag_id)
+        .order_by(models.ComplianceLog.id)
+        .all()
+    )
+
+
+def history_for_user(
+    db: Session, user_id: int, *, limit: int = 500
+) -> list[models.ComplianceLog]:
+    """Compliance-Historie einer Person – für den Auskunftsexport."""
+    return (
+        db.query(models.ComplianceLog)
+        .join(models.ComplianceFlag, models.ComplianceFlag.id == models.ComplianceLog.flag_id)
+        .filter(models.ComplianceFlag.user_id == user_id)
+        .order_by(models.ComplianceLog.changed_at_utc.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def get_flag(db: Session, flag_id: int) -> Optional[models.ComplianceFlag]:
     """Einzelne Feststellung – für die Rechteprüfung vor dem Einordnen."""
     return (
@@ -835,6 +923,93 @@ HANDLING_STATES = {
 }
 
 
+class ExceptionError(ValueError):
+    """Die Ausnahmedokumentation ist unvollständig oder unzulässig."""
+
+
+#: Fristen für den Ersatzruhetag nach § 11 Abs. 3 ArbZG, jeweils „innerhalb
+#: eines den Beschäftigungstag einschließenden Zeitraums von …":
+#:
+#: * Sonntagsarbeit: **zwei Wochen**
+#: * Arbeit an einem auf einen Werktag fallenden Feiertag: **acht Wochen**
+REST_DAY_DEADLINE_DAYS = {
+    models.ComplianceCode.SUNDAY_WORK: 14,
+    models.ComplianceCode.HOLIDAY_WORK: 56,
+}
+
+#: Pflichtfelder je Bearbeitungsstand. „Kein Ersatzruhetag nötig" verlangt
+#: ausdrücklich eine Begründung – die Behauptung, § 11 Abs. 3 greife nicht,
+#: ist die weitreichendste von allen und darf nicht unbegründet dastehen.
+REQUIRED_FIELDS = {
+    "open": (),
+    "documented": ("reason", "legal_basis"),
+    "rest_granted": ("reason", "legal_basis", "replacement_rest_date"),
+    "not_required": ("reason",),
+}
+
+_FIELD_LABELS = {
+    "reason": "Ausnahmegrund",
+    "legal_basis": "Rechts-/Betriebsgrundlage",
+    "replacement_rest_date": "Ersatzruhetag",
+}
+
+
+def _validate_rest_day(
+    db: Session,
+    flag: models.ComplianceFlag,
+    rest_day: date,
+) -> None:
+    """Ersatzruhetag gegen § 11 Abs. 3 ArbZG prüfen.
+
+    Geprüft wird viererlei – jede Regel hat einen eigenen Grund:
+
+    * **Nicht vor dem Arbeitstag.** Ein Ruhetag, der vorher lag, ersetzt
+      nichts; er war schon vorbei, als die Arbeit anfiel.
+    * **Innerhalb der Frist.** Zwei Wochen bei Sonntagsarbeit, acht Wochen bei
+      Werktagsfeiertagen – jeweils einschließlich des Beschäftigungstages.
+    * **Kein Sonntag und kein Feiertag.** Beide sind ohnehin frei; sie können
+      keinen zusätzlichen Ausgleich darstellen.
+    * **Nicht doppelt verwendet.** Ein Tag gleicht genau eine Beschäftigung
+      aus. Sonst ließen sich zwei Sonntage mit einem freien Mittwoch abgelten.
+    """
+    if rest_day < flag.work_date:
+        raise ExceptionError(
+            "Der Ersatzruhetag darf nicht vor dem betroffenen Arbeitstag liegen."
+        )
+    window = REST_DAY_DEADLINE_DAYS.get(flag.code)
+    if window is not None:
+        latest = flag.work_date + timedelta(days=window - 1)
+        if rest_day > latest:
+            raise ExceptionError(
+                f"Der Ersatzruhetag muss bis zum {latest.strftime('%d.%m.%Y')} "
+                f"liegen (§ 11 Abs. 3 ArbZG, {window // 7} Wochen)."
+            )
+    if rest_day.weekday() == 6:
+        raise ExceptionError(
+            "Ein Sonntag kann kein Ersatzruhetag sein – er ist ohnehin frei."
+        )
+    from . import crud
+
+    # Ausschließlich die zentrale Region des eigenen Unternehmens; ein
+    # Kundenstandort ändert den Feiertagskalender nicht.
+    if rest_day in crud.get_holiday_dates_in_range(db, rest_day, rest_day):
+        raise ExceptionError(
+            "Ein gesetzlicher Feiertag kann kein Ersatzruhetag sein."
+        )
+    duplicate = (
+        db.query(models.ComplianceFlag)
+        .filter(models.ComplianceFlag.user_id == flag.user_id)
+        .filter(models.ComplianceFlag.replacement_rest_date == rest_day)
+        .filter(models.ComplianceFlag.id != flag.id)
+        .first()
+    )
+    if duplicate is not None:
+        raise ExceptionError(
+            f"Dieser Tag ist bereits Ersatzruhetag für den "
+            f"{duplicate.work_date.strftime('%d.%m.%Y')}."
+        )
+
+
 def document_exception(
     db: Session,
     flag_id: int,
@@ -847,24 +1022,65 @@ def document_exception(
 ) -> Optional[models.ComplianceFlag]:
     """Ausnahme zu Sonn-/Feiertagsarbeit dokumentieren (§§ 9–11 ArbZG).
 
-    Sonntagsarbeit ist nicht verboten, sondern erlaubnispflichtig: § 10 ArbZG
-    zählt Ausnahmen auf, § 11 Abs. 3 verlangt einen **Ersatzruhetag**. Ob eine
+    Sonn- und Feiertagsarbeit ist nicht verboten, sondern erlaubnispflichtig:
+    § 10 zählt Ausnahmen auf, § 11 Abs. 3 verlangt einen Ersatzruhetag. Ob eine
     Ausnahme greift, kann die Anwendung nicht entscheiden – sie hält fest,
-    worauf sich der Betrieb beruft und ob der Ersatzruhetag gewährt wurde.
+    worauf sich der Betrieb beruft, und prüft, dass die Angabe in sich
+    stimmig ist.
 
-    Die tatsächlich geleistete Arbeit bleibt davon unberührt gespeichert und
-    gekennzeichnet; hier kommt nur die Einordnung dazu.
+    Ausschließlich für die Codes ``sunday_work`` und ``holiday_work``: Bei
+    einer fehlenden Ruhepause oder einer Höchstarbeitszeitüberschreitung gibt
+    es keinen Ersatzruhetag, den man eintragen könnte.
+
+    Die tatsächlich geleistete Arbeit bleibt unverändert gespeichert.
     """
     flag = get_flag(db, flag_id)
     if flag is None:
         return None
+    if flag.code not in REST_DAY_DEADLINE_DAYS:
+        raise ExceptionError(
+            "Eine Ausnahme nach §§ 9–11 ArbZG gibt es nur für Sonn- und "
+            "Feiertagsarbeit."
+        )
     if handling_state not in HANDLING_STATES:
-        raise ValueError("UNKNOWN_HANDLING_STATE")
-    flag.exception_reason = (reason or "").strip()[:500] or None
-    flag.legal_basis = (legal_basis or "").strip()[:255] or None
+        raise ExceptionError("Unbekannter Bearbeitungsstand.")
+
+    values = {
+        "reason": (reason or "").strip(),
+        "legal_basis": (legal_basis or "").strip(),
+        "replacement_rest_date": replacement_rest_date,
+    }
+    missing = [
+        _FIELD_LABELS[field]
+        for field in REQUIRED_FIELDS[handling_state]
+        if not values.get(field)
+    ]
+    if missing:
+        raise ExceptionError(
+            "Für diesen Bearbeitungsstand fehlt: " + ", ".join(missing) + "."
+        )
+    if replacement_rest_date is not None:
+        _validate_rest_day(db, flag, replacement_rest_date)
+
+    before = _flag_snapshot(flag)
+    had_rest_day = flag.replacement_rest_date
+    flag.exception_reason = values["reason"][:500] or None
+    flag.legal_basis = values["legal_basis"][:255] or None
     flag.replacement_rest_date = replacement_rest_date
     flag.handling_state = handling_state
     flag.updated_at = datetime.utcnow()
+
+    log_change(
+        db, flag, models.ComplianceAction.EXCEPTION_DOCUMENTED,
+        actor=user, reason=values["reason"],
+        before=before, after=_flag_snapshot(flag), source="web",
+    )
+    if replacement_rest_date != had_rest_day:
+        log_change(
+            db, flag, models.ComplianceAction.REST_DAY_SET,
+            actor=user, reason=values["reason"],
+            before=before, after=_flag_snapshot(flag), source="web",
+        )
     db.commit()
     db.refresh(flag)
     return flag
@@ -891,12 +1107,18 @@ def acknowledge(
     if not cleaned:
         raise ValueError("REASON_REQUIRED")
     now = datetime.utcnow()
+    before = _flag_snapshot(flag)
     flag.acknowledged_at = now
     flag.acknowledged_by_id = user.id if user else None
     flag.acknowledgement = cleaned[:500]
     flag.state = models.ComplianceState.ACKNOWLEDGED
     flag.acknowledged_fingerprint = flag.fingerprint
     flag.updated_at = now
+    log_change(
+        db, flag, models.ComplianceAction.ACKNOWLEDGED,
+        actor=user, reason=cleaned, before=before, after=_flag_snapshot(flag),
+        source="web",
+    )
     db.commit()
     db.refresh(flag)
     return flag
@@ -911,16 +1133,28 @@ def reference(code: str) -> str:
 
 
 __all__ = [
+    "ExceptionError",
+    "HANDLING_STATES",
     "LABELS",
     "REFERENCES",
+    "REST_DAY_DEADLINE_DAYS",
     "SEVERITY_CRITICAL",
     "SEVERITY_INFO",
     "SEVERITY_WARNING",
     "acknowledge",
+    "action_label",
+    "compensation_report",
+    "document_exception",
     "evaluate_day",
+    "field_label",
+    "get_flag",
+    "history",
+    "history_for_user",
     "label",
+    "log_change",
     "open_flags",
     "reference",
     "refresh_day",
     "refresh_for_entry",
+    "shift_break_minutes",
 ]
