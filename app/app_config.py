@@ -170,11 +170,12 @@ COMMON_TIMEZONES = (
 
 #: Zulässiger Bereich für ``SystemSettings.compensation_weeks``.
 #:
-#: § 3 nennt „sechs Kalendermonate oder 24 Wochen". 26 Wochen bilden die
-#: Monatsvariante näherungsweise ab; weniger als vier Wochen wäre kein
-#: Ausgleichszeitraum mehr.
+#: § 3 nennt „sechs Kalendermonate oder 24 Wochen". Diese Einstellung bildet
+#: ausdrücklich die Wochenvariante ab und endet deshalb bei 24; sechs Monate
+#: dürfen nicht pauschal als 26 Wochen angenähert werden. Weniger als vier
+#: Wochen wäre kein sinnvoller betrieblicher Ausgleichszeitraum mehr.
 COMPENSATION_MIN_WEEKS = 4
-COMPENSATION_MAX_WEEKS = 26
+COMPENSATION_MAX_WEEKS = 24
 COMPENSATION_DEFAULT_WEEKS = 24
 
 #: Zulässiger Bereich für ``SystemSettings.shift_break_minutes``.

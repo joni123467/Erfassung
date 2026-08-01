@@ -1412,6 +1412,10 @@ def ensure_seed_data():
             )
             raise
     _ensure_holiday_data()
+    # Ausgleichsfälle altern auch ohne neue Buchung. Beim Start alle offenen
+    # §-3-Fälle auf den heutigen Stand bringen (required/due/overdue/resolved).
+    with database.SessionLocal() as compliance_db:
+        compliance.refresh_open_compensations(compliance_db)
     _migrate_legacy_backup_config()
     _check_license_on_startup()
     if os.environ.get("ERFASSUNG_DISABLE_SCHEDULER", "").lower() not in {"1", "true", "yes"}:
@@ -4496,6 +4500,8 @@ def admin_compliance_page(request: Request, db: Session = Depends(database.get_d
     if not _can_view_time_reports(user):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     # ``None`` heißt „alle Benutzer" – dann bleibt der Filter weg.
+    # Auch ein lange laufender Prozess muss Fristabläufe sehen, ohne Neustart.
+    compliance.refresh_open_compensations(db)
     scope_users = permission_service.allowed_user_ids(db, user, "Time.View")
     flags = compliance.open_flags(db, user_ids=scope_users)
     return _admin_template(

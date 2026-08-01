@@ -252,8 +252,8 @@ def _self_entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0160(client):
-    assert client.app.version == "0.17.0"
-    assert client.get("/health").json()["version"] == "0.17.0"
+    assert client.app.version == "0.18.0"
+    assert client.get("/health").json()["version"] == "0.18.0"
 
 
 # ── 1. Selbstbedienungsrechte ─────────────────────────────────────────────
@@ -721,7 +721,7 @@ def test_a_lower_shift_gap_changes_the_evaluation(client):
 
 
 def test_the_compensation_report_names_its_period(client):
-    """Seit 0.17.0 ist der Nenner **Werktage**, nicht „Tage mit Buchung"."""
+    """Seit 0.18.0 ist der Nenner **Werktage**, nicht „Tage mit Buchung"."""
     from app import compliance
 
     _entry(start=time(6, 0), end=time(15, 0))
@@ -737,7 +737,7 @@ def test_the_compensation_report_names_its_period(client):
 
 
 def test_a_single_long_day_is_required_but_not_overdue(client):
-    """Seit 0.17.0: ausgleichspflichtig, aber nicht sofort überfällig."""
+    """Seit 0.18.0: ausgleichspflichtig, aber nicht sofort überfällig."""
     from app import models
 
     _entry(start=time(6, 0), end=time(16, 0))    # zehn Stunden

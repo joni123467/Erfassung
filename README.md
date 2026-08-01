@@ -2,7 +2,16 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.17.0`
+**Version:** `0.18.0`
+
+> Seit 0.18.0: **Ausgleichsfeststellungen werden fortgeschrieben** – beim
+> Start, vor der Compliance-Übersicht und nach Buchungsänderungen wechseln sie
+> nachvollziehbar zwischen erforderlich, fällig, überfällig und erledigt.
+> Tatsächlich geleistete Arbeit bleibt auch an Feiertagen, Urlaubstagen und
+> geplanten Ersatzruhetagen Bestandteil der §-3-Rechnung. Ein Ersatzruhetag
+> muss nach dem Arbeitstag liegen und wirklich arbeitsfrei sein. Die
+> Wochenvariante des Ausgleichs ist auf höchstens 24 Wochen begrenzt. Details
+> in [`docs/RELEASE_NOTES_0.18.0.md`](docs/RELEASE_NOTES_0.18.0.md).
 
 > Seit 0.17.0: **Der §-3-Ausgleich rechnet über Werktage statt über
 > Buchungstage** und bekommt eine **eigene Frist je Überschreitungstag** – ein
@@ -891,7 +900,9 @@ darunter lag. Seit 0.17.0 rechnet `app/compensation.py`:
 
 **Offene Festlegung:** Das Gesetz nennt „sechs Kalendermonate **oder** 24
 Wochen" gleichrangig. Diese Umsetzung wählt das Wochenraster; der Zeitraum ist
-seit 0.17.0 einstellbar (4–26 Wochen, Vorgabe 24).
+seit 0.17.0 einstellbar; seit 0.18.0 gilt für die Wochenvariante ausdrücklich
+der Bereich 4–24 Wochen (Vorgabe 24). Sechs Kalendermonate sind keine pauschale
+26-Wochen-Frist.
 
 **Offene Entscheidung:** Krankheitstage bleiben im Nenner, weil die Anwendung
 keine Arbeitsunfähigkeit erfasst. Das ist eine fehlende Datenquelle, keine

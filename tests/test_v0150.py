@@ -218,8 +218,8 @@ def _second_user(username: str = "kollege") -> int:
 
 
 def test_version_is_0150(client):
-    assert client.app.version == "0.17.0"
-    assert client.get("/health").json()["version"] == "0.17.0"
+    assert client.app.version == "0.18.0"
+    assert client.get("/health").json()["version"] == "0.18.0"
 
 
 # ── 1. Absicherung der Schnittstelle ──────────────────────────────────────

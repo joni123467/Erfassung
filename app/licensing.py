@@ -796,6 +796,11 @@ def fetch_public_keys(server_url: str) -> dict[str, str]:
     except httpx.HTTPError as exc:
         raise LicenseError(f"Der Lizenzserver ist nicht erreichbar: {exc}") from exc
     if response.status_code != 200:
+        if response.status_code >= 500:
+            raise LicenseError(
+                "Der Lizenzserver ist vorübergehend nicht erreichbar "
+                f"(HTTP {response.status_code})."
+            )
         raise LicenseError(
             "Der Lizenzserver hat keinen Prüfschlüssel geliefert "
             f"(HTTP {response.status_code})."
