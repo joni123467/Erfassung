@@ -1426,6 +1426,7 @@ def ensure_seed_data():
     # §-3-Fälle auf den heutigen Stand bringen (required/due/overdue/resolved).
     with database.SessionLocal() as compliance_db:
         compliance.refresh_open_compensations(compliance_db)
+        compliance.refresh_annual_compliance(compliance_db)
     _migrate_legacy_backup_config()
     _check_license_on_startup()
     if os.environ.get("ERFASSUNG_DISABLE_SCHEDULER", "").lower() not in {"1", "true", "yes"}:
@@ -4513,6 +4514,7 @@ def admin_compliance_page(request: Request, db: Session = Depends(database.get_d
     # Auch ein lange laufender Prozess muss Fristabläufe sehen, ohne Neustart.
     compliance.refresh_open_compensations(db)
     scope_users = permission_service.allowed_user_ids(db, user, "Time.View")
+    annual_reports = compliance.refresh_annual_compliance(db, user_ids=scope_users)
     flags = compliance.open_flags(db, user_ids=scope_users)
     return _admin_template(
         "admin/compliance.html",
@@ -4521,6 +4523,7 @@ def admin_compliance_page(request: Request, db: Session = Depends(database.get_d
         message=request.query_params.get("msg"),
         error=request.query_params.get("error"),
         flags=flags,
+        annual_reports=annual_reports,
         compliance_label=compliance.label,
         compliance_reference=compliance.reference,
         handling_states=compliance.HANDLING_STATES,

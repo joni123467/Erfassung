@@ -5,6 +5,62 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.20.0] – 2026-08-01
+
+### Hinzugefügt
+- Jahresübersicht je Person für freie/gearbeitete Sonntage, verbleibende
+  Sonntage und das Minimum von 15 freien Sonntagen nach § 11 Abs. 1 ArbZG.
+- Kritische, revisionssicher fortgeschriebene Feststellung, sobald 15 freie
+  Sonntage im Kalenderjahr rechnerisch nicht mehr erreichbar sind.
+- Berechnung tatsächlicher Nachtarbeitsminuten von 23:00 bis 06:00 Uhr unter
+  Berücksichtigung von Pausen, Zeitzone und Zeitumstellung.
+- Kennzeichnung von Arbeitstagen mit mindestens zwei Nachtstunden und mehr als
+  acht Gesamtstunden nach § 6 Abs. 2 ArbZG sowie Jahreszählung für das
+  48-Tage-Indiz nach § 2 Abs. 5 ArbZG.
+
+### Geändert
+- Die vorhandene Regelübersicht enthält eine Jahresprüfung für Sonn- und
+  Nachtarbeit und übernimmt unverändert `Time.View`, Geltungsbereiche und
+  `Time.Compliance.Manage` für die Einordnung.
+- Der Rechtshinweis trennt technisch ermittelbare Tatsachen von weiterhin
+  menschlich zu prüfenden Wechselschicht-, Branchen-, Tarif-, Vorsorge- und
+  Ausgleichsfragen.
+
+### Fehlerbehebungen
+- Die in 0.19.1 dokumentierten technischen Lücken „15 freie Sonntage“ und
+  „Nachtarbeit erkennen“ werden nun programmatisch ausgewertet.
+
+### Datenbankänderungen und Migration
+- Keine Schemaänderung. Die neuen Codes verwenden die bestehende
+  `compliance_flags.code`-Spalte; eine Migration ist nicht erforderlich.
+
+## [0.19.1] – 2026-08-01
+
+### Hinzugefügt
+- Erneute rechtliche und normative Soll-Ist-Prüfung für Deutschland mit
+  Primärquellen, Abgrenzung der technischen Funktionen und verbindlicher
+  Betreiber-Checkliste.
+- Dokumentierte Prüflücken für Nachtarbeit, 15 freie Sonntage, besondere
+  Beschäftigtengruppen, Mitbestimmung, Datenschutzorganisation, externe
+  Manipulationssicherung, Barrierefreiheit und Informationssicherheit.
+
+### Geändert
+- README und Release Notes stellen klar, dass die Anwendung eine geeignete
+  technische Grundlage bietet, aber weder Rechtsberatung noch Zertifizierung
+  oder eine pauschale Rechtskonformitätszusage ersetzt.
+
+### Fehlerbehebungen
+- Die bisher zu allgemeine Beschreibung der „revisionssicheren Erfassung“ wird
+  um die Grenze gegenüber direkten Datenbank-/Host-Administratoren und um
+  organisatorische Pflichten ergänzt.
+
+### Datenbankänderungen
+- Keine. Modelle, Migrationen und gespeicherte Daten bleiben unverändert.
+
+### Migrationshinweise
+- Keine Migration erforderlich; 0.19.1 ist eine reine Dokumentations- und
+  Prüfrelease.
+
 ## [0.19.0] – 2026-08-01
 
 ### Hinzugefügt
