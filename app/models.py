@@ -220,6 +220,9 @@ class User(Base):
     monthly_overtime_limit_minutes = Column(Integer, nullable=True)
     auto_break_deduction = Column(Boolean, default=True)
     remote_flag_enabled = Column(Boolean, default=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
+    deactivated_at = Column(DateTime, nullable=True)
+    deactivation_reason = Column(String(500), nullable=True)
 
     groups = relationship("Group", secondary=user_groups, back_populates="users", lazy="selectin")
     roles = relationship("Role", secondary=user_roles, back_populates="users", lazy="selectin")
@@ -229,7 +232,6 @@ class User(Base):
     time_entries = relationship(
         "TimeEntry",
         back_populates="user",
-        cascade="all, delete-orphan",
         foreign_keys="TimeEntry.user_id",
     )
     vacation_requests = relationship(

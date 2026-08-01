@@ -2,7 +2,9 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.18.0`
+**Version:** `0.19.0`
+
+> Seit 0.19.0 werden Benutzerkonten aufbewahrungssicher deaktiviert und pseudonymisiert; Arbeitszeit- und Compliance-Nachweise bleiben erhalten. Sonntagsarbeit zählt vollständig zur Arbeitszeitprüfung, ohne den Werktagsnenner zu erhöhen, und die Zehn-Stunden-Grenze wird schichtbezogen über Mitternacht geprüft. Details stehen in [`docs/RELEASE_NOTES_0.19.0.md`](docs/RELEASE_NOTES_0.19.0.md).
 
 > Seit 0.18.0: **Ausgleichsfeststellungen werden fortgeschrieben** – beim
 > Start, vor der Compliance-Übersicht und nach Buchungsänderungen wechseln sie

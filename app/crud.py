@@ -235,7 +235,12 @@ def get_user_by_username(db: Session, username: str) -> Optional[models.User]:
 
 
 def get_users(db: Session) -> List[models.User]:
-    return db.query(models.User).order_by(models.User.full_name).all()
+    return (
+        db.query(models.User)
+        .filter(models.User.is_active.is_(True))
+        .order_by(models.User.full_name)
+        .all()
+    )
 
 
 def _allocate_internal_pin(db: Session) -> str:
@@ -331,11 +336,24 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate) -> Optional
     return db_user
 
 
-def delete_user(db: Session, user_id: int) -> bool:
+def delete_user(db: Session, user_id: int, reason: str = "") -> bool:
+    """Archiviert ein Konto; gesetzliche Nachweis- und Historien bleiben erhalten."""
     db_user = get_user(db, user_id)
-    if not db_user:
+    if not db_user or not db_user.is_active:
         return False
-    db.delete(db_user)
+    archive_pin = _allocate_internal_pin(db)
+    marker = f"archived-{db_user.id}"
+    db_user.is_active = False
+    db_user.deactivated_at = datetime.utcnow()
+    db_user.deactivation_reason = (reason.strip() or "Administrativ deaktiviert")[:500]
+    db_user.username = marker
+    db_user.email = f"{marker}@invalid.local"
+    db_user.password_hash = None
+    db_user.rfid_tag = None
+    db_user.pin_code = archive_pin
+    db_user.group_id = None
+    db_user.groups = []
+    db_user.roles = []
     db.commit()
     return True
 

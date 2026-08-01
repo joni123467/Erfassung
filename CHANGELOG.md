@@ -5,6 +5,26 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.19.0] – 2026-08-01
+
+### Hinzugefügt
+- Aufbewahrungssichere Benutzerdeaktivierung mit Pseudonymisierung, Begründung und Audit-Protokoll.
+- Migration 21 ergänzt `users.is_active`, `users.deactivated_at` und `users.deactivation_reason` portabel und datenerhaltend.
+
+### Geändert
+- Sonntagsminuten bleiben vollständig in der §-3-/§-11-Prüfung, während Sonntage weiterhin nicht den Werktagsnenner erhöhen.
+- Die absolute Zehn-Stunden-Grenze wird zusätzlich über zusammenhängende Schichten über Mitternacht geprüft.
+- Ausgleichszustände verwenden einen stabilen Vorgangsschlüssel und übernehmen bestehende 0.17/0.18-Feststellungen.
+
+### Behoben
+- Arbeitszeitnachweise und Compliance-Historien können beim Entfernen eines Benutzerzugangs nicht mehr kaskadierend gelöscht werden.
+
+### Datenbankänderungen und Migration
+- Migration 21 übernimmt Bestandskonten mit `is_active=true`; alle bestehenden Daten bleiben erhalten. Downgrades werden nicht unterstützt.
+
+### Organisatorische Grenze
+- Tarifabweichungen, §§ 7/10/14 ArbZG, Betriebsvereinbarungen und Legal Holds benötigen weiterhin eine betriebliche beziehungsweise juristische Festlegung.
+
 ## [0.18.0] – 2026-08-01
 
 ### Fixed

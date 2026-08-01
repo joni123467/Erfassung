@@ -821,6 +821,19 @@ def _add_compliance_logs(engine: Engine) -> None:
         )
 
 
+def _add_user_deactivation(engine: Engine) -> None:
+    """Aufbewahrungssichere Kontodeaktivierung (0.19.0)."""
+    if not db_schema.has_table(engine, "users"):
+        models.Base.metadata.tables["users"].create(bind=engine, checkfirst=True)
+        return
+    db_schema.add_column(
+        engine, "users", "is_active", "BOOLEAN NOT NULL",
+        default="1", backfill_null_to="1",
+    )
+    db_schema.add_column(engine, "users", "deactivated_at", "DATETIME")
+    db_schema.add_column(engine, "users", "deactivation_reason", "VARCHAR(500)")
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -842,6 +855,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (18, _add_compliance_lifecycle),
     (19, _add_finding_keys_and_holiday_notes),
     (20, _add_compliance_logs),
+    (21, _add_user_deactivation),
 ]
 
 

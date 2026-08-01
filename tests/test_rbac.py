@@ -202,7 +202,7 @@ def test_registry_is_consistent(client):
         # Resturlaub eines Teams sieht, entscheidet nicht zwingend über
         # Anträge.
         "Vacation.Overview",
-        # Seit 0.18.0: Compliance-Daten zu bearbeiten ist ein eigenes Recht.
+        # Seit 0.19.0: Compliance-Daten zu bearbeiten ist ein eigenes Recht.
         # ``Time.View`` bleibt reines Leserecht.
         "Time.Compliance.Manage",
         "User.View", "User.Create", "User.Edit", "User.Delete",
