@@ -108,6 +108,22 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
                 ),
                 self_service=True,
             ),
+            # Bewusst getrennt von ``Own.Time.Edit``: Nachtragen und
+            # Zurücknehmen sind verschiedene Dinge. Ein Nachtrag geht in die
+            # Freigabe und wird geprüft; eine Stornierung nimmt bereits
+            # erfasste – womöglich schon freigegebene – Zeit zurück. Wer
+            # nachtragen darf, soll deswegen nicht automatisch stornieren
+            # dürfen.
+            Permission(
+                key="Own.Time.Cancel",
+                label="Eigene Buchungen stornieren",
+                description=(
+                    "Eine eigene Zeitbuchung mit Begründung zurücknehmen. "
+                    "Gelöscht wird nichts – die Buchung bleibt als storniert "
+                    "erhalten."
+                ),
+                self_service=True,
+            ),
             Permission(
                 key="Own.Vacation.Request",
                 label="Urlaubsanträge stellen",

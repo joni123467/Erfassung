@@ -147,8 +147,8 @@ def _vacation(
 
 
 def test_version_is_0142(client):
-    assert client.app.version == "0.15.0"
-    assert client.get("/health").json()["version"] == "0.15.0"
+    assert client.app.version == "0.16.0"
+    assert client.get("/health").json()["version"] == "0.16.0"
 
 
 # ── Halbe Urlaubstage ─────────────────────────────────────────────────────

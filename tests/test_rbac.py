@@ -192,6 +192,9 @@ def test_registry_is_consistent(client):
     assert len(permissions.PERMISSION_KEYS) == len(set(permissions.PERMISSION_KEYS))
     assert set(permissions.SELF_SERVICE_KEYS) == {
         "Own.Time.Edit", "Own.Comment.Edit", "Own.Vacation.Request",
+        # Seit 0.16.0: Stornieren ist ein eigener Vorgang – wer nachtragen
+        # darf, soll nicht automatisch zurücknehmen dürfen.
+        "Own.Time.Cancel",
     }
     assert set(permissions.SCOPED_KEYS) == {
         "Time.Approve", "Time.Edit", "Time.View", "Vacation.Manage",

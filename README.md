@@ -2,7 +2,20 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.15.0`
+**Version:** `0.16.0`
+
+> Seit 0.16.0: **Selbstbedienung braucht jetzt auch über die API ein Recht.**
+> 0.15.0 sicherte die Schnittstelle gegen Fremdzugriffe ab – für die eigene
+> Person blieb sie offen. Eigene Buchungen brauchen `Own.Time.Edit`, eigene
+> Stornierungen das **neue** `Own.Time.Cancel`, eigene Urlaubsanträge
+> `Own.Vacation.Request`. Außerdem kann ein Beschäftigter bei einem eigenen
+> Nachtrag **nicht mehr** Status, Quelle, externe ID oder UTC-Stempel
+> bestimmen; die **Dauerberechnung liegt zentral** und rechnet überall in UTC
+> (Zeitumstellung); **Feststellungen sind je Schicht eindeutig**; die
+> **Schichtgrenze ist einstellbar**; der **Ausgleich nach § 3 ArbZG** wird über
+> 24 Wochen ausgewertet; und zu **Sonn-/Feiertagsarbeit** lassen sich
+> Ausnahmegrund, Rechtsgrundlage und Ersatzruhetag festhalten. Details in
+> [`docs/RELEASE_NOTES_0.16.0.md`](docs/RELEASE_NOTES_0.16.0.md).
 
 > Seit 0.15.0: **Die JSON-Schnittstelle ist abgesichert.** Neun `/api/*`-Endpunkte
 > waren ohne jede Prüfung erreichbar – darunter das Anlegen von Benutzern und
@@ -476,16 +489,38 @@ Der Unterschied zwischen 401 und 403 ist Absicht: „nicht angemeldet" und
 | `POST /api/users` | `User.Create` |
 | `GET`/`POST /api/groups` | `System.Groups` |
 | `GET`/`POST /api/roles` | `System.Roles` |
-| `POST /api/time-entries` | eigene Person frei, sonst `Time.Edit` |
-| `DELETE /api/time-entries/{id}` | eigene Person frei, sonst `Time.Edit` |
+| `POST /api/time-entries` | eigene Person `Own.Time.Edit`, sonst `Time.Edit` |
+| `DELETE /api/time-entries/{id}` | eigene Person `Own.Time.Cancel`, sonst `Time.Edit` |
 | `GET /api/users/{id}/excel` | eigene Person frei, sonst `Time.View` |
-| `POST /api/vacations` | eigene Person frei, sonst `Vacation.Manage` |
+| `POST /api/vacations` | eigene Person `Own.Vacation.Request`, sonst `Vacation.Manage` |
 | `POST /api/vacations/{id}/status` | `Vacation.Manage` |
 | `GET /api/license` | `System.Settings` |
 | `GET /api/me/export` | nur die eigene Person |
 
-Die eigene Person kommt immer ohne Sonderrecht an ihre Daten – das ist
-Selbstbedienung, kein Privileg.
+Die eigene Person kommt immer ohne Sonderrecht an ihre **Daten** – Lesen ist
+Selbstbedienung, kein Privileg. **Schreiben** braucht seit 0.16.0 auch für die
+eigene Person das passende `Own.*`-Recht: Die Oberfläche prüfte das längst, die
+Schnittstelle nicht. Ohne zugewiesene Rolle gelten diese Rechte wie bisher als
+erlaubt, sodass sich Bestandsinstallationen nicht ändern.
+
+### Was ein Beschäftigter selbst bestimmen darf
+
+Ein eigener Nachtrag über `POST /api/time-entries` nimmt nur diese Felder an:
+Datum, Beginn, Ende, Pause, Kunde, Standort, Einsatzort und Kommentar.
+
+Alles andere setzt der Server:
+
+| Feld | Wert |
+|------|------|
+| `status` | immer `pending` – ein Nachtrag geht in die Freigabe |
+| `is_manual` / `is_open` | `true` / `false` |
+| `source`, `external_id` | bleiben leer – diese Felder gehören Terminals |
+| `started_at_utc`, `ended_at_utc`, `tz_name` | aus den Ortszeiten und der zentralen Betriebszeitzone |
+| `location_id` | nur, wenn der Standort zur gebuchten Firma gehört |
+
+Damit kann sich niemand selbst freigeben oder eine Buchung als
+Terminalstempelung ausgeben. Für die Verwaltung (`Time.Edit`) und für
+Terminaltreiber gilt weiterhin das vollständige Schema.
 
 ### Stornieren
 
@@ -789,12 +824,47 @@ Aufträge und Einsatzorte hinweg – nicht die einzelne Buchung:
 3. Lücken **unter 15 Minuten** sind Arbeitszeit, keine Ruhepause – ein
    Auftrags-, Kunden- oder Standortwechsel täuscht keine Pause vor.
 4. Nur echte Unterbrechungen **ab 15 Minuten** werden angerechnet.
-5. Eine Unterbrechung ab **6 Stunden** (`models.SHIFT_BREAK_MINUTES`) beendet
-   die Schicht und löst die Ruhezeitprüfung nach § 5 ArbZG aus.
+5. Eine Unterbrechung ab der **Schichtgrenze** beendet die Schicht und löst die
+   Ruhezeitprüfung nach § 5 ArbZG aus.
 
 Punkt 5 ist eine **betriebliche Festlegung**, keine Zahl aus dem Gesetz: Das
-ArbZG kennt den Begriff „Schicht" nicht. Wer das anders handhabt, ändert die
-Konstante – die Auswirkung steht in den Release Notes zu 0.15.0.
+ArbZG kennt den Begriff „Schicht" nicht. Seit 0.16.0 ist der Wert deshalb unter
+*Administration → System → Einstellungen* einstellbar (Voreinstellung 360
+Minuten, zulässig 60–720). Er liegt persistent im config-Volume, wird beim
+Import validiert, und jede Änderung erzeugt einen Audit-Eintrag – sie verändert
+die Bewertung von Pausen und Ruhezeiten rückwirkend.
+
+### Ausgleich nach § 3 ArbZG (seit 0.16.0)
+
+Mehr als acht Stunden werktäglich sind zulässig, wenn sie ausgeglichen werden.
+Die Anwendung wertet das rollierend über **24 Wochen** aus:
+
+- Gezählt werden nur **Werktage mit Arbeit**; Sonntage bleiben außen vor
+  (§ 3 spricht von werktäglicher Arbeitszeit), und Tage ohne Buchung senken den
+  Durchschnitt nicht künstlich.
+- Die Kennzeichnung nennt **Zeitraum, Anzahl der Tage und Durchschnitt**.
+- `average_over_8h` meldet einen fehlenden Ausgleich, `compensation_due` warnt,
+  bevor der Zeitraum ausgeschöpft ist.
+
+**Offene Festlegung:** Das Gesetz nennt „sechs Kalendermonate **oder** 24
+Wochen" gleichrangig. Diese Umsetzung wählt 24 Wochen (Wochenraster passt zur
+werktäglichen Betrachtung); die Monatsvariante wäre bis zu zwei Wochen länger.
+Wer sie braucht, legt das über `models.COMPENSATION_WEEKS` fest.
+
+### Sonn- und Feiertagsarbeit dokumentieren (seit 0.16.0)
+
+Sonntagsarbeit ist nicht verboten, sondern erlaubnispflichtig (§ 10 ArbZG), und
+§ 11 Abs. 3 verlangt einen Ersatzruhetag. Zu einer entsprechenden
+Kennzeichnung lassen sich unter *Regelverstöße* festhalten:
+
+- **Ausnahmegrund** (z. B. Notdienst, Instandhaltung),
+- **Rechts-/Betriebsgrundlage** (Paragraf, Tarifvertrag, Betriebsvereinbarung),
+- **Ersatzruhetag**,
+- **Bearbeitungsstand** (offen, begründet, Ersatzruhetag gewährt, nicht nötig).
+
+Alle Felder sind optional. Die geleistete Arbeit bleibt unberührt gespeichert
+und gekennzeichnet – die Anwendung entscheidet nicht, ob eine Ausnahme greift,
+sie hält fest, worauf sich der Betrieb beruft.
 
 Nachtarbeit über Mitternacht bleibt eine Schicht. Gerechnet wird durchgehend
 in UTC, damit die Zeitumstellung das Ergebnis nicht verschiebt.

@@ -5,6 +5,123 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.16.0] – 2026-07-31
+
+### Security – Selbstbedienung kannte keine Rechte
+
+0.15.0 sicherte die Schnittstelle gegen **Fremdzugriffe** ab; für die **eigene**
+Person blieb sie offen. Wer angemeldet war, konnte sich Buchungen anlegen und
+Urlaub beantragen, auch ohne die dafür vorgesehenen `Own.*`-Rechte. Die
+Oberfläche prüfte sie, die Schnittstelle nicht.
+
+- `POST /api/time-entries` für die eigene Person verlangt jetzt
+  **`Own.Time.Edit`**, `POST /api/vacations` **`Own.Vacation.Request`**.
+- **Neues Recht `Own.Time.Cancel`** für eigene Stornierungen. `Own.Time.Edit`
+  wäre dafür zu weit: Ein Nachtrag geht in die Freigabe, eine Stornierung nimmt
+  bereits erfasste – womöglich freigegebene – Zeit zurück. Wie alle
+  `Own.*`-Rechte ohne zugewiesene Rolle erlaubt, damit Bestandsinstallationen
+  sich nicht ändern.
+- Für fremde Personen weiterhin `Time.Edit` bzw. `Vacation.Manage` mit
+  Scope-Prüfung; anonym 401, fehlendes Recht 403, Abweisungen protokolliert.
+
+### Security – die Schnittstelle nahm zu viel entgegen
+
+`schemas.TimeEntryCreate` war das öffentliche Eingabeschema für alle. Ein
+Beschäftigter konnte sich damit eine **freigegebene** Buchung anlegen
+(`status=approved`), eine Buchung als **Terminalstempelung** ausgeben
+(`source`, `external_id`), UTC-Stempel und Zeitzone frei setzen und den
+Nachtrag über `is_manual=false` als gestempelt ausgeben.
+
+- Neues, enges Schema **`SelfServiceTimeEntryCreate`**: Datum, Zeiten, Pause,
+  Kunde, Standort, Einsatzort, Kommentar – mehr nicht. Eine Positivliste hält
+  länger als eine Negativliste.
+- Für eigene Nachträge erzwingt der Server `status=pending`, `is_manual=true`,
+  `is_open=false`, leere Quelle und externe ID; UTC-Stempel und `tz_name`
+  entstehen aus der **zentralen Betriebszeitzone**.
+- Der Standort wird nur übernommen, wenn er zur gebuchten Firma gehört.
+- Verwaltung und Terminaltreiber nutzen unverändert das vollständige Schema.
+
+### Fixed – die Dauer wurde zweimal gerechnet
+
+`compliance` rechnete in UTC, `TimeEntry.gross_minutes` mit naiven Ortszeiten.
+Über eine Zeitumstellung hinweg wichen Regelprüfung und Auswertung um eine
+Stunde voneinander ab. Neu ist **`app/worktime.py`** als einzige Quelle: UTC-
+Stempel haben Vorrang, Ortszeit ist Rückfallebene für Bestandsbuchungen,
+gerechnet wird durchgehend zonenbehaftet. Benutzt von Modell, Regelprüfung,
+Summen, Überstunden, Zeitkonto, Berichten, PDF, Excel, Offline-Snapshot und
+Backup-Prüfung.
+
+Beispiel Nachtschicht 22:00–06:00: in der Nacht zum 29.03.2026 sind es
+**sieben** Stunden statt acht, in der Nacht zum 25.10.2026 **neun**.
+
+### Fixed – Feststellungen waren nur über den Code zugeordnet
+
+Zwei getrennte Schichten an einem Tag mit demselben Verstoß fielen zu einer
+Feststellung zusammen; wer die eine einordnete, deckte die andere mit zu. Neu
+ist ein stabiler Schlüssel `finding_key` aus Benutzer, Tag, Code und
+**Schichtbeginn** samt `shift_start_utc`. Mehrere gleichartige Verstöße eines
+Tages lassen sich getrennt speichern, anzeigen, bestätigen, erledigen und
+erneut öffnen. Bestandsfeststellungen bekommen den Schlüssel nachgereicht,
+ohne ihre Bestätigung zu verlieren.
+
+### Added – Schichtgrenze konfigurierbar
+
+`SHIFT_BREAK_MINUTES` war im Code festgeschrieben. Der Wert steht jetzt in der
+persistenten Systemkonfiguration (config-Volume) und ist unter *Administration
+→ System → Einstellungen* änderbar. Voreinstellung 360 Minuten
+(Bestandsverhalten), zulässig 60–720, beim Import validiert, jede Änderung mit
+Audit-Eintrag – sie verändert die Bewertung von Pausen und Ruhezeiten
+rückwirkend.
+
+### Added – Ausgleich nach § 3 Satz 2 ArbZG
+
+Mehr als acht Stunden wurden gekennzeichnet, der Ausgleich aber nie geprüft.
+Neu ist eine rollierende Auswertung über **24 Wochen**: gezählt werden nur
+Werktage mit Arbeit (Sonntage bleiben außen vor), ausgewiesen werden Zeitraum,
+Anzahl der Tage und Durchschnitt im Klartext. Zwei neue Kennzeichnungen:
+`average_over_8h` (Ausgleich fehlt) und `compensation_due` (Zeitraum läuft ab).
+Blockiert wird nichts.
+
+**Offene Entscheidung:** Das Gesetz nennt „sechs Kalendermonate **oder** 24
+Wochen" gleichrangig. Diese Umsetzung wählt 24 Wochen, weil das Wochenraster zur
+werktäglichen Betrachtung passt; die Monatsvariante wäre bis zu zwei Wochen
+länger. Wer sie braucht, legt das über `models.COMPENSATION_WEEKS` fest –
+stillschweigend angenommen wird nichts.
+
+### Added – Sonn- und Feiertagsarbeit dokumentierbar
+
+Zu einer Sonn-/Feiertagskennzeichnung lassen sich Ausnahmegrund,
+Rechts-/Betriebsgrundlage, Ersatzruhetag (§ 11 Abs. 3 ArbZG) und
+Bearbeitungsstand erfassen. Alle Felder optional; die geleistete Arbeit bleibt
+unberührt gespeichert und gekennzeichnet. Zugriff an denselben Geltungsbereich
+gebunden wie das Einordnen, mit Audit-Eintrag.
+
+Feiertage kommen unverändert **ausschließlich** aus der zentral konfigurierten
+Region: Kundenfirma und Kundenstandort ändern die Bewertung nicht.
+
+### Datenbank
+
+Migration **19** (`_add_finding_keys_and_holiday_notes`) in beiden Mechanismen:
+sechs neue Spalten an `compliance_flags`. Idempotent und datenerhaltend,
+geprüft für Aufstiege aus 0.14.2 und 0.15.0; die neuen Spalten wandern
+automatisch in logisches Backup und Cross-Database-Restore. Bestehende
+Migrationen unverändert.
+
+### Migrationshinweise
+
+- **`Own.Time.Cancel` muss Rollen zugewiesen werden**, die bereits Rechte
+  vergeben – sonst können diese Personen eigene Buchungen nicht mehr über die
+  API stornieren. Ohne zugewiesene Rolle bleibt alles wie bisher.
+- API-Clients, die für eigene Buchungen `status`, `source` oder UTC-Stempel
+  gesetzt haben, bekommen diese Werte jetzt vom Server überschrieben.
+- Es entstehen **mehr Kennzeichnungen**: zwei Schichten an einem Tag ergeben
+  zwei Feststellungen, und der fehlende Ausgleich kommt als neue Warnung dazu.
+
+### Tests
+
+`tests/test_v0160.py` – 46 Tests. Details in
+[`docs/RELEASE_NOTES_0.16.0.md`](docs/RELEASE_NOTES_0.16.0.md).
+
 ## [0.15.0] – 2026-07-31
 
 ### Security – die JSON-Schnittstelle war offen

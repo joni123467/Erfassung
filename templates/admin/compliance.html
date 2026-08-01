@@ -54,6 +54,40 @@
                                        placeholder="Bewertung, z. B. Ausgleich in KW 12">
                                 <button type="submit" class="button small">Einordnen</button>
                             </form>
+                            {# Sonn- und Feiertagsarbeit ist nicht verboten, sondern
+                               erlaubnispflichtig (§§ 9–11 ArbZG). Deshalb hier die
+                               Möglichkeit, Grundlage und Ersatzruhetag festzuhalten. #}
+                            {% if flag.code in ('sunday_work', 'holiday_work') %}
+                                <details class="compliance-exception">
+                                    <summary>Ausnahme dokumentieren</summary>
+                                    <form method="post" action="/admin/compliance/{{ flag.id }}/exception"
+                                          class="compliance-form compliance-form--stacked">
+                                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                        <label>Ausnahmegrund
+                                            <input type="text" name="reason" maxlength="500"
+                                                   value="{{ flag.exception_reason or '' }}"
+                                                   placeholder="z. B. Notdienst, Instandhaltung">
+                                        </label>
+                                        <label>Rechts-/Betriebsgrundlage
+                                            <input type="text" name="legal_basis" maxlength="255"
+                                                   value="{{ flag.legal_basis or '' }}"
+                                                   placeholder="z. B. §10 Abs. 1 Nr. 3 ArbZG, BV Nr. 7">
+                                        </label>
+                                        <label>Ersatzruhetag (§11 Abs. 3)
+                                            <input type="date" name="replacement_rest_date"
+                                                   value="{{ flag.replacement_rest_date.isoformat() if flag.replacement_rest_date else '' }}">
+                                        </label>
+                                        <label>Stand
+                                            <select name="handling_state">
+                                                {% for key, label in handling_states.items() %}
+                                                    <option value="{{ key }}"{% if flag.handling_state == key %} selected{% endif %}>{{ label }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </label>
+                                        <button type="submit" class="button small">Speichern</button>
+                                    </form>
+                                </details>
+                            {% endif %}
                         </td>
                     </tr>
                 {% endfor %}

@@ -206,7 +206,54 @@ class TimeEntryBase(BaseModel):
 
 
 class TimeEntryCreate(TimeEntryBase):
-    pass
+    """Vollständiges Eingabeschema – **nur für vertrauenswürdige Aufrufer**.
+
+    Es erlaubt jedes Feld, auch ``status``, ``source``, ``external_id`` und die
+    UTC-Stempel. Das ist für Administration, Terminalimport und interne
+    Aufrufe richtig, für die Selbstbedienung aber viel zu weit: Ein
+    Beschäftigter könnte sich damit eine freigegebene Buchung anlegen oder eine
+    fremde Terminalquelle vortäuschen.
+
+    Für die Selbstbedienung gibt es deshalb :class:`SelfServiceTimeEntryCreate`.
+    """
+
+
+class SelfServiceTimeEntryCreate(BaseModel):
+    """Was ein Beschäftigter für **sich selbst** nachtragen darf (ab 0.16.0).
+
+    Bewusst ein eigenes, enges Schema statt eines beschnittenen
+    :class:`TimeEntryCreate`. Ein Feld, das hier nicht steht, kann auch nicht
+    versehentlich durchgereicht werden – ein Ausschluss per Positivliste hält
+    länger als einer per Negativliste.
+
+    **Nicht enthalten und damit nicht setzbar:** ``status``, ``is_manual``,
+    ``is_open``, ``source``, ``external_id``, ``started_at_utc``,
+    ``ended_at_utc``, ``tz_name``, ``break_rule`` sowie sämtliche Storno- und
+    Revisionsfelder. Diese Werte setzt ausschließlich der Server.
+    """
+
+    work_date: date
+    start_time: time
+    end_time: time
+    break_minutes: int = 0
+    company_id: Optional[int] = None
+    location_id: Optional[int] = None
+    is_remote: bool = False
+    notes: str = ""
+
+    @field_validator("break_minutes")
+    @classmethod
+    def validate_break(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("Pausenminuten dürfen nicht negativ sein")
+        if value > 24 * 60:
+            raise ValueError("Pausenminuten sind unplausibel")
+        return value
+
+    @field_validator("notes")
+    @classmethod
+    def validate_notes(cls, value: str) -> str:
+        return (value or "")[:255]
 
 
 class TimeEntry(TimeEntryBase):
