@@ -1,4 +1,4 @@
-"""Tests für 0.18.0 – Ausgleich, Compliance-Recht, Historie, Zeitzone.
+"""Tests für 0.19.0 – Ausgleich, Compliance-Recht, Historie, Zeitzone.
 
 Was dieses Release schließt:
 
@@ -231,8 +231,8 @@ def _entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0170(client):
-    assert client.app.version == "0.18.0"
-    assert client.get("/health").json()["version"] == "0.18.0"
+    assert client.app.version == "0.19.0"
+    assert client.get("/health").json()["version"] == "0.19.0"
 
 
 # ── 1. Ausgleich nach § 3 ArbZG: der Nenner ───────────────────────────────
@@ -1149,7 +1149,7 @@ def test_no_secrets_in_the_logs(client):
         assert "Admin!0000" not in text
         assert "password_hash" not in text
 
-# ── 0.18.0 – erneute Logikprüfung ─────────────────────────────────────────
+# ── 0.19.0 – erneute Logikprüfung ─────────────────────────────────────────
 
 
 def test_work_on_an_excluded_holiday_still_counts(client):

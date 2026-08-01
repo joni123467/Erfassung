@@ -389,6 +389,21 @@ def evaluate_day(
             # Jede Schicht wird an ihrem Beginntag bewertet – sonst stünde
             # dieselbe Feststellung an zwei Tagen.
             continue
+        if (
+            shift.work_minutes > models.ABSOLUTE_MAX_DAILY_MINUTES
+            and _local_date(shift.start) != _local_date(shift.end)
+        ):
+            findings.append({
+                "code": models.ComplianceCode.OVER_10H,
+                "severity": SEVERITY_CRITICAL,
+                "entry_id": shift.entries[-1].id,
+                "shift_start": shift.start,
+                "detail": (
+                    f"{_format_minutes(shift.work_minutes)} in einer "
+                    "zusammenhängenden Schicht über Mitternacht gearbeitet – "
+                    f"über der Höchstgrenze von {_format_minutes(models.ABSOLUTE_MAX_DAILY_MINUTES)}."
+                ),
+            })
         shortfall = shift.break_shortfall_minutes
         if shortfall <= 0:
             continue
@@ -473,11 +488,6 @@ def _compensation_findings(
     day_minutes = sum(entry.worked_minutes for entry in entries)
     if day_minutes <= models.MAX_DAILY_MINUTES:
         return []
-    if work_date.weekday() == 6:
-        # Sonntagsarbeit wird nach § 9 gekennzeichnet, geht aber nicht in den
-        # werktäglichen Durchschnitt ein.
-        return []
-
     from . import compensation
 
     cases = compensation.build_cases(db, user_id, reference_date)
@@ -580,7 +590,14 @@ def finding_key(user_id: int, work_date: date, finding: dict[str, object]) -> st
     """
     anchor = finding.get("shift_start")
     anchor_text = anchor.isoformat() if hasattr(anchor, "isoformat") else ""
-    payload = "|".join((str(user_id), work_date.isoformat(), str(finding.get("code", "")), anchor_text))
+    code = str(finding.get("code", ""))
+    if code in {
+        models.ComplianceCode.COMPENSATION_REQUIRED,
+        models.ComplianceCode.COMPENSATION_DUE,
+        models.ComplianceCode.COMPENSATION_OVERDUE,
+    }:
+        code = "compensation_case"
+    payload = "|".join((str(user_id), work_date.isoformat(), code, anchor_text))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:64]
 
 
@@ -659,7 +676,24 @@ def refresh_day(
             seen.add(key)
             digest = fingerprint(finding)
             flag = by_key.get(key) or by_key.get(code)
-            if flag is not None and flag.finding_key and flag.finding_key != key:
+            if flag is None and code in {
+                models.ComplianceCode.COMPENSATION_REQUIRED,
+                models.ComplianceCode.COMPENSATION_DUE,
+                models.ComplianceCode.COMPENSATION_OVERDUE,
+            }:
+                # 0.17/0.18 band den Schlüssel an den alternden Zustand. Den
+                # vorhandenen Vorgang übernehmen, statt einen zweiten anzulegen.
+                flag = next((old for old in existing if old.code in {
+                    models.ComplianceCode.COMPENSATION_REQUIRED,
+                    models.ComplianceCode.COMPENSATION_DUE,
+                    models.ComplianceCode.COMPENSATION_OVERDUE,
+                }), None)
+            is_compensation = code in {
+                models.ComplianceCode.COMPENSATION_REQUIRED,
+                models.ComplianceCode.COMPENSATION_DUE,
+                models.ComplianceCode.COMPENSATION_OVERDUE,
+            }
+            if flag is not None and flag.finding_key and flag.finding_key != key and not is_compensation:
                 flag = None
             if flag is None:
                 flag = models.ComplianceFlag(
@@ -689,6 +723,7 @@ def refresh_day(
             unchanged = flag.fingerprint == digest
             # Bestandsfeststellungen bekommen ihren Schlüssel nachgereicht.
             flag.finding_key = key
+            flag.code = code
             flag.shift_start_utc = _naive_utc(finding.get("shift_start"))
             flag.entry_id = finding.get("entry_id")
             flag.severity = str(finding["severity"])
@@ -802,7 +837,7 @@ def refresh_open_compensations(
 
     refreshed = 0
     for (user_id, work_date), minutes in sorted(totals.items()):
-        if work_date.weekday() == 6 or minutes <= models.MAX_DAILY_MINUTES:
+        if minutes <= models.MAX_DAILY_MINUTES:
             continue
         refresh_day(
             db, user_id, work_date, reference_date=reference

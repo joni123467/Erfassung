@@ -431,8 +431,9 @@ def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
         return None
 
     user = crud.get_user(db, parsed_user_id)
-    if user is None:
+    if user is None or not user.is_active:
         request.session.pop("user_id", None)
+        return None
     return user
 
 
@@ -454,6 +455,15 @@ def ensure_schema() -> None:
     with database.engine.begin() as connection:
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
+        if "users" in table_names:
+            user_columns = {column["name"] for column in inspector.get_columns("users")}
+            if "is_active" not in user_columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
+            if "deactivated_at" not in user_columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN deactivated_at DATETIME"))
+            if "deactivation_reason" not in user_columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN deactivation_reason VARCHAR(500)"))
+            connection.execute(text("UPDATE users SET is_active = 1 WHERE is_active IS NULL"))
         if "companies" not in table_names:
             models.Base.metadata.tables["companies"].create(bind=connection)
         else:
@@ -1630,7 +1640,7 @@ def login_submit(
     db: Session = Depends(database.get_db),
 ):
     user = crud.get_user_by_username(db, username.strip())
-    if not user or not security.verify_password(password, user.password_hash):
+    if not user or not user.is_active or not security.verify_password(password, user.password_hash):
         logging_setup.log_security(
             f"Fehlgeschlagener Login für '{username.strip()}'",
             level=logging.WARNING,
@@ -2015,7 +2025,7 @@ def mobile_quick_login(request: Request, token: str = "", db: Session = Depends(
     if user_id is None:
         return RedirectResponse(url="/login?error=Ung%C3%BCltiger+QR-Code", status_code=status.HTTP_303_SEE_OTHER)
     user = crud.get_user(db, user_id)
-    if user is None:
+    if user is None or not user.is_active:
         return RedirectResponse(url="/login?error=Benutzer+nicht+gefunden", status_code=status.HTTP_303_SEE_OTHER)
     request.session["user_id"] = user.id
     return RedirectResponse(url="/mobile", status_code=status.HTTP_303_SEE_OTHER)
@@ -5365,7 +5375,7 @@ def update_user_html(
 
 
 @app.post("/admin/users/{user_id}/delete")
-def delete_user_html(request: Request, user_id: int, db: Session = Depends(database.get_db)):
+def delete_user_html(request: Request, user_id: int, reason: str = Form(""), db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
@@ -5376,13 +5386,16 @@ def delete_user_html(request: Request, user_id: int, db: Session = Depends(datab
             url="/admin/users?error=Benutzer+geh%C3%B6rt+nicht+zu+deinen+Gruppen",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    if not crud.delete_user(db, user_id):
+    if not crud.delete_user(db, user_id, reason):
         return RedirectResponse(
-            url="/admin/users?error=Benutzer+konnte+nicht+gelöscht+werden",
+            url="/admin/users?error=Benutzer+konnte+nicht+deaktiviert+werden",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    logging_setup.log_audit("Benutzer gelöscht", user=user, detail=f"id={user_id}")
-    return RedirectResponse(url="/admin/users?msg=Benutzer+gelöscht", status_code=status.HTTP_303_SEE_OTHER)
+    logging_setup.log_audit(
+        "Benutzer deaktiviert und pseudonymisiert", user=user,
+        detail=f"id={user_id}; grund={reason.strip() or 'Administrativ deaktiviert'}",
+    )
+    return RedirectResponse(url="/admin/users?msg=Benutzer+deaktiviert", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/companies/create")

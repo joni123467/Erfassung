@@ -252,8 +252,8 @@ def _self_entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0160(client):
-    assert client.app.version == "0.18.0"
-    assert client.get("/health").json()["version"] == "0.18.0"
+    assert client.app.version == "0.19.0"
+    assert client.get("/health").json()["version"] == "0.19.0"
 
 
 # ── 1. Selbstbedienungsrechte ─────────────────────────────────────────────
@@ -721,7 +721,7 @@ def test_a_lower_shift_gap_changes_the_evaluation(client):
 
 
 def test_the_compensation_report_names_its_period(client):
-    """Seit 0.18.0 ist der Nenner **Werktage**, nicht „Tage mit Buchung"."""
+    """Seit 0.19.0 ist der Nenner **Werktage**, nicht „Tage mit Buchung"."""
     from app import compliance
 
     _entry(start=time(6, 0), end=time(15, 0))
@@ -737,7 +737,7 @@ def test_the_compensation_report_names_its_period(client):
 
 
 def test_a_single_long_day_is_required_but_not_overdue(client):
-    """Seit 0.18.0: ausgleichspflichtig, aber nicht sofort überfällig."""
+    """Seit 0.19.0: ausgleichspflichtig, aber nicht sofort überfällig."""
     from app import models
 
     _entry(start=time(6, 0), end=time(16, 0))    # zehn Stunden
@@ -781,9 +781,9 @@ def test_sunday_work_stays_out_of_the_average(client):
         report = compliance.compensation_report(db, _admin_id(), DAY)
     finally:
         db.close()
-    # Die Sonntagsarbeit taucht in der Summe nicht auf …
-    assert report.total_minutes == 0
-    # … und der Sonntag steht auch nicht im Nenner.
+    # Die Sonntagsarbeit bleibt gemäß § 11 Abs. 2 in der Arbeitszeitsumme …
+    assert report.total_minutes == 600
+    # … aber der Sonntag steht weiterhin nicht im Werktagsnenner.
     assert all(item.day.weekday() != 6 for item in report.counted_days)
 
 

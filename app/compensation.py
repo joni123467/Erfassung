@@ -182,8 +182,8 @@ class CompensationReport:
 
     @property
     def total_minutes(self) -> int:
-        """Arbeitszeit an den gezählten Werktagen."""
-        return sum(item.minutes for item in self.counted_days)
+        """Tatsächliche Arbeitszeit; Sonntage erhöhen nur den Nenner nicht."""
+        return sum(item.minutes for item in self.days)
 
     @property
     def allowance_minutes(self) -> int:
@@ -415,7 +415,10 @@ def build_cases(
         if day < lookback or day > reference:
             continue
         item = ledger[day]
-        if not item.counts:
+        # § 11 Abs. 2 verweist für zulässige Sonntagsarbeit auf §§ 3–8:
+        # Sonntag bleibt aus dem Werktagsnenner, seine Mehrarbeit eröffnet
+        # dennoch einen Ausgleichsvorgang.
+        if not item.counts and not (day.weekday() == 6 and item.minutes > 0):
             continue
         excess = item.minutes - models.MAX_DAILY_MINUTES
         if excess <= 0:

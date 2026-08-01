@@ -164,9 +164,11 @@
         {% endif %}
       </div>
         {% if is_edit %}
-            <form method="post" action="/admin/users/{{ form_user.id }}/delete" class="danger-zone" onsubmit="return confirm('Benutzer wirklich löschen?');">
+            <form method="post" action="/admin/users/{{ form_user.id }}/delete" class="danger-zone" onsubmit="return confirm('Benutzer wirklich deaktivieren? Arbeitszeitnachweise bleiben erhalten.');">
                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                <button type="submit" class="button danger small">Benutzer löschen</button>
+                <label>Begründung <input name="reason" maxlength="500" required value="Administrativ deaktiviert"></label>
+                <p class="form-hint">Das Konto wird pseudonymisiert. Arbeitszeiten und gesetzliche Nachweisdaten bleiben vollständig erhalten.</p>
+                <button type="submit" class="button danger small">Benutzer deaktivieren</button>
             </form>
         {% endif %}
     </div>
