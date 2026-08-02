@@ -169,8 +169,8 @@ def _entry(*, work_date: date, start: time, end: time, user_id: int | None = Non
 
 
 def test_version_is_0141(client):
-    assert client.app.version == "0.20.0"
-    assert client.get("/health").json()["version"] == "0.20.0"
+    assert client.app.version == "0.20.1"
+    assert client.get("/health").json()["version"] == "0.20.1"
 
 
 # ── Einsatzort hängt nicht am Remote-Kennzeichen ──────────────────────────
@@ -193,31 +193,28 @@ def test_locations_stay_selectable_without_the_remote_flag(client):
     assert "Werk Nord" in page
 
 
-def test_without_the_remote_flag_there_is_no_remote_option(client):
-    """Nur „Remote" hängt am Kennzeichen – und verschwindet dann auch."""
-    company_id = _company("Müller GmbH")
-    _location(company_id, "Werk Nord", city="Kiel")
-    _set_remote_flag(False)
-    _login(client)
+def test_remote_is_always_offered(client):
+    """Ab 0.20.1 steht „Remote" immer in der Einsatzortauswahl.
 
-    page = client.get("/dashboard").text
-    picker = page[page.index('name="work_location"'):]
-    picker = picker[: picker.index("</select>")]
-    assert ">Vor Ort<" in picker
-    assert ">Remote<" not in picker
-    assert "data-allow-remote" not in picker
-
-
-def test_with_the_remote_flag_the_remote_option_is_back(client):
+    Bis 0.20.0 hing die Option am Benutzerkennzeichen ``remote_flag_enabled``.
+    Da dessen Beschriftung „Einsatzort erfassen" seit 0.14.1 nicht mehr
+    beschrieb, was es tat – die Auswahl erscheint ohnehin immer –, blieb der
+    Haken in der Praxis aus, und „Remote" verschwand unbemerkt aus der Liste.
+    """
     company_id = _company("Müller GmbH")
     _location(company_id, "Werk Nord", city="Kiel")
     _login(client)
 
-    page = client.get("/dashboard").text
-    picker = page[page.index('name="work_location"'):]
-    picker = picker[: picker.index("</select>")]
-    assert ">Remote<" in picker
-    assert "data-allow-remote" in picker
+    for flag in (False, True):
+        _set_remote_flag(flag)
+        page = client.get("/dashboard").text
+        picker = page[page.index('name="work_location"'):]
+        picker = picker[: picker.index("</select>")]
+        assert ">Vor Ort<" in picker
+        assert ">Remote<" in picker, f"Remote fehlt (Kennzeichen={flag})"
+        # Die Standorte der gewählten Firma trägt das Skript aus dem Katalog
+        # nach – servergerendert stehen nur die beiden festen Einträge.
+        assert "Werk Nord" in page
 
 
 def test_clocking_on_a_location_works_without_the_remote_flag(client):
@@ -253,8 +250,8 @@ def test_clocking_on_a_location_works_without_the_remote_flag(client):
         db.close()
 
 
-def test_remote_is_refused_without_the_flag(client):
-    """Was das Kennzeichen sperrt, bleibt gesperrt – auch per Formular."""
+def test_remote_is_accepted_by_the_server(client):
+    """Nicht nur sichtbar: Der Server übernimmt „Remote" auch (ab 0.20.1)."""
     from app import crud
 
     _set_remote_flag(False)
@@ -276,7 +273,7 @@ def test_remote_is_refused_without_the_flag(client):
     try:
         entry = crud.get_open_time_entry(db, _admin_id())
         assert entry is not None
-        assert entry.is_remote is False, "Remote ohne Kennzeichen darf nicht greifen"
+        assert entry.is_remote is True
     finally:
         db.close()
 

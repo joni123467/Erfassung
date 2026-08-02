@@ -1,4 +1,4 @@
-"""Driver interface shared by every terminal type (§0.9.8)."""
+"""Gemeinsame Treiberschnittstelle aller Terminaltypen."""
 
 from __future__ import annotations
 
@@ -27,7 +27,8 @@ class TerminalSyncOutcome:
     imported: int = 0
     errors: int = 0
     message: str = ""
-    # Incremental cursor written back to the terminal record (driver specific).
+    # Fortschrittsmarke, die in die Terminalzeile zurückgeschrieben wird –
+    # ihre Bedeutung legt der jeweilige Treiber fest.
     last_event_id: int | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -41,16 +42,17 @@ class TerminalSyncOutcome:
 
 
 class TerminalDriver:
-    """Base class every concrete terminal driver inherits from.
+    """Basisklasse jedes konkreten Terminaltreibers.
 
-    Drivers are stateless: all configuration lives on the ``Terminal`` model row
-    that is passed into every method. This keeps the driver layer free of any
-    global state and makes new terminal types trivial to add.
+    Treiber halten keinen eigenen Zustand: Die gesamte Konfiguration steht in
+    der ``Terminal``-Zeile, die jeder Methode übergeben wird. Dadurch bleibt die
+    Treiberschicht frei von globalem Zustand, und ein neuer Terminaltyp ist mit
+    wenig Aufwand ergänzt.
     """
 
-    #: Stable identifier persisted in ``Terminal.type`` and used in the registry.
+    #: Feste Kennung; steht in ``Terminal.type`` und dient als Registerschlüssel.
     key: str = ""
-    #: Human readable label shown in the UI dropdown.
+    #: Lesbare Bezeichnung für die Auswahlliste in der Oberfläche.
     label: str = ""
 
     def test_connection(self, terminal) -> TerminalTestResult:  # pragma: no cover - interface

@@ -1,9 +1,10 @@
-// The version is stamped into the file CONTENT by the /sw.js route
-// (self.__ERFASSUNG_VERSION), driven by the server-side VERSION file. A new
-// release therefore changes the script bytes, which the browser's service
-// worker update check detects even when an installed PWA still runs an old
-// cached page (whose registration URL carries an old `?v=`). The `?v=` query
-// remains as fallback for serving the raw static file.
+// Die Version steht im **Inhalt** dieser Datei: Die Route /sw.js stanzt sie als
+// self.__ERFASSUNG_VERSION ein, gespeist aus der serverseitigen VERSION-Datei.
+// Eine neue Fassung ändert dadurch die Skriptbytes, und genau darauf achtet die
+// Aktualisierungsprüfung des Browsers – selbst dann, wenn eine installierte PWA
+// noch eine alte Seite aus dem Zwischenspeicher anzeigt, deren
+// Registrierungsadresse ein veraltetes `?v=` trägt. Das `?v=` bleibt nur als
+// Rückfallebene für die Auslieferung der reinen statischen Datei.
 const APP_VERSION = self.__ERFASSUNG_VERSION
   || new URLSearchParams(self.location.search).get('v')
   || 'dev';
@@ -30,9 +31,10 @@ self.addEventListener('install', (event) => {
       // seine Assets nicht aus einem stalen HTTP-Cache übernehmen, sonst wäre
       // die neue Cache-Version mit alten Dateien gefüllt.
       await cache.addAll(CORE_ASSETS.map((url) => new Request(url, { cache: 'no-cache' })));
-      // Pre-seed /mobile with the offline shell so the app always opens offline,
-      // even before the first authenticated online visit. This entry is silently
-      // replaced with the real page the first time the user loads /mobile online.
+      // /mobile vorab mit der Offline-Hülle belegen, damit die Anwendung auch
+      // ohne Netz startet – schon vor dem ersten angemeldeten Besuch. Der
+      // Eintrag wird stillschweigend durch die echte Seite ersetzt, sobald
+      // /mobile das erste Mal online geladen wird.
       const shell = await cache.match(OFFLINE_SHELL);
       if (shell) await cache.put(MOBILE_SHELL, shell.clone());
     }).then(() => self.skipWaiting())
@@ -64,17 +66,19 @@ async function cacheFirstStatic(request) {
 }
 
 // ── Offline-first navigation ──────────────────────────────────────────────────
-// Always serve instantly from cache (guaranteed since we pre-seed /mobile on install).
-// The real authenticated page is written in the background on every online visit,
-// replacing the offline shell. Auth redirects are never cached.
+// Immer sofort aus dem Zwischenspeicher ausliefern – möglich, weil /mobile schon
+// bei der Installation vorbelegt wird. Die echte, angemeldete Seite wird bei
+// jedem Besuch mit Netz im Hintergrund nachgeschrieben und löst die Offline-Hülle
+// ab. Weiterleitungen zur Anmeldung landen nie im Zwischenspeicher.
 async function offlineFirstNavigation(request) {
   const cache = await caches.open(CACHE_VERSION);
 
-  // Serve the cached page immediately (offline shell pre-seeded on install,
-  // or the real page from a previous online visit).
+  // Sofort die gespeicherte Seite ausliefern: entweder die bei der Installation
+  // hinterlegte Offline-Hülle oder die echte Seite aus einem früheren Besuch.
   const cached = await cache.match(MOBILE_SHELL, { ignoreSearch: true });
   if (cached) {
-    // Silently update in the background – but never cache an auth redirect.
+    // Im Hintergrund still auffrischen – eine Weiterleitung zur Anmeldung wird
+    // dabei nie gespeichert.
     fetch(request)
       .then((response) => {
         if (response && response.ok && !response.redirected) {
@@ -97,10 +101,10 @@ async function offlineFirstNavigation(request) {
     }
     if (response) return response; // e.g. login redirect – pass through as-is
   } catch {
-    // Network unavailable
+    // Kein Netz
   }
 
-  // Last resort: offline shell (always in CORE_ASSETS)
+  // Letzte Rückfallebene: die Offline-Hülle; sie steht immer in CORE_ASSETS.
   return (await cache.match(OFFLINE_SHELL)) || Response.error();
 }
 
@@ -112,12 +116,15 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate' || request.destination === 'document') {
-    // Only the mobile PWA route is served offline-first from the cache. Every
-    // other page (/, /dashboard, /admin, /login, /records/*) must go to the
-    // network so normal navigation and server-side auth redirects (303) work on
-    // the FIRST click. Without this guard the worker returned the cached /mobile
-    // shell for ALL navigations (the worker now controls scope "/"), which made
-    // non-mobile pages lag one click behind and broke /admin's 303 redirect.
+    // Nur die Mobilroute wird zuerst aus dem Zwischenspeicher bedient. Jede
+    // andere Seite (/, /dashboard, /admin, /login, /records/*) muss ins Netz,
+    // damit gewöhnliche Navigation und serverseitige Weiterleitungen (303)
+    // schon beim **ersten** Klick greifen.
+    //
+    // Ohne diese Bremse lieferte der Worker die gespeicherte Mobilhülle für
+    // **alle** Navigationen aus – er beherrscht inzwischen den Bereich "/" –,
+    // wodurch Nicht-Mobilseiten einen Klick hinterherhinkten und die
+    // 303-Weiterleitung von /admin nicht mehr funktionierte.
     if (url.pathname === '/mobile' || url.pathname === '/mobile/') {
       event.respondWith(offlineFirstNavigation(request));
     }
@@ -129,8 +136,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API routes (including /mobile/sync-data) go directly to the network.
-  // Sync data is persisted in IndexedDB by mobile.js; no SW caching needed.
+  // Schnittstellenaufrufe – auch /mobile/sync-data – gehen direkt ins Netz.
+  // Die Abgleichsdaten legt mobile.js ohnehin in der IndexedDB ab; der Worker
+  // muss dafür nichts zwischenspeichern.
   if (url.pathname.startsWith('/api/') || url.pathname === '/mobile/sync-data') {
     event.respondWith(
       fetch(request).catch(() => Response.error())

@@ -1,9 +1,9 @@
-"""TimeMoto terminal driver (§0.9.8).
+"""Treiber für TimeMoto-Terminals.
 
-Wraps the existing low-level TimeMoto client/synchronisation (``app.integrations.
-timemoto``) behind the generic :class:`TerminalDriver` interface. All connection
-details are read from the ``Terminal`` model row, so there is no TimeMoto-specific
-configuration point or hardcoded logic anywhere in the UI.
+Legt die vorhandene TimeMoto-Anbindung (``app.integrations.timemoto``) hinter
+die allgemeine Schnittstelle :class:`TerminalDriver`. Sämtliche
+Verbindungsangaben stammen aus der ``Terminal``-Zeile; in der Oberfläche gibt
+es weder eine TimeMoto-eigene Einstellung noch fest verdrahtete Logik.
 """
 
 from __future__ import annotations

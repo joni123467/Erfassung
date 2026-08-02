@@ -121,11 +121,11 @@ function getCsrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
   const token = meta ? meta.getAttribute('content') || '' : '';
   if (token) {
-    // Cache in localStorage so the static offline shell can use it too
+    // Im localStorage ablegen, damit auch die statische Offline-Hülle es benutzen kann
     try { window.localStorage.setItem('erfassung_csrf_token', token); } catch {}
     return token;
   }
-  // Fallback: use the token cached from the last online page load
+  // Rückfallebene: das Token vom letzten Seitenaufruf mit Netz
   try { return window.localStorage.getItem('erfassung_csrf_token') || ''; } catch {}
   return '';
 }
@@ -149,9 +149,10 @@ function isoDateStr(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-// Local wall-clock timestamp "YYYY-MM-DDTHH:MM:SS" (no timezone conversion), so
-// an offline punch keeps the real local time of the tap rather than the later
-// sync time. Matches how the server records online punches (local naive time).
+// Örtliche Uhrzeit als "JJJJ-MM-TTTHH:MM:SS", ohne Zonenumrechnung. Nur so
+// behält eine offline erfasste Stempelung die **tatsächliche** Zeit des Tippens
+// statt der späteren Übertragungszeit. Der Server hält eine Stempelung mit Netz
+// genauso fest.
 function localIsoTimestamp(date = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
@@ -701,13 +702,6 @@ function applyMobilePermissions(perms) {
     });
   }
 
-  if (perms.flag_remote === false) {
-    document.querySelectorAll('input[name="is_remote"]').forEach((input) => {
-      const label = input.closest('label');
-      setElementHidden(label || input, true);
-    });
-  }
-
   if (perms.request_vacations === false) {
     document.querySelectorAll('form[data-offline="vacation"]').forEach((form) => setElementHidden(form, true));
     const denied = document.querySelector('[data-permission="request-vacations-denied"]');
@@ -842,9 +836,9 @@ async function syncServerData() {
     }
     const payload = await response.json();
     await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
-    // Refresh the base state from the latest server truth. Otherwise the
-    // effective state stays anchored to the (frozen) page-load value, which
-    // made the UI revert to "not working" right after a clock-in synced.
+    // Den Ausgangszustand am frischen Serverstand ausrichten. Sonst bliebe er
+    // an dem Wert vom Seitenaufruf hängen – und die Anzeige sprang direkt nach
+    // einer übertragenen Einstempelung zurück auf „arbeitet nicht".
     initialServerState = buildStateFromEntry(payload.active_entry || null);
     const nowIso = new Date().toISOString();
     await putRecord(META_STORE, { key: 'lastSyncAt', value: nowIso, updatedAt: Date.now() });
@@ -864,11 +858,16 @@ async function syncServerData() {
   }
 }
 
-// Posts a single queued action and returns the server's machine-readable
-// outcome: { ok, duplicate, retryable, message }. The endpoints answer with
-// JSON (not a 303 redirect) because we send `Accept: application/json`, so we
-// can reliably tell success/duplicate/transient apart instead of guessing from
-// an opaque redirect. Throws only on transport/auth failures (keep + retry).
+// Schickt einen einzelnen wartenden Vorgang und gibt die auswertbare Antwort
+// des Servers zurück: { ok, duplicate, retryable, message }.
+//
+// Die Endpunkte antworten mit JSON statt einer 303-Weiterleitung, weil wir
+// `Accept: application/json` mitschicken. Dadurch lassen sich Erfolg, Dublette
+// und vorübergehender Fehler sicher unterscheiden, statt sie aus einer
+// undurchsichtigen Weiterleitung zu raten.
+//
+// Eine Ausnahme fliegt nur bei Übertragungs- oder Anmeldefehlern – dann bleibt
+// der Vorgang stehen und wird später erneut versucht.
 async function postQueuedAction(entry) {
   const token = getCsrfToken();
   const body = new URLSearchParams(entry.payload);
@@ -902,11 +901,15 @@ async function postQueuedAction(entry) {
   }
 }
 
-// Sends every queued action to the server in creation order and lets the SERVER
-// (the source of truth, with client_action_id idempotency) decide the outcome.
-// We never discard an un-sent action based on client-side guessing – that was
-// the cause of lost clock-outs. An action is removed only when the server has
-// definitively handled it; transient/auth failures keep it for the next sync.
+// Schickt alle wartenden Vorgänge in der Reihenfolge ihres Entstehens und
+// überlässt dem **Server** die Entscheidung – er ist die maßgebliche Stelle und
+// erkennt Dubletten an der `client_action_id`.
+//
+// Ein noch nicht gesendeter Vorgang wird nie aufgrund einer Vermutung des
+// Geräts verworfen; genau daran gingen früher Ausstempelungen verloren.
+// Entfernt wird ein Vorgang erst, wenn der Server ihn endgültig behandelt hat.
+// Bei vorübergehenden Fehlern oder fehlender Anmeldung bleibt er für den
+// nächsten Durchgang liegen.
 async function flushOfflineQueue() {
   const pending = await readPendingActions();
   if (!pending.length) {
@@ -918,9 +921,10 @@ async function flushOfflineQueue() {
 
   let processed = 0;
   let skipped = 0;
-  // Punch actions are ordered (a clock-out depends on its clock-in). If one is
-  // not yet accepted, stop the punch chain and retry the whole tail next round
-  // so ordering is preserved – but keep every action in the queue.
+  // Stempelungen hängen aneinander: Ein Ausstempeln setzt sein Einstempeln
+  // voraus. Wird eines nicht angenommen, bricht die Kette ab und der Rest kommt
+  // beim nächsten Durchgang dran – die Reihenfolge bleibt gewahrt, und kein
+  // Vorgang geht dabei verloren.
   let punchBlocked = false;
 
   for (const entry of pending) {
@@ -931,23 +935,27 @@ async function flushOfflineQueue() {
     try {
       result = await postQueuedAction(entry);
     } catch {
-      // Network / timeout / auth / CSRF / 5xx → keep action, retry later.
+      // Netz, Zeitüberschreitung, Anmeldung, CSRF oder Serverfehler → Vorgang
+      // behalten und später erneut versuchen.
       if (isPunch) punchBlocked = true;
       continue;
     }
 
     if (result.ok || result.duplicate) {
-      // Done on the server (incl. idempotent re-send) → safe to remove.
+      // Auf dem Server erledigt – auch bei einer wiederholten Sendung → darf weg.
       await deleteRecord(ACTION_STORE, entry.clientActionId);
       processed += 1;
     } else {
-      // Any other server JSON answer is DEFINITIVE: the action could not be
-      // applied – e.g. an orphaned clock-out whose work entry is already closed
-      // on the server, or an invalid/overlapping booking. Remove it so it can
-      // never linger as a phantom "pending" entry. Genuine ordering
-      // dependencies never reach this branch: an earlier transient failure sets
-      // punchBlocked and the dependent punch is skipped (kept) above, to be
-      // retried in order on the next sync.
+      // Jede andere JSON-Antwort des Servers ist **endgültig**: Der Vorgang
+      // ließ sich nicht anwenden – etwa ein Ausstempeln ohne Gegenstück, dessen
+      // Buchung auf dem Server längst geschlossen ist, oder eine ungültige
+      // beziehungsweise überschneidende Buchung. Er wird entfernt, damit er
+      // nicht als Geistereintrag „wartet" stehen bleibt.
+      //
+      // Echte Reihenfolgeabhängigkeiten kommen hier nie an: Ein vorheriger
+      // vorübergehender Fehler setzt punchBlocked, und die abhängige Stempelung
+      // wird oben übersprungen und aufgehoben, um beim nächsten Durchgang der
+      // Reihe nach erneut zu laufen.
       await deleteRecord(ACTION_STORE, entry.clientActionId);
       skipped += 1;
     }
@@ -988,7 +996,7 @@ async function performReconnectSync(trigger = 'auto') {
       } else {
         dispatchSyncStatus('Keine Verbindung. Du arbeitest offline.', 'offline');
       }
-      // Still render from whatever local data we have
+      // Trotzdem mit den örtlich vorhandenen Daten zeichnen
       await recomputeEffectiveState();
       renderOverview().catch(() => {});
       renderSalden().catch(() => {});
@@ -1032,8 +1040,9 @@ async function performReconnectSync(trigger = 'auto') {
 
 async function processPunchSubmission(form, payload) {
   payload.client_action_id = payload.client_action_id || generateClientActionId('punch');
-  // Capture the real time of the action NOW (tap time), so it survives in the
-  // queue and is sent to the server even if synced hours later.
+  // Die tatsächliche Zeit **jetzt** festhalten – den Moment des Tippens. So
+  // übersteht sie die Warteschlange und erreicht den Server auch dann richtig,
+  // wenn erst Stunden später übertragen wird.
   if (!payload.event_time) payload.event_time = localIsoTimestamp();
   if (payload.action === 'start_company') {
     payload.company_name = determineCompanyName(form, payload);
@@ -1060,10 +1069,11 @@ async function processPunchSubmission(form, payload) {
     };
   }
 
-  // ── Queue-first, ALWAYS: every punch is persisted to IndexedDB before any
-  // sync attempt. We never drop an event based on client-side state guessing –
-  // doing so previously lost clock-outs. The server (with client_action_id
-  // idempotency) is the single source of truth for what is a duplicate.
+  // ── Immer zuerst in die Warteschlange: Jede Stempelung landet in der
+  // IndexedDB, bevor überhaupt ein Übertragungsversuch startet. Kein Ereignis
+  // wird aufgrund einer Vermutung des Geräts verworfen – genau daran gingen
+  // früher Ausstempelungen verloren. Was eine Dublette ist, entscheidet allein
+  // der Server anhand der `client_action_id`.
   await queueAction('punch', payload);
   await recomputeEffectiveState();
   await refreshQueueIndicator();
@@ -1080,7 +1090,7 @@ async function processPunchSubmission(form, payload) {
     );
   }
 
-  // Attempt immediate sync in background (non-blocking for UI)
+  // Sofortige Übertragung im Hintergrund anstoßen – die Bedienung wartet nicht darauf
   try {
     await performReconnectSync('punch');
   } catch { /* sync failure is non-fatal – action stays in queue */ }
@@ -1111,9 +1121,10 @@ async function handleOfflineSubmission(event) {
     await processPunchSubmission(form, payload);
   }
   form.reset();
-  // If the form lives inside a modal (e.g. the "Auftrag starten" dialog), close
-  // it automatically after a successful submission so the user returns to the
-  // normal view. The action is queued offline-first, so this is always a success.
+  // Steckt das Formular in einem Dialog – etwa „Auftrag starten" –, wird dieser
+  // nach dem Abschicken von selbst geschlossen, damit man wieder in der
+  // gewohnten Ansicht landet. Der Vorgang geht ohnehin zuerst in die
+  // Warteschlange, gilt hier also immer als erfolgreich.
   const modal = form.closest('.modal');
   if (modal) {
     modal.classList.remove('is-visible');
@@ -1578,10 +1589,12 @@ function fmtDateDE(iso) {
   return date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-// Renders the full list of the current year's vacation requests from the cached
-// server snapshot, merged with not-yet-synced offline requests from the queue.
-// This is what keeps synced requests visible (they previously vanished because
-// nothing rendered them from the snapshot after synchronisation).
+// Zeichnet alle Urlaubsanträge des laufenden Jahres aus dem gespeicherten
+// Serverstand und mischt die noch nicht übertragenen Anträge aus der
+// Warteschlange dazu.
+//
+// Genau das hält übertragene Anträge sichtbar – früher verschwanden sie, weil
+// sie nach der Übertragung niemand mehr aus dem Serverstand zeichnete.
 async function renderVacations() {
   const list = document.querySelector(VACATION_LIST_SELECTOR);
   if (!list) return;
@@ -1603,8 +1616,9 @@ async function renderVacations() {
     }))
     .filter((v) => v.start_date && v.end_date);
 
-  // Before the first sync there is no cached list yet – keep whatever the server
-  // already rendered into the page instead of blanking it.
+  // Vor der ersten Übertragung gibt es noch keine gespeicherte Liste. Dann
+  // bleibt stehen, was der Server bereits in die Seite geschrieben hat – besser
+  // als eine leere Fläche.
   if (!hasSnapshot && pendingVacations.length === 0) return;
 
   const year = String(new Date().getFullYear());
@@ -1692,8 +1706,8 @@ async function updateSettingsTab() {
   if (select) select.value = String(settings.syncDays);
 
   const stale = await isCacheStale();
-  // Only show the stale-data warning when the device is actually offline.
-  // When online we are about to sync, so showing it would be misleading.
+  // Der Hinweis auf veraltete Daten erscheint nur, wenn das Gerät wirklich ohne
+  // Netz ist. Mit Netz wird gleich übertragen – der Hinweis wäre irreführend.
   const showStaleWarning = stale && !navigator.onLine;
   const cacheStatus = document.getElementById('mobile-cache-status');
   if (cacheStatus) {
@@ -1855,7 +1869,8 @@ async function handleServerVersion(serverVersion) {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  // Set today's date in the offline shell (static HTML has no server-rendered date)
+  // Das heutige Datum in der Offline-Hülle setzen; das statische HTML bringt
+  // keines vom Server mit.
   const offlineDateEl = document.getElementById('offline-shell-date');
   if (offlineDateEl) {
     offlineDateEl.textContent = new Date().toLocaleDateString('de-DE', {
@@ -1878,7 +1893,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   await hydrateLocationsFromCache();
   await hydratePermissionsFromCache();
   await recomputeEffectiveState();
-  // Render from whatever data is already in IndexedDB (possibly from a previous session)
+  // Mit dem zeichnen, was bereits in der IndexedDB liegt – womöglich aus einer
+  // früheren Sitzung.
   renderOverview().catch(() => {});
   renderSalden().catch(() => {});
   renderVacations().catch(() => {});

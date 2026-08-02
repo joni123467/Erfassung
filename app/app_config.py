@@ -1,14 +1,14 @@
-"""Persistent application configuration stored in the ``config`` volume.
+"""Dauerhafte Anwendungskonfiguration im ``config``-Volume.
 
-All configuration that must survive container restarts lives here as JSON
-files inside :data:`app.paths.CONFIG_DIR`:
+Alles, was einen Neustart des Containers überleben muss, liegt hier als
+JSON-Datei in :data:`app.paths.CONFIG_DIR`:
 
-* ``logging.json`` – log level, rotation and per-channel logging toggles
-* ``system.json``  – global system / synchronisation settings
+* ``logging.json`` – Protokollstufe, Rotation und die Schalter je Kanal
+* ``system.json``  – globale System- und Synchronisationseinstellungen
 
-The stores are intentionally dependency free (plain dataclasses + JSON) so
-they can be imported very early during application start-up, before logging
-is configured.
+Die Speicher kommen bewusst ohne Abhängigkeiten aus (schlichte Dataclasses und
+JSON). Nur so lassen sie sich ganz früh beim Start laden – noch bevor die
+Protokollierung überhaupt eingerichtet ist.
 """
 
 from __future__ import annotations
@@ -275,10 +275,10 @@ BACKUP_TARGETS = ("local", "ftp", "smb")
 
 @dataclass
 class BackupConfig:
-    """Backup destinations and retention. Stored in the config volume.
+    """Sicherungsziele und Aufbewahrung, abgelegt im config-Volume.
 
-    Passwords are persisted (so unattended backups work) but must never be
-    written to any log file.
+    Kennwörter werden gespeichert – ohne sie liefe keine unbeaufsichtigte
+    Sicherung –, dürfen aber **niemals** in einer Protokolldatei landen.
     """
 
     target: str = "local"
@@ -306,7 +306,7 @@ class BackupConfig:
         return asdict(self)
 
     def safe_dict(self) -> dict[str, Any]:
-        """Like :meth:`to_dict` but with passwords masked (for logging/UI echo)."""
+        """Wie :meth:`to_dict`, nur mit maskierten Kennwörtern – für Protokoll und Anzeige."""
         data = self.to_dict()
         for key in ("ftp_password", "smb_password"):
             if data.get(key):
@@ -331,7 +331,7 @@ class BackupConfig:
         config.ftp_host = str(payload.get("ftp_host") or "").strip()
         config.ftp_port = _coerce_int(payload.get("ftp_port"), config.ftp_port, minimum=1)
         config.ftp_username = str(payload.get("ftp_username") or "").strip()
-        # Keep the stored password when the form submits an empty/masked value.
+        # Gespeichertes Kennwort behalten, wenn das Formular leer oder maskiert zurückkommt.
         ftp_pw = payload.get("ftp_password")
         if ftp_pw not in (None, "", "***"):
             config.ftp_password = str(ftp_pw)
@@ -359,12 +359,13 @@ DATABASE_DEFAULT_PORTS = {"mysql": 3306, "mariadb": 3306, "postgresql": 5432}
 
 @dataclass
 class DatabaseConfig:
-    """Active database backend configuration (persisted in the config volume).
+    """Konfiguration der aktiven Datenbank, abgelegt im config-Volume.
 
-    The same dataclass describes SQLite (only ``sqlite_path`` is relevant) and
-    the server backends MySQL/MariaDB/PostgreSQL (host/port/name/user/password
-    + optional SSL and connection timeout). The password is stored so the
-    connection can be re-established unattended, but is never written to a log.
+    Dieselbe Dataclass beschreibt SQLite (dort zählt nur ``sqlite_path``) und
+    die Serverbackends MySQL/MariaDB/PostgreSQL (Host, Port, Name, Benutzer,
+    Kennwort sowie wahlweise TLS und Verbindungszeitlimit). Das Kennwort wird
+    gespeichert, damit die Verbindung ohne Zutun wieder aufgebaut werden kann –
+    in einem Protokoll steht es nie.
     """
 
     type: str = "sqlite"
@@ -376,15 +377,16 @@ class DatabaseConfig:
     password: str = ""
     ssl: bool = False
     timeout: int = 30
-    # How the configuration was created: "env" (Docker first-init) or
-    # "webinterface". Informational only (§4) – never drives a DB switch.
+    # Woher die Konfiguration stammt: „env" (Erstinitialisierung über Docker)
+    # oder „webinterface". Reine Auskunft – ein Datenbankwechsel wird daraus nie
+    # abgeleitet.
     created_by: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def safe_dict(self) -> dict[str, Any]:
-        """Like :meth:`to_dict` but with the password masked (UI/logging)."""
+        """Wie :meth:`to_dict`, nur mit maskiertem Kennwort – für Anzeige und Protokoll."""
         data = self.to_dict()
         if data.get("password"):
             data["password"] = "***"
@@ -405,9 +407,6 @@ class DatabaseConfig:
             "timeout": self.timeout,
         }
 
-    def to_url(self) -> str:
-        return database.build_url(self.connection_config())
-
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "DatabaseConfig":
         config = cls()
@@ -423,7 +422,7 @@ class DatabaseConfig:
         config.name = str(payload.get("name") or "").strip()
         config.user = str(payload.get("user") or "").strip()
         pw = payload.get("password")
-        # Keep the stored password when the form submits an empty/masked value.
+        # Gespeichertes Kennwort behalten, wenn das Formular leer oder maskiert zurückkommt.
         if pw not in (None, "", "***"):
             config.password = str(pw)
         config.ssl = _coerce_bool(payload.get("ssl"), config.ssl)
@@ -449,8 +448,9 @@ def load_database_config() -> "DatabaseConfig":
     if isinstance(stored, dict) and stored.get("password"):
         config.password = str(stored["password"])
     if not stored:
-        # No persisted selection yet: mirror the live backend so the UI shows
-        # the database the process actually started with (env/SQLite default).
+        # Noch nichts gespeichert: die laufende Datenbank spiegeln, damit die
+        # Oberfläche zeigt, womit der Prozess tatsächlich gestartet ist
+        # (ENV-Vorgabe oder das mitgelieferte SQLite).
         backend = database.DB_TYPE
         config.type = backend if backend in DATABASE_TYPES else "sqlite"
         if config.type == "sqlite":
@@ -461,8 +461,9 @@ def load_database_config() -> "DatabaseConfig":
 
 
 def save_database_config(config: "DatabaseConfig") -> None:
-    # Preserve how the configuration was originally created: a later edit through
-    # the web UI keeps an "env" origin, a brand-new config is "webinterface".
+    # Die ursprüngliche Herkunft bleibt erhalten: Eine spätere Änderung über die
+    # Oberfläche macht aus „env" kein „webinterface" – neu vergeben wird die
+    # Herkunft nur bei einer wirklich neuen Konfiguration.
     if not config.created_by:
         stored = _read_json(_DATABASE_PATH)
         config.created_by = (stored.get("created_by") if isinstance(stored, dict) else "") or "webinterface"
@@ -489,8 +490,9 @@ def validate_database_config(config: "DatabaseConfig") -> tuple[bool, str]:
 def load_backup_config() -> "BackupConfig":
     stored = _read_json(_BACKUP_PATH)
     config = BackupConfig.from_dict(stored)
-    # from_dict skips empty passwords (to support masked form re-submits); when
-    # loading from disk we must keep the real stored passwords verbatim.
+    # ``from_dict`` überspringt leere Kennwörter, damit ein maskiert
+    # abgeschicktes Formular nichts löscht. Beim Laden von der Platte müssen die
+    # gespeicherten Kennwörter dagegen unverändert übernommen werden.
     if isinstance(stored, dict):
         if stored.get("ftp_password"):
             config.ftp_password = str(stored["ftp_password"])
@@ -549,7 +551,7 @@ def save_system_settings(settings: SystemSettings) -> None:
 
 
 def export_all() -> dict[str, Any]:
-    """Return a JSON-serialisable snapshot of all persisted settings."""
+    """Abzug aller gespeicherten Einstellungen als JSON-taugliche Struktur."""
 
     return {
         "version": 1,
@@ -636,5 +638,6 @@ __all__ = [
 ]
 
 
-# Silence "imported but unused" for dataclass helpers kept for completeness.
+# Unterdrückt „importiert, aber ungenutzt" für Hilfen, die der Vollständigkeit
+# halber mitexportiert werden.
 _ = (field, fields)

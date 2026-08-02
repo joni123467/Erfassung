@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mobile Erfassung</title>
-  <!-- Empty at load; getCsrfToken() fills this from localStorage on first use -->
+  <!-- Beim Laden leer; getCsrfToken() füllt es beim ersten Zugriff aus dem localStorage -->
   <meta name="csrf-token" content="">
   <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
@@ -14,7 +14,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="theme-color" content="#2563eb">
   <script>
-    // Apply the persisted theme before first paint to avoid a light flash.
+    // Das gespeicherte Aussehen vor dem ersten Bildaufbau setzen, sonst blitzt
+    // die helle Fassung kurz auf.
     (function () {
       try {
         var theme = localStorage.getItem('erfassung-theme');
@@ -398,8 +399,8 @@
 </footer>
 
 <script>
-  // Info tooltips: tap to open/close (the shell does not load app.js, which
-  // hosts the same handler for the regular pages).
+  // Hinweisblasen: antippen öffnet und schließt. Die Offline-Hülle lädt app.js
+  // nicht, wo derselbe Griff für die gewöhnlichen Seiten steckt.
   (function () {
     function closeAll(except) {
       var open = document.querySelectorAll('.info-tip.is-open');

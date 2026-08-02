@@ -5,6 +5,86 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.20.1] – 2026-08-02
+
+Pflegeversion: gemeldete Bedienfehler, durchgängig deutsche Ausgabe und
+Kommentierung, entfernter toter Code. An der arbeitsrechtlichen Bewertung aus
+0.18.0–0.20.0 ändert sich nichts.
+
+### Behoben – „Remote" war aus der Einsatzortauswahl verschwunden
+
+`users.remote_flag_enabled` stammt aus 0.9.21, als „Remote" die **gesamte**
+Einsatzorterfassung war. Seit 0.13.0 ist der Einsatzort eine Liste von
+Arbeitsorten und wird seit 0.14.1 immer angezeigt – das Kennzeichen entfernte
+damit nur noch **einen Eintrag**, während seine Beschriftung „Einsatzort
+erfassen" versprach. Wer das las, ließ den Haken weg; „Remote" verschwand
+unbemerkt, und der Server verwarf sogar eine ausdrücklich gesendete
+Remote-Angabe.
+
+- **„Remote" ist jetzt ein Arbeitsort wie jeder andere** und steht allen offen.
+  Ob jemand remote arbeiten darf, steht im Arbeitsvertrag.
+- Haken in der Benutzerverwaltung, Verzweigungen in den Vorlagen und Auswertung
+  im Server entfallen. Die Spalte bleibt in der Datenbank (nicht portabel
+  entfernbar, und für eine spätere echte Berechtigung weiter auswertbar).
+- **Offene Entscheidung, dokumentiert:** Eine personenbezogene Erlaubnis gehört
+  als `Own.Time.Remote` ins Rollenmodell, nicht als stiller Haken in die
+  Stammdaten. Diese Umsetzung greift dem nicht vor.
+- Neu: Der Vermerk `location_field` unterscheidet „Haken nicht gesetzt" von
+  „Formular ohne Einsatzortfeld". Ein reiner Kommentar-Nachtrag überschreibt den
+  gespeicherten Einsatzort dadurch nicht mehr.
+
+### Behoben – Wochentage erschienen auf Englisch
+
+`strftime('%A')` richtet sich nach der Locale des Betriebssystems, und `de_DE`
+fehlt in schlanken Container-Abbildern. Neu sind die Jinja-Filter `weekday`,
+`weekday_short`, `month_name` und `german_date` mit eigener Namenstabelle – sie
+können nicht fehlschlagen.
+
+### Behoben – weitere Meldungen aus der Bedienung
+
+- **Anmeldeseite:** `letter-spacing: 0.3rem` entfernt; der Sperrsatz war für
+  eine PIN-Eingabe gedacht und zerriss den Benutzernamen.
+- **„Anzurechnung"** → **„Angerechnete Zeit"** in Urlaubsübersicht, PDF- und
+  Excel-Export.
+- **App:** Einsatzort und „Arbeitszeit starten" klebten aneinander. Der
+  Rasterabstand wirkte nur zwischen den Kacheln, nicht innerhalb eines
+  Formulars; das Formular ist jetzt selbst ein Flex-Container.
+- **Jahresprüfung Sonn-/Nachtarbeit:** „Sonntagsminimum erfüllt" war gelb
+  hinterlegt. Gelb heißt „aufpassen" – erfüllt ist grün.
+- **Systemeinstellungen** setzten beim Speichern jeden Wert zurück, den das
+  Formular nicht selbst mitschickte (Zeitzone, Ausgleichszeitraum, Ausfalltage).
+
+### Geändert – Kommentare durchgängig auf Deutsch
+
+Rund 200 Kommentare und Docstrings in `app/`, `static/` und den Vorlagen lagen
+noch auf Englisch. Inhaltlich wurde dabei nichts verändert.
+
+### Entfernt – toter Code
+
+Gefunden über `vulture` und einen Abgleich der CSS-Klassen gegen Vorlagen und
+Skripte:
+
+- `app/main.py`: Import `BackgroundTasks` samt Rückfallzweig
+- `app/pdf_export.py`: `TA_LEFT`
+- `app/app_config.py`: `DatabaseConfig.to_url()`
+- `app/database.py`: `DB_TYPES`
+- `app/db_migration_jobs.py`: `TERMINAL_STATES`, `clear_status()`
+- `app/crud.py`: `get_group_by_name`, `get_holiday_regions`,
+  `get_internal_locations`, `get_active_terminals`, `get_terminal_sync_runs`
+- `app/crud.py`: **`replace_holidays_for_region`** – es löschte *alle*
+  Feiertage einer Region, auch die von Hand angelegten
+- `app/backup_manager.py`: ungenutzter Parameter `original_name`
+- `static/styles.css`: 34 Regelblöcke (rund 220 Zeilen) ohne Verwendung sowie
+  eine doppelte `.punch-start-quick`-Regel
+- `static/mobile.js`: Zweig `perms.flag_remote === false`
+
+Dynamisch zusammengesetzte Klassen (`log-level--…`, `status-…`,
+`mobile-vacation__status--…`) blieben unangetastet.
+
+### Upgrade
+
+Keine Schemaänderung, keine neue Migration.
+
 ## [0.20.0] – 2026-08-01
 
 ### Hinzugefügt

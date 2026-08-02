@@ -29,7 +29,7 @@ GERMAN_STATES = {
 
 
 def calculate_german_holidays(year: int, state: str = "BY") -> Iterable[schemas.HolidayCreate]:
-    """Return German public holidays for a given year and federal state."""
+    """Gesetzliche Feiertage eines Jahres für ein Bundesland."""
     state = (state or "DE").upper()
     subdiv = state if state != "DE" else None
     holiday_set = holidays.Germany(years=year, subdiv=subdiv, language="de")
@@ -40,10 +40,10 @@ def calculate_german_holidays(year: int, state: str = "BY") -> Iterable[schemas.
 
 
 def ensure_holidays(db, year: int, state: str = "BY"):
-    """Load and persist statutory holidays for a year/state.
+    """Gesetzliche Feiertage eines Jahres laden und sichern.
 
-    Custom (administrator-defined) holidays are preserved; only statutory
-    entries are refreshed.
+    Von der Administration selbst angelegte Feiertage bleiben unangetastet;
+    aufgefrischt werden ausschließlich die gesetzlichen Einträge.
     """
     normalized_state = (state or "DE").upper()
     holiday_models = list(calculate_german_holidays(year, normalized_state))

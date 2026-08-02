@@ -1,14 +1,14 @@
-"""Asynchronous database-migration worker + status tracking (§0.9.7).
+"""Datenbankmigration im Hintergrund samt Fortschrittsanzeige.
 
-A database switch copies every table into the target backend and then rebinds
-the live engine. Running that inside the HTTP request would tear down the very
-connection the request uses, so – exactly like the restore worker
-(:mod:`app.restore_jobs`) – the request only validates and *queues* the job
-while a background daemon thread performs the migration and reports progress via
-a JSON status file in the *data* volume.
+Ein Datenbankwechsel kopiert jede Tabelle ins Ziel und hängt danach die
+laufende Verbindung um. Liefe das in der HTTP-Anfrage, risse es genau die
+Verbindung ab, über die diese Anfrage läuft. Deshalb – wie bei der
+Rücksicherung (:mod:`app.restore_jobs`) – prüft die Anfrage nur und **stellt
+den Auftrag ein**; ein Hintergrund-Thread führt die Migration aus und meldet
+den Fortschritt über eine JSON-Statusdatei im data-Volume.
 
-The status file survives the engine swap (it is not part of the database), so
-the progress page can always read the final result and redirect the user.
+Die Statusdatei gehört nicht zur Datenbank und überlebt den Wechsel. Die
+Fortschrittsseite kann das Ergebnis deshalb immer lesen und weiterleiten.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ ACTIVE_STATES = {
     "verifying",
     "switching",
 }
-TERMINAL_STATES = {"completed", "failed"}
 
 _lock = threading.Lock()
 _thread: Optional[threading.Thread] = None
@@ -98,14 +97,18 @@ def _worker(target_config: "app_config.DatabaseConfig", username: str, token: st
         safety_backup=result.get("safety_backup"),
         post_backup=result.get("post_backup"),
         log_token=token,
-        # Data is identical on the new backend, the session cookie stays valid,
-        # so the admin returns straight to the database page.
+        # Die Daten sind auf dem neuen Backend dieselben und das Sitzungscookie
+        # bleibt gültig – die Administration landet direkt wieder auf der
+        # Datenbankseite.
         redirect="/admin/system/database",
     )
 
 
 def start_migration(target_config: "app_config.DatabaseConfig", *, username: str) -> str:
-    """Queue a migration job and start the background worker. Returns the token."""
+    """Migrationsauftrag einstellen und den Hintergrundlauf starten.
+
+    Rückgabe ist die Kennung, unter der sich der Fortschritt abfragen lässt.
+    """
     global _thread
     with _lock:
         if is_active():
@@ -133,9 +136,3 @@ def start_migration(target_config: "app_config.DatabaseConfig", *, username: str
         _thread.start()
         return token
 
-
-def clear_status() -> None:
-    try:
-        STATUS_FILE.unlink(missing_ok=True)
-    except OSError:  # pragma: no cover
-        pass

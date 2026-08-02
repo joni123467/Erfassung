@@ -1,13 +1,16 @@
-"""Backup restore engine (§1, §5-§8).
+"""Rücksicherung eines Sicherungsarchivs in das laufende System.
 
-Restores a backup archive into the live system:
-1. verify the archive (must contain a usable database snapshot),
-2. create an automatic pre-restore safety backup (rollback),
-3. replace the database (SQLite file swap / MySQL import) and configuration,
-4. run all outstanding migrations automatically (older backups are upgraded),
-5. record the operation in ``restore_runs`` and ``backup.log``.
+Ablauf:
 
-Path traversal and archive manipulation are guarded throughout (§24).
+1. Archiv prüfen – es muss einen brauchbaren Datenbankstand enthalten,
+2. selbsttätig eine Sicherheitskopie anlegen (Rückfallpunkt),
+3. Datenbank (SQLite-Dateitausch bzw. logischer Import) und Konfiguration
+   ersetzen,
+4. alle offenen Migrationen ausführen – ältere Sicherungen ziehen dadurch
+   automatisch auf den aktuellen Stand nach,
+5. den Vorgang in ``restore_runs`` und ``backup.log`` festhalten.
+
+Gegen Pfadtraversierung und manipulierte Archive wird durchgehend geprüft.
 """
 
 from __future__ import annotations
@@ -123,10 +126,11 @@ def _harden_restored_secrets() -> None:
 
 
 def validate_restore(archive_path: Path) -> tuple[bool, str, dict]:
-    """Synchronous pre-flight checks (§ Schritt 2): integrity + compatibility.
+    """Vorabprüfung auf Unversehrtheit und Verträglichkeit.
 
-    Runs in the request thread before a restore job is queued, so invalid
-    backups are rejected immediately with a clear message (never a 500).
+    Läuft noch in der Anfrage, bevor der Auftrag eingestellt wird. Ein
+    unbrauchbares Archiv wird dadurch sofort und mit klarer Begründung
+    abgewiesen – nicht mit einem Serverfehler.
     """
     archive_path = Path(archive_path)
     meta = backup_manager.read_metadata(archive_path) or {}
@@ -135,9 +139,9 @@ def validate_restore(archive_path: Path) -> tuple[bool, str, dict]:
         return False, "Backup-Archiv ist beschädigt oder unlesbar.", meta
     if analysis["level"] == "red" or not analysis["has_database"]:
         return False, "Backup enthält keine wiederherstellbare Datenbank.", meta
-    # Logical backups (§0.9.9) are database independent and can be restored into
-    # ANY active backend (cross-database restore). Only legacy, raw-snapshot
-    # backups require a matching database type.
+    # Logische Sicherungen sind datenbankunabhängig und lassen sich in **jede**
+    # laufende Datenbank einspielen. Nur alte Sicherungen mit rohem Dateiabzug
+    # verlangen denselben Datenbanktyp.
     if backup_manager.has_logical_data(archive_path):
         return True, "Backup ist wiederherstellbar (datenbankunabhängig).", meta
     backup_db_type = meta.get("database_type") or "unbekannt"
@@ -156,7 +160,7 @@ def restore_preview(archive_path: Path) -> dict:
     archive_path = Path(archive_path)
     meta = backup_manager.read_metadata(archive_path) or {}
     counts = meta.get("counts") or {}
-    # Fall back to counting the logical export when metadata predates §9.
+    # Bei Archiven aus der Zeit vor den Metadaten notfalls im logischen Export zählen.
     if not counts:
         logical = backup_manager.read_logical_data(archive_path)
         if logical:
@@ -193,11 +197,13 @@ def restore_preview(archive_path: Path) -> dict:
 def _restore_logical(
     archive_path: Path, payload: dict, *, username: str, token: str
 ) -> tuple[dict, list[int]]:
-    """Database-independent restore: import logical data into the ACTIVE backend.
+    """Datenbankunabhängige Rücksicherung in die **laufende** Datenbank.
 
-    Never changes the active database, its configuration or the engine type
-    (§10/§13). Runs inside :func:`data_transfer.import_database` (one transaction)
-    so a failure leaves no partial import behind.
+    Weder die aktive Datenbank noch ihre Konfiguration noch der Datenbanktyp
+    werden dabei verändert – eingespielt werden ausschließlich Daten.
+
+    Der Import läuft über :func:`data_transfer.import_database` in **einer**
+    Transaktion; ein Fehler hinterlässt deshalb keinen halben Stand.
     """
     from . import db_migrations, models
 
@@ -207,8 +213,9 @@ def _restore_logical(
     log_db(f"Cross-Database Restore gestartet: {source_type} → {database.DB_BACKEND} (Job {token})",
            user=username)
 
-    # Ensure the live schema is current *before* importing, so every column the
-    # backup rows expect exists (older backups simply omit newer columns).
+    # Das Schema **vor** dem Import auf den aktuellen Stand bringen, damit jede
+    # Spalte vorhanden ist, die die Sicherung erwartet. Ältere Sicherungen
+    # lassen neuere Spalten schlicht weg.
     models.Base.metadata.create_all(bind=database.engine)
     db_migrations.run()
 
@@ -229,7 +236,7 @@ def _restore_logical(
 
 
 def _verify_logical_restore(imported: dict) -> tuple[bool, str]:
-    """Integrity check: live row counts must match the imported counts (§15)."""
+    """Prüfung: Die Zeilenzahlen in der Datenbank müssen den importierten entsprechen."""
     current = data_transfer.current_row_counts(database.engine)
     mismatches = [
         f"{table} (importiert {count} / aktiv {current.get(table, 0)})"
@@ -248,11 +255,12 @@ def perform_restore(
     token: str = "",
     progress=None,
 ) -> dict:
-    """Execute a restore in a background worker (NOT in the request thread).
+    """Rücksicherung im Hintergrund ausführen – **nicht** in der Anfrage.
 
-    Uses its own DB sessions, swaps the database, runs migrations and records
-    history. ``progress(state, percent, message)`` is invoked at each step so the
-    status API can report live progress.
+    Arbeitet mit eigenen Datenbanksitzungen, tauscht die Datenbank, führt die
+    Migrationen aus und schreibt die Historie. Bei jedem Schritt wird
+    ``progress(state, percent, message)`` aufgerufen, damit die Statusabfrage
+    den Fortschritt zeigen kann.
     """
     archive_path = Path(archive_path)
     started = datetime.now()
@@ -291,9 +299,9 @@ def perform_restore(
         log_backup(f"Sicherheitsbackup erstellt: {safety_path.name} (Job {token})", user=username)
 
         if logical is not None:
-            # §8/§10/§13: database-independent (cross-database) restore. The
-            # active database, its configuration and the engine type are never
-            # changed – only data is imported.
+            # Datenbankunabhängige Rücksicherung: Die laufende Datenbank, ihre
+            # Konfiguration und der Datenbanktyp bleiben unverändert –
+            # eingespielt werden ausschließlich Daten.
             emit("restoring", 45, "Daten werden importiert (datenbankunabhängig)")
             imported, migrations_applied = _restore_logical(
                 archive_path, logical, username=username, token=token
@@ -371,7 +379,8 @@ def perform_restore(
 
     finished = datetime.now()
     duration = (finished - started).total_seconds()
-    # Record history in a fresh session bound to the (restored) database.
+    # Historie in einer frischen Sitzung schreiben, die an der
+    # zurückgesicherten Datenbank hängt.
     try:
         history_db = database.SessionLocal()
         try:
@@ -406,9 +415,10 @@ def perform_restore(
 
 
 def restore_from_archive(archive_path: Path, *, user=None, username: str = "", progress=None, token: str = "") -> dict:
-    """Backwards-compatible synchronous restore (used by tests/CLI).
+    """Rücksicherung im selben Thread – für Tests und die Kommandozeile.
 
-    The web UI uses the asynchronous :mod:`app.restore_jobs` worker instead.
+    Die Oberfläche benutzt stattdessen den Hintergrundlauf
+    :mod:`app.restore_jobs`.
     """
     resolved_user = username or getattr(user, "username", None) or "-"
     return perform_restore(archive_path, username=resolved_user, token=token, progress=progress)

@@ -19,7 +19,7 @@ from .. import crud, models, schemas
 LOGGER = logging.getLogger(__name__)
 
 def _discover_project_root() -> Path:
-    """Return the root folder that contains the application package."""
+    """Wurzelverzeichnis, in dem das Anwendungspaket liegt."""
 
     current = Path(__file__).resolve()
     for candidate in current.parents:
@@ -41,7 +41,7 @@ _LEGACY_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "timem
 
 
 class TimeMotoError(RuntimeError):
-    """Raised when communication with the TimeMoto device fails."""
+    """Wird ausgelöst, wenn die Verständigung mit dem TimeMoto-Gerät scheitert."""
 
 
 def _ensure_config_dir() -> None:
@@ -69,7 +69,7 @@ def _migrate_legacy_config() -> None:
 
 @dataclass
 class TimeMotoConfig:
-    """Persisted configuration for the TimeMoto integration."""
+    """Gespeicherte Konfiguration der TimeMoto-Anbindung."""
 
     host: str = ""
     port: int = 80
@@ -319,7 +319,7 @@ def _ensure_datetime(payload: dict[str, Any]) -> datetime | None:
 
 
 class TimeMotoClient:
-    """HTTP client that talks to the TimeMoto device."""
+    """HTTP-Client für die Verständigung mit dem TimeMoto-Gerät."""
 
     def __init__(self, config: TimeMotoConfig):
         if not config.host:
@@ -629,7 +629,7 @@ def synchronize(
     *,
     full_sync: bool = False,
 ) -> TimeMotoSyncResult:
-    """Synchronises users and time records from the TimeMoto device."""
+    """Benutzer und Zeitbuchungen vom TimeMoto-Gerät abholen."""
 
     with TimeMotoClient(config) as client:
         client.authenticate()

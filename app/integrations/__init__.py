@@ -1,4 +1,4 @@
-"""Integration modules for external hardware and services."""
+"""Anbindungen an externe Hardware und Dienste."""
 
 from __future__ import annotations
 

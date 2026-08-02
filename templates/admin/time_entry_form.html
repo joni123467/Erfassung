@@ -49,17 +49,11 @@
             Kommentar
             <textarea name="notes" rows="3" placeholder="Optional">{{ entry.notes }}</textarea>
         </label>
-        {# Der Standort einer Firma ist keine Remote-Arbeit: Er bleibt auch dann
-           wählbar, wenn der Benutzer das Remote-Kennzeichen nicht hat. Nur die
-           Option „Remote" hängt daran. #}
-        {% if remote_editable or location_catalogue_data %}
-            <div class="field full-width">
-                <span class="field__label">Einsatzort</span>
-                {{ location_picker(locations=entry_locations, catalogue=location_catalogue_data,
-                                   checked=entry.is_remote, selected=entry.location_id,
-                                   allow_remote=remote_editable) }}
-            </div>
-        {% endif %}
+        <div class="field full-width">
+            <span class="field__label">Einsatzort</span>
+            {{ location_picker(locations=entry_locations, catalogue=location_catalogue_data,
+                               checked=entry.is_remote, selected=entry.location_id) }}
+        </div>
         <label class="full-width">
             Begründung der Änderung <span class="required-marker">*</span>
             <input type="text" name="change_reason" required maxlength="500"

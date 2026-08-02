@@ -1,4 +1,4 @@
-"""Application package for the Erfassung project."""
+"""Anwendungspaket des Projekts Erfassung."""
 
 from __future__ import annotations
 

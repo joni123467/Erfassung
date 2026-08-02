@@ -1,26 +1,26 @@
-"""Database engine bootstrap with runtime-switchable backend (§0.9.7).
+"""Aufbau der Datenbankverbindung – im Betrieb umschaltbar.
 
-Historically the backend was fixed at process start via the ``DATABASE_URL``
-environment variable. Since 0.9.7 the active database can be switched from the
-web UI (Administration → System → Datenbank). The chosen backend is persisted
-as ``config/database.json`` in the *config* volume and takes precedence over the
-environment variable, so the selection survives restarts.
+Früher stand das Backend beim Start fest, festgelegt über ``DATABASE_URL``.
+Seit 0.9.7 lässt es sich in der Oberfläche wechseln (Administration → System →
+Datenbank). Die Wahl liegt als ``config/database.json`` im config-Volume und
+geht der Umgebungsvariablen vor – so überlebt sie jeden Neustart.
 
-To avoid a circular import (``paths``/``app_config`` both import this module),
-the config file is read here with a tiny, dependency-free JSON reader. The URL
-builder :func:`build_url` is the single source of truth and is reused by
-:class:`app.app_config.DatabaseConfig`.
+Die Konfigurationsdatei wird hier mit einem winzigen, abhängigkeitsfreien
+JSON-Leser eingelesen. Grund ist ein Importzyklus: ``paths`` und ``app_config``
+laden beide dieses Modul. Der URL-Bau :func:`build_url` ist die einzige Quelle
+und wird von :class:`app.app_config.DatabaseConfig` mitbenutzt.
 
-Supported logical types:
+Unterstützte Typen:
 
-* ``sqlite``     – file based (default, recommended for single-user/test)
-* ``mysql``      – MySQL 8+ via PyMySQL
-* ``mariadb``    – MariaDB 10.6+ via PyMySQL (same dialect as MySQL)
-* ``postgresql`` – PostgreSQL 14+ via psycopg2
+* ``sqlite``     – dateibasiert (Vorgabe, für Einzelplatz und Test)
+* ``mysql``      – MySQL 8+ über PyMySQL
+* ``mariadb``    – MariaDB 10.6+ über PyMySQL (derselbe Dialekt wie MySQL)
+* ``postgresql`` – PostgreSQL 14+ über psycopg2
 
-The engine can be rebuilt at runtime via :func:`reconfigure` after a successful
-migration; all other modules reference ``database.engine`` /
-``database.SessionLocal`` lazily, so the swap is picked up by new sessions.
+Nach einer erfolgreichen Migration lässt sich die Verbindung mit
+:func:`reconfigure` neu aufbauen. Alle übrigen Module greifen erst bei Bedarf
+auf ``database.engine`` und ``database.SessionLocal`` zu; neue Sitzungen
+übernehmen den Wechsel damit von selbst.
 """
 
 from __future__ import annotations
@@ -34,8 +34,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Logical database types exposed in the UI (order = default recommendation).
-DB_TYPES = ("postgresql", "mariadb", "mysql", "sqlite")
 
 # Logical type -> SQLAlchemy driver + default port.
 _DRIVERS = {
@@ -67,10 +65,11 @@ def normalise_type(value: Any) -> str:
 
 
 def build_url(config: dict[str, Any]) -> str:
-    """Build a SQLAlchemy URL string from a configuration mapping.
+    """SQLAlchemy-URL aus einer Konfigurationsstruktur bauen.
 
-    ``config`` keys: ``type``, ``sqlite_path``, ``host``, ``port``, ``name``,
-    ``user``, ``password``. Credentials are URL-encoded by SQLAlchemy.
+    Ausgewertet werden ``type``, ``sqlite_path``, ``host``, ``port``, ``name``,
+    ``user`` und ``password``. Um die URL-Kodierung der Zugangsdaten kümmert
+    sich SQLAlchemy.
     """
     db_type = normalise_type(config.get("type"))
     driver, default_port = _DRIVERS[db_type]
@@ -137,12 +136,15 @@ def _env_bool(value: Any) -> bool:
 
 
 def _config_from_env() -> dict[str, Any] | None:
-    """Build a database config from ``DB_*`` ENV variables (first-init only).
+    """Datenbankkonfiguration aus den ``DB_*``-Umgebungsvariablen – nur bei der
+    Erstinstallation.
 
-    Recognises ``DB_TYPE`` (sqlite/mysql/mariadb/postgresql) plus ``DB_HOST``,
-    ``DB_PORT``, ``DB_NAME``, ``DB_USER``, ``DB_PASSWORD``, ``DB_SSL`` and
-    ``DB_PATH`` (SQLite). Returns ``None`` when ``DB_TYPE`` is not set, so the
-    feature is fully opt-in and never interferes with ``DATABASE_URL`` setups.
+    Ausgewertet werden ``DB_TYPE`` (sqlite/mysql/mariadb/postgresql) sowie
+    ``DB_HOST``, ``DB_PORT``, ``DB_NAME``, ``DB_USER``, ``DB_PASSWORD``,
+    ``DB_SSL`` und ``DB_PATH`` (für SQLite).
+
+    Ohne ``DB_TYPE`` kommt ``None`` zurück. Der Weg ist damit rein freiwillig
+    und kommt einer ``DATABASE_URL``-Einrichtung nie in die Quere.
     """
     raw_type = os.environ.get("DB_TYPE")
     if not raw_type:
@@ -168,7 +170,11 @@ def _config_from_env() -> dict[str, Any] | None:
 
 
 def _persist_config_file(config: dict[str, Any]) -> bool:
-    """Write the database config to the config volume. Never overwrites (§2)."""
+    """Datenbankkonfiguration ins config-Volume schreiben.
+
+    Eine vorhandene Datei wird **nie** überschrieben: Was einmal eingerichtet
+    ist, bleibt eingerichtet.
+    """
     if DATABASE_CONFIG_FILE.exists():
         return False
     try:
@@ -182,18 +188,22 @@ def _persist_config_file(config: dict[str, Any]) -> bool:
 
 
 def _resolve_initial() -> tuple[str, str, dict[str, Any]]:
-    """Return (url, logical_type, config) honouring the persisted selection.
+    """``(URL, Typ, Konfiguration)`` unter Beachtung der gespeicherten Wahl.
 
-    Order of precedence:
-    1. an existing ``config/database.json`` (web UI / earlier ENV first-init),
-    2. ``DB_*`` ENV variables on first install (persisted so they win only once),
-    3. the legacy ``DATABASE_URL`` environment variable,
-    4. the bundled SQLite default.
+    Reihenfolge:
+
+    1. eine vorhandene ``config/database.json`` (aus der Oberfläche oder einer
+       früheren Erstinitialisierung über ENV),
+    2. die ``DB_*``-Umgebungsvariablen bei der Erstinstallation – sie werden
+       gespeichert und greifen dadurch genau einmal,
+    3. die althergebrachte ``DATABASE_URL``,
+    4. das mitgelieferte SQLite.
     """
     global INIT_SOURCE
     config = _read_config_file()
     if config:
-        # Fall 2: an existing configuration is always kept; ENV is ignored (§2).
+        # Fall 2: Eine vorhandene Konfiguration bleibt immer bestehen – die
+        # Umgebungsvariablen werden dann übergangen.
         INIT_SOURCE = "file"
         db_type = normalise_type(config.get("type"))
         return build_url(config), db_type, config
@@ -238,8 +248,8 @@ def _build_engine(url: str, db_type: str, config: dict[str, Any]):
 
 # -- module-level state (rebindable at runtime) ----------------------------
 
-# How the active configuration was resolved at startup: "file" (persisted),
-# "env" (Docker ENV first-init, §1/§4), "url" (DATABASE_URL) or "default".
+# Woher die aktive Konfiguration beim Start kam: „file" (gespeichert), „env"
+# (Erstinitialisierung über Docker), „url" (``DATABASE_URL``) oder „default".
 INIT_SOURCE = "default"
 
 SQLALCHEMY_DATABASE_URL, DB_TYPE, ACTIVE_CONFIG = _resolve_initial()
@@ -251,11 +261,12 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def reconfigure(config: dict[str, Any]) -> None:
-    """Rebind the global engine/session to a new backend configuration.
+    """Verbindung und Sitzungsfabrik auf eine neue Konfiguration umhängen.
 
-    Disposes the previous engine and rebuilds the module globals so that new
-    requests/sessions use the freshly selected database. Existing in-flight
-    sessions keep their (old) connection until closed.
+    Die bisherige Verbindung wird geschlossen und die Modulvariablen neu
+    aufgebaut, sodass folgende Anfragen und Sitzungen die frisch gewählte
+    Datenbank benutzen. Bereits laufende Sitzungen behalten ihre alte
+    Verbindung, bis sie geschlossen werden.
     """
     global SQLALCHEMY_DATABASE_URL, DB_BACKEND, IS_SQLITE, DB_TYPE, ACTIVE_CONFIG
     global engine, SessionLocal

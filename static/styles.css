@@ -34,7 +34,7 @@
     --info: #2563eb;
     --info-soft: #dbeafe;
 
-    /* ── Shape (single source of truth, never above 8px) ───────────── */
+    /* ── Formensprache (eine Quelle, nie über 8px) ─────────────────── */
     --radius-xs: 3px;               /* tabs, badges, chips */
     --radius-sm: 5px;               /* buttons, inputs, selects */
     --radius-md: 6px;               /* segmented controls, alerts, small panels */
@@ -215,7 +215,8 @@ textarea:focus {
     margin-left: auto;
 }
 
-/* Light/dark switch — icon swaps purely via CSS based on the active theme */
+/* Hell/Dunkel-Umschalter – das Symbol tauscht rein über CSS anhand des
+   eingestellten Aussehens */
 .theme-toggle {
     display: inline-flex;
     align-items: center;
@@ -318,31 +319,6 @@ textarea:focus {
     display: flex;
     flex-direction: column;
     gap: 2rem;
-}
-
-.offline-banner {
-    position: sticky;
-    top: clamp(0.5rem, env(safe-area-inset-top, 0) + 0.5rem, 2rem);
-    z-index: 1000;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--radius);
-    background: var(--accent);
-    color: var(--brand);
-    box-shadow: var(--shadow);
-}
-
-.offline-banner__icon {
-    font-size: 1.2rem;
-}
-
-.offline-banner__text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.9rem;
 }
 
 #offline-sync-status[data-state="error"] {
@@ -450,12 +426,6 @@ tbody tr {
 
 tbody tr:hover {
     background: var(--surface-muted);
-}
-
-.flex {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 1rem;
 }
 
 ul {
@@ -1064,10 +1034,6 @@ li {
     color: var(--text-muted);
 }
 
-.punch-start-quick {
-    margin: 0;
-}
-
 .modal {
     position: fixed;
     inset: 0;
@@ -1141,22 +1107,6 @@ li {
 
 body.modal-open {
     overflow: hidden;
-}
-
-.entries-header {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    align-items: flex-start;
-    margin-bottom: 1rem;
-}
-
-@media (min-width: 640px) {
-    .entries-header {
-        flex-direction: row;
-        align-items: center;
-        justify-content: space-between;
-    }
 }
 
 .filter-inline {
@@ -1554,12 +1504,6 @@ body.modal-open {
     align-items: start;
 }
 
-.card-body--narrow {
-    max-width: 960px;
-    width: 100%;
-    margin: 0 auto;
-}
-
 .card-body--wide {
     max-width: none;
     width: 100%;
@@ -1582,12 +1526,6 @@ body.modal-open {
     color: var(--text-muted);
     font-weight: 500;
     font-size: 0.9rem;
-}
-
-.admin-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 1.5rem;
 }
 
 .card-header {
@@ -1831,54 +1769,7 @@ body.modal-open {
     justify-content: flex-end;
 }
 
-.update-form {
-    display: grid;
-    gap: 1.25rem;
-}
-
-.update-form__grid {
-    display: grid;
-    gap: 1rem;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
-.update-form label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    font-weight: 600;
-}
-
 .update-form label input,
-.update-form label select {
-    width: 100%;
-}
-
-.update-form__actions {
-    display: flex;
-    justify-content: flex-end;
-}
-
-.update-log {
-    font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    background: var(--code-bg);
-    color: var(--code-text);
-    padding: 1rem;
-    border-radius: var(--radius);
-    max-height: 320px;
-    overflow-y: auto;
-    overflow-x: auto;
-    font-size: 0.85rem;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.update-log__empty {
-    color: var(--text-subtle);
-    font-style: italic;
-}
-
 .login-card {
     max-width: 420px;
     margin: 4rem auto;
@@ -1895,18 +1786,16 @@ body.modal-open {
     gap: 1rem;
 }
 
+/* Kein Sperrsatz: 0.3rem waren fast fünf Pixel je Zeichen – gedacht für eine
+   PIN-Eingabe, im Benutzernamen sah es zerrissen aus. Ein Kennwort liest man
+   ohnehin nicht mit, und der Benutzername soll wie ein Wort aussehen. */
 .login-form input {
     height: 3rem;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-strong);
     font-size: 1.1rem;
     text-align: center;
-    letter-spacing: 0.3rem;
-}
-
-.admin-table {
-    width: 100%;
-    border-collapse: collapse;
+    letter-spacing: normal;
 }
 
 .inline-form {
@@ -1942,18 +1831,7 @@ body.modal-open {
     gap: 0.4rem;
 }
 
-.time-entry-form {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 0.75rem;
-    align-items: end;
-}
-
 .time-entry-form input,
-.time-entry-form select {
-    width: 100%;
-}
-
 .punch-status {
     background: var(--accent);
     border-radius: var(--radius);
@@ -2281,15 +2159,6 @@ tr.company-deleted td {
     background: var(--warning-soft);
 }
 
-.mobile-entry.is-deleted-company {
-    border-left: 3px solid var(--warning);
-    padding-left: 0.75rem;
-}
-
-.highlight {
-    box-shadow: var(--ring);
-}
-
 .actions .button {
     margin-right: 0.5rem;
 }
@@ -2419,25 +2288,6 @@ tr.company-deleted td {
     font-size: 1.1rem;
 }
 
-.punch-order {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 1rem;
-    align-items: flex-end;
-}
-
-.punch-order label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    font-weight: 600;
-}
-
-.punch-order select {
-    min-width: 180px;
-}
-
 .punch-start {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -2454,20 +2304,6 @@ tr.company-deleted td {
 .punch-start select,
 .punch-start input[type="text"] {
     width: 100%;
-}
-
-.punch-start-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-}
-
-.open-entry {
-    background: var(--hover);
-}
-
-.open-entry td {
-    font-weight: 500;
 }
 
 .status.pending {
@@ -2661,13 +2497,9 @@ tr.company-deleted td {
 .admin-user-qr {
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
-    /* stays white in dark mode: QR codes need a light quiet zone to scan */
+    /* Bleibt auch im dunklen Aussehen weiß: Ein QR-Code braucht zum Scannen
+       einen hellen Rand. */
     background: #fff;
-}
-
-.mobile-badge--queued {
-    background: var(--warning-soft);
-    color: var(--warning);
 }
 
 .mobile-badge[data-state="online"] {
@@ -2807,7 +2639,7 @@ tr.company-deleted td {
     gap: 0.2rem;
 }
 
-/* Small gear settings button in the footer */
+/* Kleines Zahnrad für Einstellungen in der Fußzeile */
 .mobile-settings-btn {
     flex: none;
     width: 2.5rem;
@@ -3189,6 +3021,15 @@ tr.company-deleted td {
     width: 100%;
 }
 
+/* Ein Formular ist **eine** Kachel des Rasters – der Rasterabstand wirkt
+   deshalb nur außen. Steht darin der Einsatzort über „Arbeitszeit starten",
+   klebten beide aneinander. Derselbe Abstand wie zwischen den Kacheln. */
+.mobile-action-grid form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
 .mobile-button {
     width: 100%;
     padding: 0.75rem 1rem;
@@ -3352,33 +3193,6 @@ tr.company-deleted td {
 .mobile-week-day__minutes {
     font-weight: 600;
     color: var(--text);
-}
-
-.mobile-holiday-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.mobile-holiday-list li {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.6rem 0.75rem;
-    border-radius: var(--radius);
-    background: var(--accent);
-}
-
-.mobile-holiday-list span {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-}
-
-.mobile-holiday-list strong {
-    font-size: 0.95rem;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -3592,11 +3406,12 @@ tr.company-deleted td {
     flex-direction: row;
 }
 
-/* --- Administration: grouped collapsible navigation (§0.9.2) ---------- */
-/* Administration navigation as tabs (§0.9.6) – matches the .timetac-subnav
-   look used under „Buchungen“/„Urlaub“: flat, angular reiter with a shared
-   bottom border, identical height, font-size, hover and active states. Each
-   group opens a dropdown panel on desktop and an accordion on mobile. */
+/* --- Administration: gruppierte, aufklappbare Navigation -------------- */
+/* Die Navigation der Administration als Reiter – im selben Stil wie die
+   .timetac-subnav unter „Buchungen“ und „Urlaub“: flach, kantig, mit
+   gemeinsamer Grundlinie sowie gleicher Höhe, Schriftgröße und Darstellung
+   beim Zeigen und im aktiven Zustand. Am Rechner klappt jede Gruppe als Menü
+   auf, auf dem Handy als Ziehharmonika. */
 .adminnav {
     display: flex;
     flex-wrap: wrap;
@@ -3649,7 +3464,8 @@ tr.company-deleted td {
     transition: transform 0.15s ease;
 }
 
-/* Active group (contains the current page) carries the brand underline. */
+/* Die aktive Gruppe – die mit der gerade geöffneten Seite – bekommt die
+   Unterstreichung in der Hausfarbe. */
 .adminnav__group.is-active > .adminnav__summary {
     color: var(--brand);
     border-bottom-color: var(--brand);
@@ -3813,7 +3629,8 @@ tr.company-deleted td {
     gap: 0.75rem;
 }
 
-/* Dynamic target groups: only the relevant one is shown, no empty space. */
+/* Zielgruppen erscheinen nach Bedarf: gezeigt wird nur die passende, ohne
+   Leerraum für die übrigen. */
 .bj-group {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -3864,8 +3681,6 @@ tr.company-deleted td {
 .restore-details dd { margin: 0; font-weight: 600; }
 
 .restore-verify-result { display: block; margin-top: 0.25rem; font-size: 0.85rem; }
-.restore-verify-result.is-green { color: var(--success); }
-.restore-verify-result.is-yellow { color: #92400e; }
 .restore-verify-result.is-red { color: var(--danger); }
 
 /* --- Restore progress (§0.9.5) --------------------------------------- */
@@ -4097,11 +3912,6 @@ tr.company-deleted td {
 .permission-section legend {
     font-weight: 700;
     padding: 0 0.35rem;
-}
-
-.permission-section--admin {
-    border-color: var(--brand);
-    background: var(--accent-soft);
 }
 
 .permission-section__hint {

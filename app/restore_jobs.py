@@ -1,15 +1,17 @@
-"""Asynchronous restore worker + status tracking (§0.9.5).
+"""Rücksicherung im Hintergrund samt Fortschrittsanzeige.
 
-A restore must never run inside the HTTP request: it swaps the database file and
-disposes the engine, which would tear down the very connection the request is
-using (the cause of the previous "Internal Server Error"). Instead the request
-only validates and *queues* a job; a background daemon thread performs the
-restore and reports progress through a JSON status file.
+Eine Rücksicherung darf nie in der HTTP-Anfrage laufen: Sie tauscht die
+Datenbankdatei aus und verwirft die Verbindung – also genau die, über die diese
+Anfrage läuft. Genau daher kam früher der „Internal Server Error".
 
-The status file lives in the ``data`` volume but is *not* part of the database,
-so it survives the DB swap and even a full application/container restart – the
-frontend can therefore always read the final result, reconnect after a restart
-and redirect the user.
+Stattdessen prüft die Anfrage nur und **stellt den Auftrag ein**; ein
+Hintergrund-Thread führt die Rücksicherung aus und meldet den Fortschritt über
+eine JSON-Statusdatei.
+
+Die Statusdatei liegt im data-Volume, gehört aber **nicht** zur Datenbank. Sie
+übersteht deshalb den Austausch und sogar einen vollständigen Neustart von
+Anwendung oder Container – die Oberfläche kann das Ergebnis immer lesen, sich
+nach einem Neustart wieder verbinden und weiterleiten.
 """
 
 from __future__ import annotations
@@ -97,7 +99,10 @@ def _worker(archive_path: Path, username: str, token: str, base: dict) -> None:
 
 
 def start_restore(archive_path: Path, *, username: str) -> str:
-    """Queue a restore job and start the background worker. Returns the token."""
+    """Rücksicherung einstellen und den Hintergrundlauf starten.
+
+    Rückgabe ist die Kennung, unter der sich der Fortschritt abfragen lässt.
+    """
     global _thread
     with _lock:
         if is_active():

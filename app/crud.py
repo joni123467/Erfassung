@@ -104,10 +104,6 @@ def create_group(db: Session, group: schemas.GroupCreate) -> models.Group:
     return db_group
 
 
-def get_group_by_name(db: Session, name: str) -> Optional[models.Group]:
-    return db.query(models.Group).filter(models.Group.name == name).first()
-
-
 def set_group_members(db: Session, group: models.Group, user_ids: Iterable[int]) -> models.Group:
     """Mitglieder einer Gruppe vollständig setzen."""
     wanted = {int(value) for value in user_ids}
@@ -1727,11 +1723,6 @@ def get_holidays(db: Session, region: Optional[str] = None) -> List[models.Holid
     return query.order_by(models.Holiday.date).all()
 
 
-def get_holiday_regions(db: Session) -> List[str]:
-    regions = db.query(models.Holiday.region).distinct().all()
-    return [region for (region,) in regions if region]
-
-
 def get_default_holiday_region(db: Session) -> str:
     latest = (
         db.query(models.Holiday.region)
@@ -1751,37 +1742,24 @@ def get_upcoming_holidays(db: Session, region: Optional[str], limit: int = 5) ->
     return query.order_by(models.Holiday.date).limit(limit).all()
 
 
-def replace_holidays_for_region(
-    db: Session, region: str, year: int, holidays: Iterable[schemas.HolidayCreate]
-) -> List[models.Holiday]:
-    start = date(year, 1, 1)
-    end = date(year, 12, 31)
-    db.query(models.Holiday).filter(models.Holiday.region == region).filter(models.Holiday.date >= start).filter(
-        models.Holiday.date <= end
-    ).delete(synchronize_session=False)
-    created: List[models.Holiday] = []
-    for holiday in holidays:
-        payload = holiday.model_dump()
-        payload.setdefault("region", region)
-        db_holiday = models.Holiday(**payload)
-        db.add(db_holiday)
-        created.append(db_holiday)
-    db.commit()
-    for holiday in created:
-        db.refresh(holiday)
-    return created
+# ``replace_holidays_for_region`` ist mit 0.20.1 entfallen: Es löschte **alle**
+# Feiertage einer Region, auch die von Hand angelegten. Diese Aufgabe erfüllt
+# ``apply_statutory_holidays`` – nur eben ohne fremde Einträge mitzureißen.
+
 
 def apply_statutory_holidays(
     db: Session, region: str, year: int, holidays: Iterable[schemas.HolidayCreate]
 ) -> dict[str, int]:
-    """Replace statutory holidays for ``region``/``year`` while preserving any
-    custom holidays the administrator added (§22).
+    """Gesetzliche Feiertage einer Region und eines Jahres auffrischen.
 
-    - existing rows with ``source='statutory'`` for the region/year are removed
-      and re-inserted from the freshly calculated set,
-    - custom rows (``source='custom'``) are never touched,
-    - a statutory entry that collides with an existing custom entry on the same
-      date is skipped so the custom one wins (no duplicates, no overwrite).
+    Selbst angelegte Feiertage bleiben dabei unangetastet:
+
+    * Vorhandene Zeilen mit ``source='statutory'`` für Region und Jahr werden
+      entfernt und aus der frisch berechneten Menge neu geschrieben.
+    * Zeilen mit ``source='custom'`` werden nie angefasst.
+    * Fällt ein gesetzlicher Feiertag auf ein Datum, an dem bereits ein selbst
+      angelegter steht, wird er übersprungen – der eigene Eintrag gewinnt. So
+      entstehen weder Dubletten noch stille Überschreibungen.
     """
 
     start = date(year, 1, 1)
@@ -1795,7 +1773,7 @@ def apply_statutory_holidays(
     base_query.filter(models.Holiday.source == "statutory").delete(synchronize_session=False)
     db.flush()
 
-    # Dates already occupied by custom holidays must not be overwritten.
+    # Ein Datum, an dem schon ein selbst angelegter Feiertag steht, bleibt unberührt.
     occupied = {
         row.date
         for row in base_query.filter(models.Holiday.source == "custom").all()
@@ -1829,8 +1807,12 @@ def get_company_by_name(db: Session, name: str) -> Optional[models.Company]:
 
 
 def find_company_by_name(db: Session, name: str) -> Optional[models.Company]:
-    """Exact match first, then case-insensitive – used to resolve the free-text
-    company search of the mobile clock-in when no dropdown value was submitted."""
+    """Firma über ihren Namen finden.
+
+    Zuerst wird genau verglichen, danach ohne Rücksicht auf Groß- und
+    Kleinschreibung. Gebraucht wird das beim Stempeln in der Mobilansicht: Dort
+    kann statt eines Werts aus der Auswahlliste ein freier Text ankommen.
+    """
     cleaned = (name or "").strip()
     if not cleaned:
         return None
@@ -1943,14 +1925,6 @@ def get_internal_company(db: Session) -> Optional[models.Company]:
         .order_by(models.Company.name)
         .first()
     )
-
-
-def get_internal_locations(db: Session) -> List[models.CompanyLocation]:
-    """Aktive Standorte des eigenen Betriebs; leer, wenn keiner gepflegt ist."""
-    company = get_internal_company(db)
-    if company is None:
-        return []
-    return get_company_locations(db, company.id, only_active=True)
 
 
 def _clear_primary(db: Session, company_id: int, *, keep: Optional[int] = None) -> None:
@@ -2132,7 +2106,7 @@ def get_backup_run(db: Session, run_id: int) -> Optional[models.BackupRun]:
 
 
 def prune_backup_runs(db: Session, job_id: int, keep: int = 200) -> None:
-    """Keep the history table from growing without bound."""
+    """Die Historientabelle daran hindern, unbegrenzt zu wachsen."""
     runs = (
         db.query(models.BackupRun)
         .filter(models.BackupRun.job_id == job_id)
@@ -2154,10 +2128,6 @@ def get_terminals(db: Session) -> List[models.Terminal]:
 
 def get_terminal(db: Session, terminal_id: int) -> Optional[models.Terminal]:
     return db.query(models.Terminal).filter(models.Terminal.id == terminal_id).first()
-
-
-def get_active_terminals(db: Session) -> List[models.Terminal]:
-    return db.query(models.Terminal).filter(models.Terminal.active.is_(True)).all()
 
 
 def create_terminal(db: Session, **fields) -> models.Terminal:
@@ -2194,15 +2164,6 @@ def add_terminal_sync_run(db: Session, **fields) -> models.TerminalSyncRun:
     db.commit()
     db.refresh(run)
     return run
-
-
-def get_terminal_sync_runs(db: Session, limit: int = 100) -> List[models.TerminalSyncRun]:
-    return (
-        db.query(models.TerminalSyncRun)
-        .order_by(models.TerminalSyncRun.started_at.desc())
-        .limit(limit)
-        .all()
-    )
 
 
 # --- Restore-Historie (§0.9.4) --------------------------------------------

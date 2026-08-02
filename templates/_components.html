@@ -9,13 +9,18 @@
    ein einziges Bedienelement statt Schalter *und* Liste: Auf dem Handy ist
    jeder zusätzliche Griff einer zu viel.
 
-   ``allow_remote`` steuert nur die Option „Remote“ – sie hängt am
-   Benutzerkennzeichen. Der Standort selbst hängt nicht daran: Wer nie remote
-   arbeitet, muss trotzdem sagen können, an welchem Standort er war. Ohne
-   Standorte *und* ohne Remote-Kennzeichen gibt es nichts zu wählen, dann
-   bleibt das Feld weg. #}
+   „Remote“ ist ab 0.20.1 ein Arbeitsort wie jeder andere und steht immer zur
+   Wahl. Bis 0.20.0 hing die Option an einem Benutzerkennzeichen und
+   verschwand unbemerkt aus der Liste – Begründung in
+   ``_resolve_work_location`` (``app/main.py``). #}
 
 {% macro location_toggle(checked=False, block=False) -%}
+{# ``location_field`` sagt dem Server: „Dieses Formular hat ein Einsatzortfeld."
+   Ohne den Vermerk wäre ein leeres ``is_remote`` mehrdeutig – es kann heißen
+   „Haken nicht gesetzt" oder „das Formular kennt das Feld gar nicht". Im
+   zweiten Fall darf der gespeicherte Einsatzort nicht überschrieben werden;
+   ältere Offline-Warteschlangen schicken genau solche Formulare. #}
+<input type="hidden" name="location_field" value="1">
 <label class="location-toggle{% if block %} location-toggle--block{% endif %}">
     <input type="checkbox" name="is_remote" value="1"{% if checked %} checked{% endif %}>
     <span class="visually-hidden">Remote (z. B. Telefon)</span>
@@ -30,7 +35,7 @@
 </label>
 {%- endmacro %}
 
-{% macro location_picker(locations=None, catalogue=None, checked=False, selected=None, block=False, allow_remote=True) -%}
+{% macro location_picker(locations=None, catalogue=None, checked=False, selected=None, block=False) -%}
 {% if catalogue %}
 {# Firmengebunden: Angeboten werden ausschließlich die Standorte der gewählten
    Firma. ``data-location-picker`` verbindet die Liste mit der Firmenauswahl
@@ -38,23 +43,24 @@
    Hauptstandort ist vorausgewählt. Ohne JavaScript bleibt die
    servergerenderte Liste stehen; der Server prüft ohnehin nach, dass der
    Standort zur gebuchten Firma gehört. #}
+<input type="hidden" name="location_field" value="1">
 <label class="location-toggle location-toggle--select{% if block %} location-toggle--block{% endif %}">
     <span class="visually-hidden">Einsatzort</span>
     <span class="location-toggle__face">
         <span class="location-toggle__dot" aria-hidden="true"></span>
         <span class="location-toggle__caption" aria-hidden="true">Einsatzort</span>
-        <select class="location-toggle__select" name="work_location" data-location-picker{% if allow_remote %} data-allow-remote="1"{% endif %}>
+        <select class="location-toggle__select" name="work_location" data-location-picker>
             <option value="onsite"{% if not selected and not checked %} selected{% endif %}>Vor Ort</option>
-            {% if allow_remote %}
-                <option value="remote"{% if not selected and checked %} selected{% endif %}>Remote</option>
-            {% endif %}
+            <option value="remote"{% if not selected and checked %} selected{% endif %}>Remote</option>
             {% for location in (locations or []) %}
                 <option value="{{ location.id }}"{% if selected == location.id %} selected{% endif %}>{{ location.name }}{% if location.city %} · {{ location.city }}{% endif %}</option>
             {% endfor %}
         </select>
     </span>
 </label>
-{% elif allow_remote %}
+{% else %}
+{# Ohne gepflegte Standorte bleibt nur „Vor Ort / Remote" – dafür genügt der
+   Umschalter, eine Liste mit zwei Einträgen wäre umständlicher. #}
 {{ location_toggle(checked=checked, block=block) }}
 {% endif %}
 {%- endmacro %}

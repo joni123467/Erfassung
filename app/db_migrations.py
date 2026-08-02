@@ -1,8 +1,12 @@
-"""Versioned, dialect-aware migration runner for Erfassung.
+"""Versionierter, dialektunabhängiger Migrationslauf.
 
-Works on both SQLite (default) and MySQL 8+/MariaDB. Migration state is tracked
-in the portable ``schema_migrations`` table (see :mod:`app.db_schema`). Each
-migration is idempotent and forward-only; existing data is always preserved.
+Läuft auf SQLite (Vorgabe), MySQL 8+/MariaDB und PostgreSQL. Der Stand steht in
+der portablen Tabelle ``schema_migrations`` (siehe :mod:`app.db_schema`).
+
+Jede Migration ist mehrfach ausführbar, ohne Schaden anzurichten, läuft nur
+vorwärts und erhält vorhandene Daten. Eine einmal veröffentlichte Migration
+wird nie geändert und nie umnummeriert – sonst liefe sie auf bestehenden
+Installationen nicht mehr oder ein zweites Mal.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ MigrationFn = Callable[[Engine], None]
 
 
 def _baseline(_engine: Engine) -> None:
-    """Baseline migration keeps a hook for future schema steps."""
+    """Ausgangspunkt der Zählung; hält den Platz für spätere Schritte frei."""
     return None
 
 
@@ -61,12 +65,12 @@ def _add_group_time_report_permission(engine: Engine) -> None:
 def _add_time_entry_external_columns(engine: Engine) -> None:
     db_schema.add_column(engine, "time_entries", "source", "VARCHAR(255)")
     db_schema.add_column(engine, "time_entries", "external_id", "VARCHAR(255)")
-    # The unique index is created dialect-safely by ensure_schema/create_all.
+    # Den eindeutigen Index legen ``ensure_schema``/``create_all`` dialektsicher an.
 
 
 def _add_user_auto_break_deduction(engine: Engine) -> None:
-    # Default 1 keeps the existing behaviour (statutory breaks applied) for
-    # every user created before this migration.
+    # Vorgabe 1 erhält das bisherige Verhalten – gesetzliche Pausen werden
+    # abgezogen – für jeden Benutzer, den es vor dieser Migration schon gab.
     db_schema.add_column(
         engine, "users", "auto_break_deduction", "BOOLEAN", default="1", backfill_null_to="1"
     )
@@ -91,10 +95,10 @@ def _add_holiday_source(engine: Engine) -> None:
 
 
 def _add_backup_job_tables(engine: Engine) -> None:
-    """Create the job-based backup tables (§0.9.2) if they do not exist yet.
+    """Tabellen der auftragsbasierten Sicherung anlegen, falls sie fehlen.
 
-    ``create_all`` only adds missing tables and is dialect-agnostic, so this is
-    idempotent and safe on both SQLite and MySQL.
+    ``create_all`` ergänzt ausschließlich fehlende Tabellen und kennt keinen
+    Dialektunterschied – der Schritt ist damit beliebig oft wiederholbar.
     """
 
     models.Base.metadata.create_all(
@@ -104,26 +108,27 @@ def _add_backup_job_tables(engine: Engine) -> None:
 
 
 def _add_restore_history_table(engine: Engine) -> None:
-    """Create the restore history table (§0.9.4)."""
+    """Historientabelle der Rücksicherungen anlegen."""
 
     models.Base.metadata.create_all(bind=engine, tables=[models.RestoreRun.__table__])
 
 
 def _add_restore_run_details(engine: Engine) -> None:
-    """Add duration/log-token columns to the restore history (§0.9.5)."""
+    """Dauer und Protokollkennung in der Rücksicherungshistorie ergänzen."""
 
     db_schema.add_column(engine, "restore_runs", "duration_seconds", "FLOAT", default="0")
     db_schema.add_column(engine, "restore_runs", "log_token", "VARCHAR(40)", default="''")
 
 
 def _add_terminal_tables(engine: Engine) -> None:
-    """Create the generic terminal-management tables (§0.9.8).
+    """Tabellen der allgemeinen Terminalverwaltung anlegen.
 
-    ``create_all`` only adds missing tables and is dialect-agnostic, so this is
-    idempotent and safe on SQLite and MySQL/MariaDB/PostgreSQL. Afterwards the
-    legacy ``config/timemoto.json`` (if present) is migrated into a terminal row
-    so existing TimeMoto installations keep working without reconfiguration and
-    without any data loss.
+    ``create_all`` ergänzt ausschließlich fehlende Tabellen und kennt keinen
+    Dialektunterschied – der Schritt ist beliebig oft wiederholbar.
+
+    Anschließend zieht eine vorhandene ``config/timemoto.json`` aus der Zeit
+    davor in eine Terminalzeile um. Bestehende TimeMoto-Installationen laufen
+    dadurch ohne neue Einrichtung und ohne Datenverlust weiter.
     """
 
     models.Base.metadata.create_all(
@@ -134,11 +139,12 @@ def _add_terminal_tables(engine: Engine) -> None:
 
 
 def _migrate_legacy_timemoto_config(engine: Engine) -> None:
-    """Carry a pre-0.9.8 ``timemoto.json`` over into the terminals table.
+    """Eine ``timemoto.json`` aus der Zeit vor 0.9.8 in die Terminaltabelle holen.
 
-    Looks in the canonical config volume (``paths.CONFIG_DIR``) as well as the
-    package-local ``config`` directory the old integration historically used, so
-    the existing TimeMoto setup survives the upgrade without reconfiguration.
+    Gesucht wird im regulären config-Volume (``paths.CONFIG_DIR``) und
+    zusätzlich im paketeigenen ``config``-Verzeichnis, das die alte Anbindung
+    benutzte. So übersteht eine bestehende TimeMoto-Einrichtung das Upgrade,
+    ohne neu eingerichtet werden zu müssen.
     """
 
     import json

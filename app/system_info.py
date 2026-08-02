@@ -1,4 +1,4 @@
-"""System status, backup and health information for the administration area."""
+"""Systemzustand, Sicherungen und Gesundheitsdaten für die Administration."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def database_status(db: Session) -> dict[str, object]:
     except Exception:  # pragma: no cover
         table_count = 0
 
-    # Logical type chosen by the operator (sqlite/mysql/mariadb/postgresql).
+    # Vom Betrieb gewählter Datenbanktyp (sqlite/mysql/mariadb/postgresql).
     logical = getattr(database, "DB_TYPE", backend)
     type_labels = {
         "sqlite": "SQLite",
@@ -93,7 +93,7 @@ def database_status(db: Session) -> dict[str, object]:
 
 
 def database_log_overview() -> dict[str, object]:
-    """Parse ``database.log`` for the latest migration / error timestamps (§12)."""
+    """``database.log`` nach den letzten Migrations- und Fehlerzeitpunkten durchsehen."""
     last_migration = None
     last_success = None
     last_error = None
@@ -169,12 +169,13 @@ def pwa_status() -> dict[str, object]:
 
 
 def processed_offline_actions(db: Session) -> int:
-    """Lifetime count of offline actions the server has *already* processed.
+    """Gesamtzahl der Offline-Vorgänge, die der Server **bereits** verarbeitet hat.
 
-    ``MobileSyncAction`` is an idempotency/dedup log written *after* a punch or
-    vacation action has been applied – it is NOT a pending queue. The actual
-    pending queue lives only in the client's IndexedDB and is drained as soon as
-    the device is online.
+    ``MobileSyncAction`` ist ein Protokoll gegen Doppelverarbeitung und wird
+    **nach** einer angewendeten Stempelung oder einem Urlaubsvorgang
+    geschrieben – es ist **keine** Warteschlange. Die eigentliche Warteschlange
+    liegt allein in der IndexedDB des Geräts und wird abgearbeitet, sobald es
+    wieder online ist.
     """
     try:
         return int(db.query(func.count(models.MobileSyncAction.id)).scalar() or 0)
@@ -190,12 +191,12 @@ def last_offline_action_at(db: Session):
 
 
 def sync_diagnostics(db: Session) -> dict[str, object]:
-    """Accurate synchronisation diagnostics (§24/§26).
+    """Belastbare Angaben zur Synchronisation.
 
-    The server processes offline actions synchronously, so there is no
-    server-side backlog: ``open_actions`` is always 0. We additionally surface
-    the lifetime count of processed offline actions, the last successful sync
-    and recent sync failures (parsed from ``sync.log``).
+    Der Server arbeitet Offline-Vorgänge sofort ab; einen serverseitigen Rückstau
+    gibt es deshalb nicht – ``open_actions`` ist immer 0. Zusätzlich ausgewiesen
+    werden die Gesamtzahl verarbeiteter Vorgänge, die letzte erfolgreiche
+    Synchronisation und die jüngsten Fehlversuche aus ``sync.log``.
     """
 
     from . import log_tools
@@ -313,7 +314,7 @@ def system_status(db: Session) -> dict[str, object]:
 
 
 def health_report(db: Session) -> dict[str, object]:
-    """Detailed health information for the /health endpoint."""
+    """Ausführliche Zustandsangaben für den Endpunkt ``/health``."""
 
     checks: dict[str, object] = {}
     db_reachable = True
@@ -362,7 +363,7 @@ def latest_backup_run(db: Session):
 
 
 def last_migration_run() -> Optional[str]:
-    """Timestamp of the most recently applied migration, if available."""
+    """Zeitpunkt der zuletzt angewendeten Migration, sofern bekannt."""
     try:
         from . import db_schema
 
@@ -376,7 +377,7 @@ def last_migration_run() -> Optional[str]:
 
 
 def backup_overview(db: Session) -> dict[str, object]:
-    """Backup/restore highlights for the system status page (§20)."""
+    """Eckdaten zu Sicherung und Rücksicherung für die Systemübersicht."""
     from . import crud, log_tools, restore_jobs
 
     runs = crud.get_backup_runs(db, limit=200)

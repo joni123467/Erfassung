@@ -13,14 +13,14 @@ from .schemas import VacationSummary
 
 try:
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 except ImportError as exc:  # pragma: no cover - handled at runtime when dependency missing
     colors = None  # type: ignore[assignment]
-    TA_CENTER = TA_LEFT = TA_RIGHT = None  # type: ignore[assignment]
+    TA_CENTER = TA_RIGHT = None  # type: ignore[assignment]
     A4 = None  # type: ignore[assignment]
     ParagraphStyle = None  # type: ignore[assignment]
     mm = None  # type: ignore[assignment]
@@ -83,11 +83,12 @@ def _vacation_status_label(status: str) -> str:
     return _VACATION_STATUS_LABELS.get(status, str(status).title())
 
 
-# ── Shared layout system ─────────────────────────────────────────────────────
-# Every table cell is rendered as a Paragraph so long content WRAPS inside its
-# column instead of overflowing into the neighbour cell (the root cause of the
-# previous overlap/cut-off issues). Compact margins, font sizes and paddings
-# raise the information density without sacrificing readability.
+# ── Gemeinsames Layout ───────────────────────────────────────────────────────
+# Jede Tabellenzelle wird als Absatz gesetzt. Nur so bricht langer Inhalt
+# **innerhalb** seiner Spalte um, statt in die Nachbarzelle zu laufen – daher
+# kamen die früheren Überlappungen und abgeschnittenen Texte. Knappe Ränder,
+# Schriftgrößen und Innenabstände erhöhen die Informationsdichte, ohne die
+# Lesbarkeit zu opfern.
 
 _MARGIN_X = 14
 _MARGIN_TOP = 12
@@ -282,7 +283,7 @@ def _page_footer(left_text: str, right_text: str):
         canvas.setFont("Helvetica", 7.5)
         canvas.setFillColor(colors.HexColor(_COLOR_MUTED))
         y_position = 9 * mm
-        # keep the left slot clear of the centred page number
+        # Linken Platz freihalten, damit die mittige Seitenzahl nicht kollidiert.
         max_left = document.pagesize[0] / 2 - 14 * mm - document.leftMargin
         canvas.drawString(
             document.leftMargin,
@@ -487,7 +488,7 @@ def export_time_overview_pdf(
         story.append(
             _data_table(
                 styles,
-                header=["Zeitraum", "Typ", "Status", "Tage", "Anzurechnung", "Kommentar"],
+                header=["Zeitraum", "Typ", "Status", "Tage", "Angerechnete Zeit", "Kommentar"],
                 rows=vacation_rows,
                 fractions=[0.25, 0.15, 0.15, 0.07, 0.13, 0.25],
                 aligns=["L", "L", "L", "C", "R", "L"],
@@ -513,11 +514,13 @@ def export_user_summary_pdf(
     totals: dict[str, int],
     include_entries: bool = False,
 ) -> BytesIO:
-    """Per-user evaluation: one row per selected user, layout consistent
-    with the other reports (same style system).
+    """Auswertung je Person: eine Zeile pro ausgewählter Person.
 
-    With ``include_entries`` the individual stamp times of every listed user
-    are appended – the same table the users get in their own overview.
+    Das Layout entspricht den übrigen Berichten.
+
+    Mit ``include_entries`` werden zusätzlich die einzelnen Stempelzeiten jeder
+    aufgeführten Person angehängt – dieselbe Tabelle, die die Person auch in
+    ihrer eigenen Übersicht bekommt.
     """
     _ensure_reportlab()
 
@@ -778,7 +781,7 @@ def export_team_overview_pdf(
         story.append(
             _data_table(
                 styles,
-                header=["Mitarbeiter", "Zeitraum", "Typ", "Status", "Tage", "Anzurechnung", "Kommentar"],
+                header=["Mitarbeiter", "Zeitraum", "Typ", "Status", "Tage", "Angerechnete Zeit", "Kommentar"],
                 rows=vacation_rows,
                 fractions=[0.16, 0.21, 0.12, 0.12, 0.06, 0.13, 0.20],
                 aligns=["L", "L", "L", "L", "C", "R", "L"],

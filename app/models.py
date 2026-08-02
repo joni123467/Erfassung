@@ -219,6 +219,11 @@ class User(Base):
     rfid_tag = Column(String(255), unique=True, nullable=True)
     monthly_overtime_limit_minutes = Column(Integer, nullable=True)
     auto_break_deduction = Column(Boolean, default=True)
+    #: Stillgelegt seit 0.20.1 – „Remote" ist ein Arbeitsort wie jeder andere
+    #: und steht allen offen (Begründung in ``main._resolve_work_location``).
+    #: Die Spalte bleibt: Sie zu entfernen wäre über SQLite, MySQL/MariaDB und
+    #: PostgreSQL hinweg nicht datenerhaltend-portabel, und der gespeicherte
+    #: Wert bliebe für eine spätere echte Berechtigung auswertbar.
     remote_flag_enabled = Column(Boolean, default=False)
     is_active = Column(Boolean, nullable=False, default=True, server_default="1")
     deactivated_at = Column(DateTime, nullable=True)
@@ -1170,13 +1175,16 @@ class BackupRun(Base):
 
 
 class Terminal(Base):
-    """A time-recording terminal managed through the generic terminal area (§0.9.8).
+    """Ein Zeiterfassungsterminal aus der allgemeinen Terminalverwaltung.
 
-    The same row describes any terminal type via a driver key (``type``). Driver
-    specific endpoints/options live in ``config_json`` so new terminal types can
-    be added without schema changes. The password column holds either a device
-    password or an API key. Credentials are persisted (unattended sync) but never
-    written to a log file.
+    Dieselbe Zeile beschreibt jeden Terminaltyp; welcher es ist, sagt die
+    Treiberkennung ``type``. Treibereigene Endpunkte und Einstellungen stehen in
+    ``config_json`` – ein neuer Terminaltyp braucht deshalb keine
+    Schemaänderung.
+
+    Die Kennwortspalte trägt entweder ein Gerätekennwort oder einen
+    API-Schlüssel. Zugangsdaten werden gespeichert, damit der Abgleich ohne
+    Zutun läuft, stehen aber **nie** in einer Protokolldatei.
     """
 
     __tablename__ = "terminals"
