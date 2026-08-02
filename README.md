@@ -2,7 +2,16 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.2`
+**Version:** `0.20.3`
+
+> Seit 0.20.3: **„Remote" bleibt auch nach der Firmenauswahl in der Liste.**
+> 0.20.1 hatte das Attribut `data-allow-remote` aus der Vorlage entfernt, die
+> zugehörige Abfrage in `static/app.js` blieb aber stehen – sie lieferte damit
+> immer `false`. Der erste Seitenaufbau war richtig, erst der Firmenwechsel
+> baute die Auswahl im Browser ohne „Remote" neu auf. Betroffen waren *Auftrag
+> starten* und *Zeitbuchung bearbeiten* im Web; die App und das Stempeln ohne
+> Firma nicht. Kein Schemawechsel, keine Datenänderung. Details in
+> [`docs/RELEASE_NOTES_0.20.3.md`](docs/RELEASE_NOTES_0.20.3.md).
 
 > Seit 0.20.2: **Die Jahresprüfung für Sonn- und Nachtarbeit rechnet an drei
 > Stellen genauer.** Exakt zwei Stunden Nachtzeit sind **keine** Nachtarbeit
@@ -736,6 +745,13 @@ Einsatzort eine Liste von Arbeitsorten und wird seit 0.14.1 immer angezeigt –
 das Kennzeichen entfernte damit nur noch **einen Eintrag** aus dieser Liste,
 während seine Beschriftung „Einsatzort erfassen" weiterhin das Ganze versprach.
 Wer das las, ließ den Haken weg, und „Remote" verschwand unbemerkt.
+
+0.20.3 hat dazu einen Nachzügler beseitigt: Die Auswahl wird zweimal befüllt –
+serverseitig beim Rendern und im Browser, sobald eine Firma gewählt wird, weil
+sich dann die firmengebundenen Standorte ändern. Der clientseitige Aufbau
+fragte noch das Attribut ab, das 0.20.1 aus der Vorlage genommen hatte, und
+ließ „Remote" nach jedem Firmenwechsel weg. Beide Wege bieten jetzt dieselben
+festen Optionen an; `tests/test_v0203.py` prüft das für Vorlage **und** Skript.
 
 > **Offene Entscheidung:** Soll es eine personenbezogene Erlaubnis für
 > Remote-Arbeit geben, gehört sie als `Own.Time.Remote` ins Rollenmodell und
