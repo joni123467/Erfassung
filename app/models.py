@@ -243,6 +243,14 @@ class User(Base):
 
     groups = relationship("Group", secondary=user_groups, back_populates="users", lazy="selectin")
     roles = relationship("Role", secondary=user_roles, back_populates="users", lazy="selectin")
+    work_schedules = relationship(
+        "WorkSchedule", foreign_keys="WorkSchedule.user_id", lazy="selectin",
+        order_by="WorkSchedule.valid_from", cascade="all, delete-orphan",
+    )
+    vacation_entitlement_entries = relationship(
+        "VacationEntitlementEntry", foreign_keys="VacationEntitlementEntry.user_id",
+        lazy="selectin", cascade="all, delete-orphan",
+    )
     # ``foreign_keys`` ist nötig, seit ``time_entries`` einen zweiten Verweis
     # auf ``users`` trägt (``cancelled_by_id``); sonst bliebe die Zuordnung
     # mehrdeutig.
@@ -1082,8 +1090,77 @@ class VacationRequest(Base):
     # Bei einem eintaegigen Antrag genuegt eines der beiden Kennzeichen.
     half_day_start = Column(Boolean, default=False, nullable=False)
     half_day_end = Column(Boolean, default=False, nullable=False)
+    # Allgemeine Abwesenheitsart. ``vacation`` erhält das bisherige Verhalten;
+    # weitere Typen können kalender- und auswertungsfähig ergänzt werden, ohne
+    # für jede Art eine neue Tabelle anzulegen.
+    absence_type_key = Column(String(64), default="vacation", nullable=False)
 
     user = relationship("User", back_populates="vacation_requests")
+
+
+class WorkSchedule(Base):
+    """Versionierter Wochenarbeitsplan einer Person (ab 0.20.3)."""
+
+    __tablename__ = "work_schedules"
+    __table_args__ = (
+        UniqueConstraint("user_id", "valid_from", name="uq_work_schedule_user_from"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    valid_from = Column(Date, nullable=False, index=True)
+    valid_until = Column(Date, nullable=True, index=True)
+    name = Column(String(255), nullable=False, default="Regelarbeitszeit")
+    monday_minutes = Column(Integer, nullable=False, default=480)
+    tuesday_minutes = Column(Integer, nullable=False, default=480)
+    wednesday_minutes = Column(Integer, nullable=False, default=480)
+    thursday_minutes = Column(Integer, nullable=False, default=480)
+    friday_minutes = Column(Integer, nullable=False, default=480)
+    saturday_minutes = Column(Integer, nullable=False, default=0)
+    sunday_minutes = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AbsenceType(Base):
+    """Konfigurierbare, datensparsame Abwesenheitsart."""
+
+    __tablename__ = "absence_types"
+    key = Column(String(64), primary_key=True)
+    label = Column(String(255), nullable=False)
+    requires_approval = Column(Boolean, nullable=False, default=True)
+    deducts_vacation = Column(Boolean, nullable=False, default=False)
+    deducts_overtime = Column(Boolean, nullable=False, default=False)
+    credits_target_time = Column(Boolean, nullable=False, default=True)
+    confidential = Column(Boolean, nullable=False, default=False)
+    active = Column(Boolean, nullable=False, default=True)
+
+
+class VacationEntitlementEntry(Base):
+    """Append-only Buchung im Urlaubskonto mit optionalem Verfallsdatum."""
+
+    __tablename__ = "vacation_entitlement_entries"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    year = Column(Integer, nullable=False, index=True)
+    days = Column(Float, nullable=False)
+    kind = Column(String(32), nullable=False, default="adjustment")
+    reason = Column(String(500), nullable=False, default="")
+    expires_on = Column(Date, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class CalendarFeed(Base):
+    """Widerrufbarer ICS-Feed; gespeichert wird ausschließlich der Token-Hash."""
+
+    __tablename__ = "calendar_feeds"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    scope = Column(String(16), nullable=False, default="self")
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    revoked_at = Column(DateTime, nullable=True)
 
 
 class Holiday(Base):

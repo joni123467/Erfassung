@@ -5,7 +5,7 @@
 {% include "records/_nav.html" %}
 <section class="card records-hero">
     <div class="card-header">
-        <h1>Urlaubsübersicht</h1>
+        <h1>Urlaubsübersicht</h1><a class="button ghost" href="/records/vacations/calendar">Kalender</a>
     </div>
     <dl class="dashboard-summary-list records-summary">
         <div class="dashboard-summary-list__item">
@@ -47,6 +47,14 @@
     </div>
     <form method="post" action="/vacations" class="form-grid">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label>
+            Abwesenheitsart
+            <select name="absence_type_key">
+                {% for type in absence_types %}
+                    <option value="{{ type.key }}">{{ type.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
         <label>
             Startdatum
             <input type="date" name="start_date" required>
@@ -100,6 +108,7 @@
             <thead>
             <tr>
                 <th>Zeitraum</th>
+                <th>Art</th>
                 <th>Status</th>
                 <th>Überstundenabbau</th>
                 <th>Kommentar</th>
@@ -110,6 +119,7 @@
             {% for vacation in vacations %}
                 <tr class="status-{{ vacation.status }}">
                     <td>{{ vacation.start_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_start %} <small>(½)</small>{% endif %}{% if vacation.start_date != vacation.end_date %} – {{ vacation.end_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_end %} <small>(½)</small>{% endif %}{% endif %}</td>
+                    <td>{{ vacation.absence_type_key|replace('vacation', 'Urlaub')|replace('overtime', 'Überstundenabbau')|replace('sick', 'Abwesend')|replace('special', 'Sonderurlaub')|replace('parental', 'Elternzeit')|replace('unpaid', 'Unbezahlt') }}</td>
                     <td class="status-label status-{{ vacation.status }}">
                         {% if vacation.status == 'approved' %}
                             Genehmigt
@@ -145,7 +155,7 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="5">Keine Urlaubsanträge vorhanden.</td></tr>
+                <tr><td colspan="6">Keine Abwesenheitsanträge vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>

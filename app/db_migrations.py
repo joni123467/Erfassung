@@ -869,6 +869,39 @@ def _add_employment_period(engine: Engine) -> None:
     db_schema.add_column(engine, "users", "employment_end_date", "DATE")
 
 
+def _add_planning_and_calendar(engine: Engine) -> None:
+    """Arbeitspläne, Abwesenheiten, Urlaubskonto und ICS-Feeds (0.20.3)."""
+    for table_name in (
+        "work_schedules", "absence_types", "vacation_entitlement_entries", "calendar_feeds"
+    ):
+        models.Base.metadata.tables[table_name].create(bind=engine, checkfirst=True)
+    if db_schema.has_table(engine, "vacation_requests"):
+        db_schema.add_column(
+            engine, "vacation_requests", "absence_type_key", "VARCHAR(64) NOT NULL",
+            default="'vacation'", backfill_null_to="'vacation'",
+        )
+    defaults = (
+        ("vacation", "Urlaub", 1, 1, 0, 1, 0),
+        ("overtime", "Überstundenabbau", 1, 0, 1, 1, 0),
+        ("sick", "Abwesend", 0, 0, 0, 1, 1),
+        ("special", "Sonderurlaub", 1, 0, 0, 1, 0),
+        ("parental", "Elternzeit", 1, 0, 0, 0, 1),
+        ("unpaid", "Unbezahlte Freistellung", 1, 0, 0, 0, 0),
+    )
+    with engine.begin() as connection:
+        for row in defaults:
+            exists = connection.execute(
+                text("SELECT 1 FROM absence_types WHERE key = :key"), {"key": row[0]}
+            ).first()
+            if not exists:
+                connection.execute(text(
+                    "INSERT INTO absence_types (key,label,requires_approval,deducts_vacation,"
+                    "deducts_overtime,credits_target_time,confidential,active) "
+                    "VALUES (:key,:label,:approval,:vacation,:overtime,:credit,:confidential,1)"
+                ), dict(key=row[0], label=row[1], approval=row[2], vacation=row[3],
+                        overtime=row[4], credit=row[5], confidential=row[6]))
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -892,6 +925,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (20, _add_compliance_logs),
     (21, _add_user_deactivation),
     (22, _add_employment_period),
+    (23, _add_planning_and_calendar),
 ]
 
 

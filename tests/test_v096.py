@@ -138,7 +138,8 @@ def test_user_edit_shows_qr_code(client):
     login(client)
     html = client.get("/admin/users/1").text
     assert "user-qr" in html
-    assert "create-qr-code" in html
+    assert "/mobile-qr.png?size=200" in html
+    assert "api.qrserver.com" not in html
     assert "Mobile Anmeldung" in html
     assert "Neu generieren" in html
 

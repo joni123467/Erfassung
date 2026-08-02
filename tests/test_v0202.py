@@ -449,12 +449,12 @@ def test_server_refuses_a_reversed_period_in_the_form(client):
 # ── 5. Migration 22 ───────────────────────────────────────────────────────
 
 
-def test_migration_22_is_the_last_entry(main):
+def test_migration_23_is_the_last_entry(main):
     from app import db_migrations
 
     version, function = db_migrations.MIGRATIONS[-1]
-    assert version == 22
-    assert function is db_migrations._add_employment_period
+    assert version == 23
+    assert function is db_migrations._add_planning_and_calendar
 
 
 def test_columns_exist_after_startup(main):

@@ -4,13 +4,13 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 
 **Version:** `0.20.3`
 
-> Seit 0.20.3: **„Remote" bleibt auch nach der Firmenauswahl in der Liste.**
-> 0.20.1 hatte das Attribut `data-allow-remote` aus der Vorlage entfernt, die
-> zugehörige Abfrage in `static/app.js` blieb aber stehen – sie lieferte damit
-> immer `false`. Der erste Seitenaufbau war richtig, erst der Firmenwechsel
-> baute die Auswahl im Browser ohne „Remote" neu auf. Betroffen waren *Auftrag
-> starten* und *Zeitbuchung bearbeiten* im Web; die App und das Stempeln ohne
-> Firma nicht. Kein Schemawechsel, keine Datenänderung. Details in
+> Seit 0.20.3: **Arbeitszeit- und Abwesenheitsplanung** – versionierte
+> Wochentags-Sollzeiten bilden Teilzeit, Vier-/Sechs-Tage-Woche und Samstagsarbeit
+> historisch korrekt ab. Persönlicher und datensparsamer Teamkalender,
+> widerrufbare iCalendar-Feeds, allgemeine Abwesenheitsarten und append-only
+> Anspruchsbuchungen erweitern die Urlaubsplanung. Mobile Login-QR-Codes werden
+> vollständig lokal erzeugt; Login-URLs fließen nicht mehr an `api.qrserver.com`
+> oder andere Dritte. Details in
 > [`docs/RELEASE_NOTES_0.20.3.md`](docs/RELEASE_NOTES_0.20.3.md).
 
 > Seit 0.20.2: **Die Jahresprüfung für Sonn- und Nachtarbeit rechnet an drei
@@ -1162,6 +1162,27 @@ Datenbankgrenzen hinweg.
 
 ## Urlaub
 
+### Arbeitszeitpläne, Abwesenheitskalender und iCalendar (seit 0.20.3)
+
+Unter *Administration → Benutzer → Person* können Arbeitszeitpläne mit einem
+Gültigkeitsbeginn und eigenen Sollstunden für Montag bis Sonntag angelegt
+werden. Der vorherige offene Plan endet automatisch am Vortag. Ohne Plan gilt
+für Bestandsdaten weiterhin die bisherige Mo–Fr-Berechnung.
+
+Der persönliche Kalender liegt unter `/records/vacations/calendar`, der
+datensparsame Teamkalender unter `/admin/vacations/calendar`. Vertrauliche
+Abwesenheiten und Teamfeeds zeigen ausschließlich „Abwesend"; Kommentare werden
+nie exportiert. Der Zusatzbaustein `calendar_sync` schaltet persönliche und
+Team-ICS-Feeds frei. Feed-Adressen enthalten ein widerrufbares Geheimnis, von
+dem die Datenbank nur SHA-256 speichert. Erfassung bleibt führend; der Feed ist
+lesend und verändert keine Anträge.
+
+Neben Urlaub und Überstundenabbau stehen Krankheit/„Abwesend", Sonderurlaub,
+Elternzeit und unbezahlte Freistellung als datensparsame Typen bereit. Das
+Urlaubskonto kann über begründete, append-only Zu-/Abbuchungen mit optionalem
+Verfallsdatum ergänzt werden; abgelaufene Buchungen erhöhen den verfügbaren
+Anspruch nicht mehr.
+
 Urlaubsanträge laufen über `/records/vacations`. Zusätzlich zu ganzen Tagen
 lassen sich **erster und letzter Tag halbieren** (seit 0.11.1): Beim Antrag
 stehen unter Start- und Enddatum je ein Häkchen „nur ein halber Tag". Bei einem
@@ -1263,6 +1284,7 @@ Zubuchbar sind vier Bausteine:
 | `vacation` | Urlaubsanträge, Urlaubskonten, Urlaubsfreigaben |
 | `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
 | `terminals` | RFID-Terminals und Geräte-Synchronisation |
+| `calendar_sync` | widerrufbare persönliche und Team-iCalendar-Feeds |
 
 Eine Lizenz ohne jeden Baustein ist damit eine reine **Stempel-Lizenz** – und
 genau so viel kann eine Installation ohne Lizenz auch.

@@ -7,56 +7,50 @@ die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [0.20.3] – 2026-08-02
 
-Repariert einen Folgefehler aus 0.20.1: Im Browser verschwand „Remote" aus der
-Einsatzortauswahl, sobald eine Firma gewählt wurde.
+### Hinzugefügt
 
-### Behoben – „Remote" verschwand nach der Firmenauswahl
+- Versionierte Arbeitszeitpläne mit Sollminuten je Wochentag; Teilzeit,
+  Vier-/Sechs-Tage-Woche und Samstagsarbeit fließen in Sollzeit, Urlaub und
+  Feiertagsgutschrift ein.
+- Persönlicher Abwesenheitskalender und datensparsamer Teamkalender.
+- Lizenzbaustein `calendar_sync` für persönliche und Team-ICS-Abonnements;
+  Feed-Tokens werden nur gehasht gespeichert.
+- Allgemeine Abwesenheitsarten mit Vertraulichkeits-, Genehmigungs-, Urlaubs-,
+  Überstunden- und Sollzeitmerkmalen.
+- Append-only Urlaubskontobuchungen mit Art, Begründung und optionalem
+  Verfallsdatum.
 
-Die Auswahl wird zweimal befüllt: serverseitig beim Rendern und im Browser,
-sobald eine Firma gewählt wird (`fillPicker()` in `static/app.js` baut die
-Liste neu auf, weil sich die firmengebundenen Standorte ändern).
+### Geändert
 
-0.20.1 hat das Attribut `data-allow-remote` aus der Vorlage entfernt, die
-zugehörige Abfrage `picker.hasAttribute('data-allow-remote')` blieb aber im
-Skript stehen und lieferte damit **immer** `false`. Der erste Seitenaufbau war
-noch richtig – erst der Firmenwechsel baute die Liste ohne „Remote" neu auf.
+- Mobile Login-QR-Codes entstehen serverseitig und lokal als PNG. Die bisherige
+  Übertragung der vollständigen, 30 Tage gültigen Login-URL an
+  `api.qrserver.com` entfällt vollständig.
+- Bestehende Benutzer ohne Arbeitszeitplan behalten exakt die bisherige
+  Mo–Fr-Berechnung.
 
-- Betroffen: **Auftrag starten** und **Zeitbuchung bearbeiten** im Web.
-- Nicht betroffen: Schnellstempeln ohne Firma und die App/Offline-Shell
-  (`/mobile`) – letztere rendert ihre Auswahl selbst.
-- Jetzt stehen „Vor Ort" und „Remote" **immer** in der Liste, server- wie
-  clientseitig, gefolgt von den Standorten der gewählten Firma. Ein bereits
-  gewählter firmengebundener Standort bleibt beim Neuaufbau erhalten.
+### Behoben
 
-Die Regressionstests aus 0.20.1 haben nicht angeschlagen, weil sie nur das vom
-Server gelieferte HTML geprüft haben – und das war durchgehend korrekt.
+- Urlaub, Feiertagsgutschrift und Monatssoll setzen nicht mehr pauschal fünf
+  identische Arbeitstage voraus, sobald ein Arbeitszeitplan gepflegt ist.
+- Vertrauliche Abwesenheitsarten geben in Teamkalendern und ICS-Feeds weder Art
+  noch Kommentar preis.
 
-### Tests
+### Datenbankänderungen
 
-`tests/test_v0203.py` (13 Tests) prüft nun **beide** Ebenen: das gerenderte
-HTML *und* den Quelltext von `static/app.js` (keine Attributabfrage mehr, die
-Literalliste enthält beide festen Optionen, Vorlage und Skript stimmen
-überein). Die Skripttests wurden gegen den Stand von 0.20.2 gegengeprüft und
-schlagen dort fehl. Ergänzend wurde die Auswahl nach der Firmenwahl in einem
-echten Browser ausgelesen.
+- Neue Tabellen `work_schedules`, `absence_types`,
+  `vacation_entitlement_entries` und `calendar_feeds`.
+- Neue Spalte `vacation_requests.absence_type_key VARCHAR(64) NOT NULL DEFAULT
+  'vacation'`.
 
-### Migration
+### Migrationshinweise
 
-Keine. Schema und gespeicherte Daten bleiben unverändert, die Schemaversion
-steht weiterhin auf 22.
-
-### Bekannt, nicht behoben
-
-Bei der Prüfung der übrigen Funktionen gefunden, beide älter als 0.20.1 und
-außerhalb dessen, was eine Fehlerkorrektur tragen sollte – Einzelheiten in
-[`docs/RELEASE_NOTES_0.20.3.md`](docs/RELEASE_NOTES_0.20.3.md):
-
-- Der QR-Code der mobilen Anmeldung wird von `api.qrserver.com` geladen; der
-  Anmelde-Link samt Token verlässt dabei die Installation, und in
-  abgeschotteten Netzen lädt das Bild nicht (seit 0.9.6).
-- Die Hinweisblasen (`.info-tip__bubble`) ragen auf 390 px breiten Displays
-  über den rechten Rand hinaus; gegengeprüft mit dem Stylesheet aus 0.20.0,
-  identische Werte.
+- Migration 23 (`_add_planning_and_calendar`) ist portabel, idempotent und
+  datenerhaltend. Bestehende Anträge werden als `vacation` nachbefüllt; neue
+  Tabellen werden nur fehlend angelegt und Standard-Abwesenheitsarten nur
+  fehlend ergänzt.
+- Logische Backups nehmen die neuen Metadatentabellen automatisch auf; bestehende
+  Archive bleiben wiederherstellbar und schließen anschließend über Migration
+  23 auf.
 
 ## [0.20.2] – 2026-08-02
 

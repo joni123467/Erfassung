@@ -316,9 +316,38 @@ def subject_export(db: Session, user: models.User) -> dict[str, Any]:
                 "von": _stamp(vacation.start_date),
                 "bis": _stamp(vacation.end_date),
                 "status": vacation.status,
+                "abwesenheitsart": vacation.absence_type_key,
                 "kommentar": vacation.comment,
             }
             for vacation in vacations
+        ],
+        "arbeitszeitplaene": [
+            {
+                "name": plan.name, "gueltig_ab": _stamp(plan.valid_from),
+                "gueltig_bis": _stamp(plan.valid_until),
+                "sollminuten": {
+                    "montag": plan.monday_minutes, "dienstag": plan.tuesday_minutes,
+                    "mittwoch": plan.wednesday_minutes, "donnerstag": plan.thursday_minutes,
+                    "freitag": plan.friday_minutes, "samstag": plan.saturday_minutes,
+                    "sonntag": plan.sunday_minutes,
+                },
+            }
+            for plan in user.work_schedules
+        ],
+        "urlaubsanspruch_buchungen": [
+            {
+                "jahr": item.year, "tage": item.days, "art": item.kind,
+                "begruendung": item.reason, "verfaellt_am": _stamp(item.expires_on),
+                "angelegt_am": _stamp(item.created_at),
+            }
+            for item in user.vacation_entitlement_entries
+        ],
+        "kalenderfeeds": [
+            {
+                "id": feed.id, "umfang": feed.scope, "aktiv": feed.active,
+                "angelegt_am": _stamp(feed.created_at), "widerrufen_am": _stamp(feed.revoked_at),
+            }
+            for feed in db.query(models.CalendarFeed).filter(models.CalendarFeed.user_id == user.id).all()
         ],
         "zugriffe_auf_diese_daten": [
             {
