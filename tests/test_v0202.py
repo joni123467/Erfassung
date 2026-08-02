@@ -161,12 +161,12 @@ def _report(year: int, reference: date, user_id: int | None = None) -> dict:
 
 
 def test_version_is_0202(client):
-    assert client.app.version == "0.20.2"
-    assert client.get("/health").json()["version"] == "0.20.2"
+    assert client.app.version == "0.20.3"
+    assert client.get("/health").json()["version"] == "0.20.3"
 
 
 def test_service_worker_carries_the_version(client):
-    assert "0.20.2" in client.get("/sw.js").text
+    assert "0.20.3" in client.get("/sw.js").text
 
 
 # ── 1. Nachtarbeitsgrenze: mehr als zwei Stunden ──────────────────────────

@@ -5,6 +5,59 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.20.3] – 2026-08-02
+
+Repariert einen Folgefehler aus 0.20.1: Im Browser verschwand „Remote" aus der
+Einsatzortauswahl, sobald eine Firma gewählt wurde.
+
+### Behoben – „Remote" verschwand nach der Firmenauswahl
+
+Die Auswahl wird zweimal befüllt: serverseitig beim Rendern und im Browser,
+sobald eine Firma gewählt wird (`fillPicker()` in `static/app.js` baut die
+Liste neu auf, weil sich die firmengebundenen Standorte ändern).
+
+0.20.1 hat das Attribut `data-allow-remote` aus der Vorlage entfernt, die
+zugehörige Abfrage `picker.hasAttribute('data-allow-remote')` blieb aber im
+Skript stehen und lieferte damit **immer** `false`. Der erste Seitenaufbau war
+noch richtig – erst der Firmenwechsel baute die Liste ohne „Remote" neu auf.
+
+- Betroffen: **Auftrag starten** und **Zeitbuchung bearbeiten** im Web.
+- Nicht betroffen: Schnellstempeln ohne Firma und die App/Offline-Shell
+  (`/mobile`) – letztere rendert ihre Auswahl selbst.
+- Jetzt stehen „Vor Ort" und „Remote" **immer** in der Liste, server- wie
+  clientseitig, gefolgt von den Standorten der gewählten Firma. Ein bereits
+  gewählter firmengebundener Standort bleibt beim Neuaufbau erhalten.
+
+Die Regressionstests aus 0.20.1 haben nicht angeschlagen, weil sie nur das vom
+Server gelieferte HTML geprüft haben – und das war durchgehend korrekt.
+
+### Tests
+
+`tests/test_v0203.py` (13 Tests) prüft nun **beide** Ebenen: das gerenderte
+HTML *und* den Quelltext von `static/app.js` (keine Attributabfrage mehr, die
+Literalliste enthält beide festen Optionen, Vorlage und Skript stimmen
+überein). Die Skripttests wurden gegen den Stand von 0.20.2 gegengeprüft und
+schlagen dort fehl. Ergänzend wurde die Auswahl nach der Firmenwahl in einem
+echten Browser ausgelesen.
+
+### Migration
+
+Keine. Schema und gespeicherte Daten bleiben unverändert, die Schemaversion
+steht weiterhin auf 22.
+
+### Bekannt, nicht behoben
+
+Bei der Prüfung der übrigen Funktionen gefunden, beide älter als 0.20.1 und
+außerhalb dessen, was eine Fehlerkorrektur tragen sollte – Einzelheiten in
+[`docs/RELEASE_NOTES_0.20.3.md`](docs/RELEASE_NOTES_0.20.3.md):
+
+- Der QR-Code der mobilen Anmeldung wird von `api.qrserver.com` geladen; der
+  Anmelde-Link samt Token verlässt dabei die Installation, und in
+  abgeschotteten Netzen lädt das Bild nicht (seit 0.9.6).
+- Die Hinweisblasen (`.info-tip__bubble`) ragen auf 390 px breiten Displays
+  über den rechten Rand hinaus; gegengeprüft mit dem Stylesheet aus 0.20.0,
+  identische Werte.
+
 ## [0.20.2] – 2026-08-02
 
 Korrigiert drei Grenzfälle der Jahresprüfung für Sonn- und Nachtarbeit aus
