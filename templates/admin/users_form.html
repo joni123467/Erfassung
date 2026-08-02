@@ -116,6 +116,32 @@
                             <input type="number" name="monthly_overtime_limit_hours" value="{{ (form_user.monthly_overtime_limit_minutes / 60)|round(2) if is_edit and form_user.monthly_overtime_limit_minutes is not none else '' }}" min="0" step="0.5" placeholder="Optional">
                             <span class="form-hint">Leer lassen, um kein Limit festzulegen.</span>
                         </label>
+                        {# Beschäftigungszeitraum (ab 0.20.2). Er begrenzt die
+                           Jahresprüfung der freien Sonntage nach § 11 Abs. 1
+                           ArbZG. Der Server prüft dieselbe Regel noch einmal –
+                           die Angaben im Markup sind Bedienkomfort. #}
+                        <label>
+                            Beschäftigungsbeginn
+                            <input type="date" name="employment_start_date"
+                                   value="{{ form_user.employment_start_date.isoformat() if is_edit and form_user.employment_start_date else '' }}">
+                        </label>
+                        <label>
+                            Beschäftigungsende
+                            <input type="date" name="employment_end_date"
+                                   value="{{ form_user.employment_end_date.isoformat() if is_edit and form_user.employment_end_date else '' }}">
+                        </label>
+                        <p class="form-hint user-form__hint">
+                            Beide Angaben bestimmen den anteiligen Prüfzeitraum für die
+                            freien Sonntage: Sonntage vor dem Eintritt oder nach dem
+                            Austritt zählen nicht als beschäftigungsfrei. Das Ende ist
+                            optional und darf nicht vor dem Beginn liegen.
+                        </p>
+                        <p class="form-hint user-form__hint">
+                            <strong>Ohne Beschäftigungsbeginn ist kein positives
+                            Prüfurteil möglich.</strong> Die Regelübersicht weist dann
+                            „Beschäftigungsbeginn fehlt“ aus, statt ein erfülltes
+                            Sonntagsminimum zu behaupten, das die Daten nicht hergeben.
+                        </p>
                     </fieldset>
                     <fieldset class="user-form__section user-form__section--stacked">
                         <legend>Urlaubsregeln</legend>

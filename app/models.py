@@ -228,6 +228,18 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="1")
     deactivated_at = Column(DateTime, nullable=True)
     deactivation_reason = Column(String(500), nullable=True)
+    #: Beschäftigungszeitraum (ab 0.20.2). Er begrenzt die Jahresprüfung der
+    #: freien Sonntage nach § 11 Abs. 1 ArbZG: Sonntage vor dem Eintritt oder
+    #: nach dem Austritt sind keine „beschäftigungsfreien" Sonntage, weil in
+    #: dieser Zeit gar kein Beschäftigungsverhältnis bestand.
+    #:
+    #: Beide Felder bleiben bewusst ``NULL``-fähig. Bestandskonten bekommen bei
+    #: der Migration **kein erfundenes Eintrittsdatum** – ein geratenes Datum
+    #: wäre in einem gesetzlichen Nachweis schlimmer als eine ehrliche Lücke.
+    #: Ohne Beginn weist die Anwendung deshalb „Beschäftigungsbeginn fehlt" aus
+    #: und trifft kein positives Prüfurteil.
+    employment_start_date = Column(Date, nullable=True)
+    employment_end_date = Column(Date, nullable=True)
 
     groups = relationship("Group", secondary=user_groups, back_populates="users", lazy="selectin")
     roles = relationship("Role", secondary=user_roles, back_populates="users", lazy="selectin")

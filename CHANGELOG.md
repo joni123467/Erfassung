@@ -5,6 +5,81 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.20.2] – 2026-08-02
+
+Korrigiert drei Grenzfälle der Jahresprüfung für Sonn- und Nachtarbeit aus
+0.20.0. Alle drei führten dazu, dass die Anwendung eine Aussage traf, die die
+Daten nicht hergaben.
+
+### Hinzugefügt
+
+- **Beschäftigungszeitraum am Benutzer**: `employment_start_date` und
+  `employment_end_date` (beide `DATE NULL`), pflegbar unter Administration →
+  Benutzer → *Person* → **Arbeitszeit**. Beide Werte begrenzen den
+  Prüfzeitraum der freien Sonntage.
+- `annual_compliance_report(...)` liefert zusätzlich
+  `employment_period_known`, `employment_start_date`, `employment_end_date`,
+  `period_start` und `period_end`.
+- Neuer Status in der Regelübersicht: **„Beschäftigungsbeginn fehlt"**.
+
+### Behoben – Nachtarbeitsgrenze war um eine Minute zu großzügig
+
+§ 2 Abs. 4 ArbZG verlangt Arbeit, die **mehr als** zwei Stunden der Nachtzeit
+umfasst. Der Vergleich stand auf `>=`.
+
+- **Exakt 120 Nachtminuten genügen nicht**; erst ab 121 Minuten liegt
+  Nachtarbeit vor.
+- Die Schwelle wird an genau **einer** Stelle ausgewertet
+  (`compliance.is_night_work`), damit Tagesfeststellung (§ 6 Abs. 2) und
+  Jahreszählung der 48 Tage (§ 2 Abs. 5) nicht auseinanderlaufen.
+- Unverändert: Nachtzeit 23:00–06:00 Uhr, Pausen werden herausgerechnet,
+  gerechnet wird über UTC und die gespeicherte Buchungszeitzone.
+
+### Behoben – Sonntagsprüfung kannte den Beschäftigungszeitraum nicht
+
+Die Zählung lief über das ganze Kalenderjahr. Wer im November eintrat, bekam
+die Sonntage von Januar bis Oktober als „beschäftigungsfrei" gutgeschrieben.
+
+- Prüfzeitraum ist jetzt der Schnitt aus Kalenderjahr und
+  Beschäftigungsverhältnis.
+- `required_free_sundays` ist `min(15, Sonntage im Zeitraum)` – ein
+  unerfüllbares Soll wäre keine brauchbare Aussage.
+- **Ohne Beschäftigungsbeginn kein positives Prüfurteil**: Weder
+  „Sonntagsminimum erfüllt" noch ein Verstoß werden behauptet.
+- Ende vor Beginn wird **serverseitig** abgewiesen, nicht nur im Formular.
+
+### Behoben – Jahreswechsel
+
+Eine am 31. Dezember begonnene Schicht reicht in den 1. Januar. Ist das ein
+Sonntag, gilt er im neuen Jahr als gearbeitet. Geladen wird jetzt ab dem
+**Vortag** des Zeitraumbeginns; zugeordnet wird über die tatsächlichen lokalen
+Arbeitsintervalle statt über `work_date`. Der mitgeladene Vortag zählt nicht
+als Nachtarbeitstag des neuen Jahres.
+
+### Datenbankänderungen
+
+- `users.employment_start_date` – `DATE NULL`
+- `users.employment_end_date` – `DATE NULL`
+
+### Migrationshinweise
+
+- **Migration 22** (`_add_employment_period`) ergänzt beide Spalten über
+  `db_schema.add_column`: portabel für SQLite, MySQL/MariaDB und PostgreSQL,
+  beliebig oft ausführbar und datenerhaltend.
+- **Bestandskonten behalten `NULL`.** Es wird ausdrücklich **kein**
+  Eintrittsdatum erfunden – ein geratenes Datum wäre in einem gesetzlichen
+  Nachweis schlimmer als eine ehrliche Lücke. Die Übersicht weist für diese
+  Konten „Beschäftigungsbeginn fehlt" aus, bis das Datum gepflegt wird.
+- Derselbe idempotente Reparaturpfad steht in `ensure_schema()`.
+- Bestehende Migrationen wurden weder verändert noch umnummeriert.
+
+### Weiterhin nicht maschinell entscheidbar
+
+Wechselschicht, die Bäckerei-/Konditorei-Nachtzeit, Tarifverträge und
+Betriebsvereinbarungen, behördliche Bewilligungen, arbeitsmedizinische Vorsorge
+nach § 6 Abs. 3 sowie Zuschlags- und Freizeitausgleich nach § 6 Abs. 5 ArbZG
+bleiben eine menschliche Einordnung.
+
 ## [0.20.1] – 2026-08-02
 
 Pflegeversion: gemeldete Bedienfehler, durchgängig deutsche Ausgabe und

@@ -164,8 +164,28 @@ def _subtract(
 
 NIGHT_START = time(23, 0)
 NIGHT_END = time(6, 0)
+#: § 2 Abs. 4 ArbZG: Nachtarbeit ist Arbeit, die **mehr als** zwei Stunden der
+#: Nachtzeit umfasst. Exakt 120 Minuten genügen also **nicht** – erst ab 121
+#: Minuten liegt Nachtarbeit vor. Bis 0.20.1 stand hier ein ``>=``-Vergleich,
+#: der eine punktgenaue Zweistundenschicht fälschlich als Nachtarbeit führte.
+#:
+#: Die Schwelle wird an genau einer Stelle ausgewertet
+#: (:func:`is_night_work`), damit Tagesfeststellung und Jahreszählung nie
+#: auseinanderlaufen können.
 NIGHT_WORK_THRESHOLD_MINUTES = 120
+#: Ab wie vielen Nachtarbeitstagen im Kalenderjahr greift das Indiz für die
+#: Nachtarbeitnehmereigenschaft (§ 2 Abs. 5 ArbZG)?
+NIGHT_WORKER_DAY_THRESHOLD = 48
 FREE_SUNDAYS_REQUIRED = 15
+
+
+def is_night_work(minutes: int) -> bool:
+    """Liegt bei diesen Nachtminuten Nachtarbeit im Sinne des § 2 Abs. 4 vor?
+
+    „Mehr als zwei Stunden" heißt: 120 Minuten reichen nicht, 121 reichen.
+    Einzige Auswertung der Schwelle – Tages- und Jahresprüfung teilen sie sich.
+    """
+    return minutes > NIGHT_WORK_THRESHOLD_MINUTES
 
 
 def night_minutes(entries: Iterable[models.TimeEntry]) -> int:
@@ -507,7 +527,7 @@ def evaluate_day(
         })
 
     nightly = night_minutes(entries)
-    if nightly >= NIGHT_WORK_THRESHOLD_MINUTES and total > models.MAX_DAILY_MINUTES:
+    if is_night_work(nightly) and total > models.MAX_DAILY_MINUTES:
         findings.append({
             "code": NIGHT_WORK_OVER_8H,
             "severity": (
@@ -930,11 +950,18 @@ def refresh_open_compensations(
     return refreshed
 
 
-def _sundays_in_year(year: int) -> list[date]:
-    current = date(year, 1, 1)
-    current += timedelta(days=(6 - current.weekday()) % 7)
+def _sundays_between(start: date, end: date) -> list[date]:
+    """Alle Sonntage von ``start`` bis ``end`` einschließlich.
+
+    Bis 0.20.1 lief die Zählung fest über das ganze Kalenderjahr. Seit 0.20.2
+    begrenzt der Beschäftigungszeitraum den Ausschnitt – ein leerer Zeitraum
+    (Ende vor Beginn) liefert eine leere Liste statt eines Fehlers.
+    """
+    if end < start:
+        return []
+    current = start + timedelta(days=(6 - start.weekday()) % 7)
     result: list[date] = []
-    while current.year == year:
+    while current <= end:
         result.append(current)
         current += timedelta(days=7)
     return result
@@ -943,51 +970,107 @@ def _sundays_in_year(year: int) -> list[date]:
 def annual_compliance_report(
     db: Session, user_id: int, year: int, *, reference_date: Optional[date] = None
 ) -> dict[str, object]:
-    """Jahresübersicht für freie Sonntage und regelmäßig wiederkehrende Nachtarbeit.
+    """Jahresübersicht für freie Sonntage und wiederkehrende Nachtarbeit.
 
-    Die 48-Nacht-Tage sind ein objektiv ermittelbares Indiz aus § 2 Abs. 5
-    ArbZG. Die alternative Einordnung über Wechselschicht kann ohne
-    Dienstplan-/Vertragsdaten nicht automatisch entschieden werden und wird in
-    der Übersicht deshalb ausdrücklich als betriebliche Prüfung ausgewiesen.
+    **Prüfzeitraum (ab 0.20.2).** Bis 0.20.1 lief die Zählung über das ganze
+    Kalenderjahr. Wer im September eintrat, bekam damit die Sonntage von Januar
+    bis August als „beschäftigungsfrei" gutgeschrieben – Sonntage, an denen es
+    gar kein Beschäftigungsverhältnis gab. Das Ergebnis war eine Zusicherung,
+    die die Daten nicht hergaben.
+
+    Der Zeitraum ist deshalb der Schnitt aus Kalenderjahr und
+    Beschäftigungsverhältnis:
+
+    * ``period_start`` = größerer Wert aus Eintritt und 1. Januar,
+    * ``period_end``   = kleinerer Wert aus Austritt und 31. Dezember.
+
+    Ist **kein Eintritt** hinterlegt, wird über das ganze Jahr gerechnet, aber
+    ``employment_period_known`` bleibt ``False`` – und dann darf
+    ``sunday_rule_met`` nie ``True`` werden. Lieber eine ehrliche Lücke als ein
+    positives Urteil ohne Grundlage.
+
+    ``required_free_sundays`` ist ``min(15, Sonntage im Zeitraum)``: In einem
+    Teiljahr mit zehn Sonntagen sind fünfzehn freie nicht erreichbar, und ein
+    unerfüllbares Soll wäre keine brauchbare Aussage.
+
+    **Jahreswechsel.** Geladen wird ab dem **Vortag** des Zeitraumbeginns: Eine
+    am 31. Dezember um 23:00 Uhr begonnene Schicht reicht in den 1. Januar. Ist
+    das ein Sonntag, gilt er im neuen Jahr als gearbeitet. Zugeordnet wird über
+    die tatsächlichen lokalen Arbeitsintervalle, nicht über ``work_date``.
+
+    Die 48 Nachtarbeitstage sind ein objektiv ermittelbares Indiz aus
+    § 2 Abs. 5 ArbZG. Die alternative Einordnung über Wechselschicht lässt sich
+    ohne Dienstplan- und Vertragsdaten nicht maschinell entscheiden und bleibt
+    ausdrücklich eine betriebliche Prüfung.
     """
     reference = reference_date or date.today()
-    end = date(year, 12, 31)
-    effective = min(max(reference, date(year, 1, 1)), end)
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+
+    person = db.query(models.User).filter(models.User.id == user_id).first()
+    employment_start = getattr(person, "employment_start_date", None)
+    employment_end = getattr(person, "employment_end_date", None)
+    employment_period_known = employment_start is not None
+
+    period_start = max(employment_start, year_start) if employment_start else year_start
+    period_end = min(employment_end, year_end) if employment_end else year_end
+
+    # „Bis wann liegen belastbare Zahlen vor?" – künftige Sonntage sind noch
+    # offen und dürfen weder als frei noch als gearbeitet gelten.
+    effective = min(max(reference, period_start), period_end)
+
+    # Einen Tag vor dem Zeitraum mitladen: Die Silvesterschicht des Vorjahres
+    # reicht in den Neujahrstag hinein.
     entries = _countable(
         db.query(models.TimeEntry)
         .filter(models.TimeEntry.user_id == user_id)
-        .filter(models.TimeEntry.work_date >= date(year, 1, 1))
-        .filter(models.TimeEntry.work_date <= end)
+        .filter(models.TimeEntry.work_date >= period_start - timedelta(days=1))
+        .filter(models.TimeEntry.work_date <= period_end)
         .order_by(models.TimeEntry.work_date, models.TimeEntry.start_time)
         .all()
     )
     worked_dates = worked_local_dates(entries)
-    sundays = _sundays_in_year(year)
+
+    sundays = _sundays_between(period_start, period_end)
     elapsed_sundays = [day for day in sundays if day <= effective]
     free_elapsed = sum(day not in worked_dates for day in elapsed_sundays)
     worked_sundays = sum(day in worked_dates for day in elapsed_sundays)
     future_sundays = sum(day > effective for day in sundays)
     max_free = free_elapsed + future_sundays
+    required = min(FREE_SUNDAYS_REQUIRED, len(sundays))
 
+    # Nachtarbeitstage über die lokalen Kalendertage, damit eine Schicht über
+    # Mitternacht dem Tag zugeordnet wird, an dem sie begonnen hat – und die
+    # mitgeladene Silvesterschicht des Vorjahres nicht mitgezählt wird.
     by_day: dict[date, list[models.TimeEntry]] = {}
     for entry in entries:
+        if entry.work_date < period_start or entry.work_date > period_end:
+            continue
         by_day.setdefault(entry.work_date, []).append(entry)
     night_days = sum(
-        night_minutes(day_entries) >= NIGHT_WORK_THRESHOLD_MINUTES
+        is_night_work(night_minutes(day_entries))
         for day_entries in by_day.values()
     )
+
     return {
         "year": year,
         "free_sundays": free_elapsed,
         "worked_sundays": worked_sundays,
         "future_sundays": future_sundays,
         "maximum_free_sundays": max_free,
-        "required_free_sundays": FREE_SUNDAYS_REQUIRED,
-        "free_sundays_missing": max(FREE_SUNDAYS_REQUIRED - free_elapsed, 0),
-        "sunday_rule_impossible": max_free < FREE_SUNDAYS_REQUIRED,
-        "sunday_rule_met": free_elapsed >= FREE_SUNDAYS_REQUIRED,
+        "required_free_sundays": required,
+        "free_sundays_missing": max(required - free_elapsed, 0),
+        # Ohne bekannten Beschäftigungsbeginn wird weder ein Verstoß behauptet
+        # noch ein positives Urteil gefällt – beides wäre ungedeckt.
+        "sunday_rule_impossible": employment_period_known and max_free < required,
+        "sunday_rule_met": employment_period_known and free_elapsed >= required,
+        "employment_period_known": employment_period_known,
+        "employment_start_date": employment_start,
+        "employment_end_date": employment_end,
+        "period_start": period_start,
+        "period_end": period_end,
         "night_work_days": night_days,
-        "night_worker_by_days": night_days >= 48,
+        "night_worker_by_days": night_days >= NIGHT_WORKER_DAY_THRESHOLD,
     }
 
 
@@ -1026,11 +1109,23 @@ def refresh_annual_compliance(
         active = bool(report["sunday_rule_impossible"])
         now = datetime.utcnow()
         if active:
+            # Der Text nennt das **tatsächlich geforderte** Minimum: Bei
+            # einem Teiljahr sind das weniger als 15, und „15 nicht erreichbar"
+            # wäre dann schlicht falsch.
+            required = int(report["required_free_sundays"])
+            period_note = ""
+            if report["employment_start_date"] or report["employment_end_date"]:
+                period_note = (
+                    f" Beschäftigungszeitraum im Prüfjahr: "
+                    f"{report['period_start'].strftime('%d.%m.%Y')}–"
+                    f"{report['period_end'].strftime('%d.%m.%Y')}."
+                )
             detail = (
                 f"Nur {report['free_sundays']} freie Sonntage bis "
                 f"{min(reference, work_date).strftime('%d.%m.%Y')}; selbst mit allen "
                 f"verbleibenden Sonntagen sind höchstens {report['maximum_free_sundays']} "
-                f"von gesetzlich mindestens {FREE_SUNDAYS_REQUIRED} erreichbar."
+                f"von mindestens {required} erreichbar (§ 11 Abs. 1 ArbZG)."
+                f"{period_note}"
             )
             finding = {
                 "code": FREE_SUNDAYS_UNDER_15,

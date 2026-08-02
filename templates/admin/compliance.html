@@ -10,10 +10,20 @@
             <h1>Jahresprüfung Sonn- und Nachtarbeit</h1>
             <p class="card-header__hint">
                 Die Übersicht zählt beschäftigungsfreie Sonntage nach § 11 Abs. 1
-                ArbZG und Tage mit mindestens zwei Stunden in der Nachtzeit
-                23:00–06:00 Uhr. Mindestens 48 solcher Tage sind ein gesetzliches
-                Indiz für Nachtarbeitnehmereigenschaft; Wechselschicht und
-                Branchenausnahmen müssen zusätzlich betrieblich eingeordnet werden.
+                ArbZG und Tage mit <strong>mehr als</strong> zwei Stunden in der
+                Nachtzeit 23:00–06:00 Uhr (§ 2 Abs. 4 ArbZG – exakt zwei Stunden
+                genügen nicht). Mindestens 48 solcher Tage sind ein gesetzliches
+                Indiz für Nachtarbeitnehmereigenschaft; Wechselschicht,
+                Branchenausnahmen, Tarifregeln, arbeitsmedizinische Vorsorge und
+                Zuschlags-/Freizeitausgleich müssen zusätzlich betrieblich
+                eingeordnet werden.
+            </p>
+            <p class="card-header__hint">
+                Gezählt wird nur innerhalb des <strong>Beschäftigungszeitraums</strong>:
+                Sonntage vor dem Eintritt oder nach dem Austritt sind keine
+                beschäftigungsfreien Sonntage. Fehlt der Beschäftigungsbeginn,
+                trifft die Anwendung bewusst kein positives Prüfurteil – das
+                Datum steht in der Benutzerverwaltung unter „Arbeitszeit“.
             </p>
         </div>
     </div>
@@ -30,7 +40,14 @@
             <tbody>
             {% for report in annual_reports %}
                 <tr>
-                    <td>{{ report.user.full_name }}</td>
+                    <td>
+                        {{ report.user.full_name }}
+                        {% if report.employment_start_date or report.employment_end_date %}
+                            <small class="text-muted">
+                                {{ report.period_start.strftime('%d.%m.%Y') }}–{{ report.period_end.strftime('%d.%m.%Y') }}
+                            </small>
+                        {% endif %}
+                    </td>
                     <td>{{ report.free_sundays }} / mindestens {{ report.required_free_sundays }}</td>
                     <td>{{ report.worked_sundays }}</td>
                     <td>
@@ -40,8 +57,19 @@
                         {% endif %}
                     </td>
                     <td>
-                        {% if report.sunday_rule_impossible %}
-                            <span class="license-state license-state--invalid">15 freie Sonntage nicht mehr erreichbar</span>
+                        {# Reihenfolge ist Absicht: Ohne Beschäftigungsbeginn
+                           gibt es weder einen Verstoß noch ein positives
+                           Urteil – die Datengrundlage fehlt schlicht. #}
+                        {% if not report.employment_period_known %}
+                            <span class="license-state">Beschäftigungsbeginn fehlt</span>
+                            <small class="text-muted">
+                                Ohne Eintrittsdatum lässt sich nicht sagen, welche Sonntage
+                                überhaupt in das Beschäftigungsverhältnis fallen.
+                            </small>
+                        {% elif report.sunday_rule_impossible %}
+                            <span class="license-state license-state--invalid">
+                                {{ report.required_free_sundays }} freie Sonntage nicht mehr erreichbar
+                            </span>
                         {% elif report.sunday_rule_met %}
                             {# Grün, nicht gelb: Das Minimum ist erreicht, hier
                                ist nichts zu tun. Gelb hieße „aufpassen". #}

@@ -2,7 +2,18 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.1`
+**Version:** `0.20.2`
+
+> Seit 0.20.2: **Die Jahresprüfung für Sonn- und Nachtarbeit rechnet an drei
+> Stellen genauer.** Exakt zwei Stunden Nachtzeit sind **keine** Nachtarbeit
+> (§ 2 Abs. 4 ArbZG verlangt *mehr als* zwei Stunden); die freien Sonntage
+> werden nur noch innerhalb des **Beschäftigungszeitraums** gezählt, der jetzt
+> je Person hinterlegt wird; und eine am 31. Dezember begonnene Schicht zählt
+> einen Neujahrssonntag im **neuen** Jahr als gearbeitet. Ohne
+> Beschäftigungsbeginn trifft die Anwendung bewusst **kein positives
+> Prüfurteil**, sondern weist „Beschäftigungsbeginn fehlt" aus.
+> Bestandskonten behalten `NULL` – es wird kein Eintrittsdatum erfunden.
+> Details in [`docs/RELEASE_NOTES_0.20.2.md`](docs/RELEASE_NOTES_0.20.2.md).
 
 > Seit 0.20.1: **„Remote" steht wieder in der Einsatzortauswahl** – und zwar
 > für alle. Das alte Benutzerkennzeichen entfernte seit 0.14.1 nur noch einen
@@ -948,6 +959,50 @@ der Bereich 4–24 Wochen (Vorgabe 24). Sechs Kalendermonate sind keine pauschal
 **Offene Entscheidung:** Krankheitstage bleiben im Nenner, weil die Anwendung
 keine Arbeitsunfähigkeit erfasst. Das ist eine fehlende Datenquelle, keine
 fachliche Festlegung.
+
+### Jahresprüfung Sonn- und Nachtarbeit (seit 0.20.0, präzisiert in 0.20.2)
+
+Unter *Administration → Zeiterfassung → Regelverstöße* steht je sichtbarer
+Person eine Jahresübersicht: freie und gearbeitete Sonntage, Nachtarbeitstage
+und die Bewertung.
+
+**Freie Sonntage (§ 11 Abs. 1 ArbZG).** Gezählt wird ausschließlich innerhalb
+des **Beschäftigungszeitraums** – Sonntage vor dem Eintritt oder nach dem
+Austritt sind keine beschäftigungsfreien Sonntage. Die beiden Datumsfelder
+stehen unter *Administration → Benutzer → Person → Arbeitszeit*:
+
+| Feld | Bedeutung |
+|---|---|
+| Beschäftigungsbeginn | Für ein positives Prüfurteil erforderlich |
+| Beschäftigungsende | Optional; darf nicht vor dem Beginn liegen |
+
+Das geforderte Minimum ist `min(15, Sonntage im Zeitraum)` – in einem Teiljahr
+mit neun Sonntagen sind fünfzehn freie nicht erreichbar.
+
+> **Ohne Beschäftigungsbeginn kein positives Prüfurteil.** Die Übersicht weist
+> dann „Beschäftigungsbeginn fehlt" aus und behauptet weder ein erfülltes
+> Minimum noch einen Verstoß. Bestandskonten behalten nach dem Upgrade `NULL`:
+> Ein erfundenes Eintrittsdatum wäre in einem gesetzlichen Nachweis schlimmer
+> als eine ehrliche Lücke.
+
+Eine über Mitternacht laufende Schicht zählt für **jeden** tatsächlich
+betroffenen Kalendertag. Das gilt auch über den Jahreswechsel: Eine am
+31. Dezember um 23:00 Uhr begonnene Schicht macht einen Neujahrssonntag im
+**neuen** Jahr zu einem gearbeiteten Sonntag.
+
+**Nachtarbeit (§ 2 Abs. 4/5, § 6 Abs. 2 ArbZG).** Nachtzeit ist 23:00–06:00
+Uhr. Nachtarbeit liegt vor, wenn **mehr als** zwei Stunden davon betroffen
+sind – exakt 120 Minuten genügen **nicht**. Pausen werden anhand der
+tatsächlichen Intervalle herausgerechnet, gerechnet wird über UTC und die
+gespeicherte Buchungszeitzone. Ab 48 solcher Tage im Kalenderjahr weist die
+Übersicht „Nachtarbeitnehmer prüfen" aus.
+
+**Was die Anwendung nicht entscheidet:** Wechselschicht als alternative
+Einordnung, die abweichende Nachtzeit für Bäckereien und Konditoreien,
+Tarifverträge und Betriebsvereinbarungen, behördliche Bewilligungen,
+arbeitsmedizinische Vorsorge (§ 6 Abs. 3) und Zuschlags- oder
+Freizeitausgleich (§ 6 Abs. 5). Sie macht die technisch feststellbaren
+Sachverhalte sichtbar und benennt die verbleibende menschliche Einordnung.
 
 ### Sonn- und Feiertagsarbeit dokumentieren (geprüft seit 0.17.0)
 
