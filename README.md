@@ -746,6 +746,13 @@ das Kennzeichen entfernte damit nur noch **einen Eintrag** aus dieser Liste,
 während seine Beschriftung „Einsatzort erfassen" weiterhin das Ganze versprach.
 Wer das las, ließ den Haken weg, und „Remote" verschwand unbemerkt.
 
+0.20.3 hat dazu einen Nachzügler beseitigt: Die Auswahl wird zweimal befüllt –
+serverseitig beim Rendern und im Browser, sobald eine Firma gewählt wird, weil
+sich dann die firmengebundenen Standorte ändern. Der clientseitige Aufbau
+fragte noch das Attribut ab, das 0.20.1 aus der Vorlage genommen hatte, und
+ließ „Remote" nach jedem Firmenwechsel weg. Beide Wege bieten jetzt dieselben
+festen Optionen an; `tests/test_v0203.py` prüft das für Vorlage **und** Skript.
+
 > **Offene Entscheidung:** Soll es eine personenbezogene Erlaubnis für
 > Remote-Arbeit geben, gehört sie als `Own.Time.Remote` ins Rollenmodell und
 > nicht als stiller Haken in die Stammdaten. Diese Umsetzung greift dem nicht

@@ -753,15 +753,16 @@ async function hydrateCompaniesFromCache() {
   });
 }
 
-// Einsatzorte aus dem Snapshot in die Auswahllisten schreiben. Ohne das stünde
-// man offline vor einer Liste mit nur „Vor Ort“ und „Remote“ – die Standorte
-// kommen aus der Synchronisation, nicht aus der zwischengespeicherten Seite.
 // Einsatzorte aus dem Snapshot in die Auswahlliste des Auftragsdialogs
-// schreiben – gefiltert auf die gewählte Firma. Ein Standort gehört zu genau
-// einer Firma; firmenfremde Einträge dürfen dort nie auftauchen.
+// schreiben, gefiltert auf die gewählte Firma. Ohne das stünde man offline vor
+// einer Liste mit nur „Vor Ort“ und „Remote“ – die Standorte kommen aus der
+// Synchronisation, nicht aus der zwischengespeicherten Seite. Ein Standort
+// gehört zu genau einer Firma; firmenfremde Einträge dürfen nie auftauchen.
+//
+// „Vor Ort“ und „Remote“ stehen dabei immer voran, unabhängig von der Firma.
 //
 // Beim Wechsel der Firma wird der Hauptstandort vorausgewählt: Wer eine Firma
-// mit Standort wählt, meint fast immer deren Standort und nicht „Vor Ort".
+// mit Standort wählt, meint fast immer deren Standort und nicht „Vor Ort“.
 async function hydrateLocationsFromCache() {
   const snapshot = await getRecord(DATA_STORE, 'snapshot');
   const locations = snapshot?.data?.locations;
