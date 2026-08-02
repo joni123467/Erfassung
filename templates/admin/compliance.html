@@ -7,6 +7,61 @@
 <section class="card">
     <div class="card-header">
         <div>
+            <h1>Jahresprüfung Sonn- und Nachtarbeit</h1>
+            <p class="card-header__hint">
+                Die Übersicht zählt beschäftigungsfreie Sonntage nach § 11 Abs. 1
+                ArbZG und Tage mit mindestens zwei Stunden in der Nachtzeit
+                23:00–06:00 Uhr. Mindestens 48 solcher Tage sind ein gesetzliches
+                Indiz für Nachtarbeitnehmereigenschaft; Wechselschicht und
+                Branchenausnahmen müssen zusätzlich betrieblich eingeordnet werden.
+            </p>
+        </div>
+    </div>
+    {% if annual_reports %}
+    <div class="table-scroll">
+        <table class="striped-table">
+            <thead><tr>
+                <th>Person</th>
+                <th>Freie Sonntage</th>
+                <th>Gearbeitete Sonntage</th>
+                <th>Nachtarbeitstage</th>
+                <th>Bewertung</th>
+            </tr></thead>
+            <tbody>
+            {% for report in annual_reports %}
+                <tr>
+                    <td>{{ report.user.full_name }}</td>
+                    <td>{{ report.free_sundays }} / mindestens {{ report.required_free_sundays }}</td>
+                    <td>{{ report.worked_sundays }}</td>
+                    <td>
+                        {{ report.night_work_days }}
+                        {% if report.night_worker_by_days %}
+                            <span class="license-state license-state--invalid">Nachtarbeitnehmer prüfen</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if report.sunday_rule_impossible %}
+                            <span class="license-state license-state--invalid">15 freie Sonntage nicht mehr erreichbar</span>
+                        {% elif report.sunday_rule_met %}
+                            <span class="license-state">Sonntagsminimum erfüllt</span>
+                        {% else %}
+                            Noch {{ report.free_sundays_missing }} freie Sonntage erforderlich;
+                            {{ report.future_sundays }} Sonntage verbleiben.
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+        <p class="empty-state">Keine Personen im erlaubten Geltungsbereich.</p>
+    {% endif %}
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <div>
             <h1>Regelverstöße</h1>
             <p class="card-header__hint">
                 Kennzeichnungen nach ArbZG. Sie verhindern nichts: Die tatsächlich
@@ -111,7 +166,8 @@
     <p class="card-health-hint card-header__hint">
         Geprüft wird: mehr als 8 Stunden (§3 ArbZG, zulässig bei Ausgleich), mehr
         als 10 Stunden (absolute Grenze), fehlende Ruhepause (§4), Ruhezeit unter
-        11 Stunden (§5) sowie Sonn- und Feiertagsarbeit (§9). Ausnahmen nach
+        11 Stunden (§5), Nachtarbeit über acht Stunden (§6), Sonn- und
+        Feiertagsarbeit (§9) sowie mindestens 15 freie Sonntage (§11). Ausnahmen nach
         Tarifvertrag oder §7 ArbZG kann die Anwendung nicht kennen – die
         Bewertung des Einzelfalls bleibt Sache von Menschen.
     </p>

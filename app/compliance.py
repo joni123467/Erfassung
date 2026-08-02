@@ -55,6 +55,12 @@ from . import models, worktime
 
 LOGGER = logging.getLogger("erfassung.application")
 
+# Jahres-/Nachtregeln verwenden wie alle Compliance-Codes einfache Strings in
+# der vorhandenen ``compliance_flags.code``-Spalte. Dafür ist bewusst keine
+# Schemaänderung nötig.
+NIGHT_WORK_OVER_8H = "night_work_over_8h"
+FREE_SUNDAYS_UNDER_15 = "free_sundays_under_15"
+
 #: Schweregrade – steuern ausschließlich die Darstellung.
 SEVERITY_INFO = "info"
 SEVERITY_WARNING = "warning"
@@ -67,6 +73,8 @@ LABELS: dict[str, str] = {
     models.ComplianceCode.BREAK_MISSING: "Ruhepause fehlt",
     models.ComplianceCode.SUNDAY_WORK: "Sonntagsarbeit",
     models.ComplianceCode.HOLIDAY_WORK: "Feiertagsarbeit",
+    NIGHT_WORK_OVER_8H: "Nachtarbeit über 8 Stunden",
+    FREE_SUNDAYS_UNDER_15: "Weniger als 15 freie Sonntage",
     models.ComplianceCode.AVERAGE_OVER_8H: "Ausgleich fehlt (Ø über 8 Stunden)",
     models.ComplianceCode.COMPENSATION_REQUIRED: "Ausgleich erforderlich",
     models.ComplianceCode.COMPENSATION_DUE: "Ausgleichsfrist läuft ab",
@@ -80,6 +88,8 @@ REFERENCES: dict[str, str] = {
     models.ComplianceCode.BREAK_MISSING: "§4 ArbZG",
     models.ComplianceCode.SUNDAY_WORK: "§9 ArbZG",
     models.ComplianceCode.HOLIDAY_WORK: "§9 ArbZG",
+    NIGHT_WORK_OVER_8H: "§6 Abs. 2 ArbZG",
+    FREE_SUNDAYS_UNDER_15: "§11 Abs. 1 ArbZG",
     models.ComplianceCode.AVERAGE_OVER_8H: "§3 Satz 2 ArbZG",
     models.ComplianceCode.COMPENSATION_REQUIRED: "§3 Satz 2 ArbZG",
     models.ComplianceCode.COMPENSATION_DUE: "§3 Satz 2 ArbZG",
@@ -150,6 +160,63 @@ def _subtract(
     if cursor < end:
         result.append((cursor, end))
     return [(a, b) for a, b in result if b > a]
+
+
+NIGHT_START = time(23, 0)
+NIGHT_END = time(6, 0)
+NIGHT_WORK_THRESHOLD_MINUTES = 120
+FREE_SUNDAYS_REQUIRED = 15
+
+
+def night_minutes(entries: Iterable[models.TimeEntry]) -> int:
+    """Tatsächliche Arbeitsminuten in der gesetzlichen Nachtzeit 23–6 Uhr.
+
+    Pausen werden als Intervalle herausgeschnitten. Die Umrechnung läuft über
+    die bei der Buchung gespeicherte Zeitzone, damit auch Zeitumstellungen
+    korrekt bleiben. Die Sondernachtzeit für Bäckereien/Konditoreien kann die
+    allgemeine Anwendung nicht ohne Branchenmerkmal annehmen.
+    """
+    total = 0
+    for entry in entries:
+        tz = _timezone(getattr(entry, "tz_name", None))
+        cuts, _unplaced = _break_cuts(entry)
+        for start, end in _subtract(_entry_bounds(entry), cuts):
+            first = start.astimezone(tz).date() - timedelta(days=1)
+            last = end.astimezone(tz).date()
+            cursor = first
+            while cursor <= last:
+                window_start = _from_local(datetime.combine(cursor, NIGHT_START), tz)
+                window_end = _from_local(
+                    datetime.combine(cursor + timedelta(days=1), NIGHT_END), tz
+                )
+                overlap_start = max(start, window_start)
+                overlap_end = min(end, window_end)
+                if overlap_end > overlap_start:
+                    total += int((overlap_end - overlap_start).total_seconds() // 60)
+                cursor += timedelta(days=1)
+    return total
+
+
+def worked_local_dates(entries: Iterable[models.TimeEntry]) -> set[date]:
+    """Lokale Kalendertage mit tatsächlicher Arbeit, auch über Mitternacht.
+
+    ``work_date`` ist der Buchungs-/Schichtbeginn und genügt für die
+    Sonntagsjahresprüfung nicht: Eine Samstagnachtschicht kann in den Sonntag
+    hineinreichen. Pausen zählen dabei nicht als Beschäftigung.
+    """
+    result: set[date] = set()
+    for entry in entries:
+        tz = _timezone(getattr(entry, "tz_name", None))
+        cuts, _unplaced = _break_cuts(entry)
+        for start, end in _subtract(_entry_bounds(entry), cuts):
+            if end <= start:
+                continue
+            current = start.astimezone(tz).date()
+            last = (end - timedelta(microseconds=1)).astimezone(tz).date()
+            while current <= last:
+                result.add(current)
+                current += timedelta(days=1)
+    return result
 
 
 class Shift:
@@ -437,6 +504,23 @@ def evaluate_day(
             "severity": SEVERITY_INFO,
             "entry_id": entries[0].id,
             "detail": f"{_format_minutes(total)} an einem Feiertag.",
+        })
+
+    nightly = night_minutes(entries)
+    if nightly >= NIGHT_WORK_THRESHOLD_MINUTES and total > models.MAX_DAILY_MINUTES:
+        findings.append({
+            "code": NIGHT_WORK_OVER_8H,
+            "severity": (
+                SEVERITY_CRITICAL
+                if total > models.ABSOLUTE_MAX_DAILY_MINUTES
+                else SEVERITY_WARNING
+            ),
+            "entry_id": entries[-1].id,
+            "detail": (
+                f"{_format_minutes(total)} Gesamtarbeitszeit, davon "
+                f"{_format_minutes(nightly)} in der Nachtzeit 23:00–06:00 Uhr. "
+                "Für Nachtarbeitnehmer gilt der besondere Ausgleich nach § 6 Abs. 2 ArbZG."
+            ),
         })
 
     rest = _rest_finding(db, user_id, work_date, entries)
@@ -846,6 +930,155 @@ def refresh_open_compensations(
     return refreshed
 
 
+def _sundays_in_year(year: int) -> list[date]:
+    current = date(year, 1, 1)
+    current += timedelta(days=(6 - current.weekday()) % 7)
+    result: list[date] = []
+    while current.year == year:
+        result.append(current)
+        current += timedelta(days=7)
+    return result
+
+
+def annual_compliance_report(
+    db: Session, user_id: int, year: int, *, reference_date: Optional[date] = None
+) -> dict[str, object]:
+    """Jahresübersicht für freie Sonntage und regelmäßig wiederkehrende Nachtarbeit.
+
+    Die 48-Nacht-Tage sind ein objektiv ermittelbares Indiz aus § 2 Abs. 5
+    ArbZG. Die alternative Einordnung über Wechselschicht kann ohne
+    Dienstplan-/Vertragsdaten nicht automatisch entschieden werden und wird in
+    der Übersicht deshalb ausdrücklich als betriebliche Prüfung ausgewiesen.
+    """
+    reference = reference_date or date.today()
+    end = date(year, 12, 31)
+    effective = min(max(reference, date(year, 1, 1)), end)
+    entries = _countable(
+        db.query(models.TimeEntry)
+        .filter(models.TimeEntry.user_id == user_id)
+        .filter(models.TimeEntry.work_date >= date(year, 1, 1))
+        .filter(models.TimeEntry.work_date <= end)
+        .order_by(models.TimeEntry.work_date, models.TimeEntry.start_time)
+        .all()
+    )
+    worked_dates = worked_local_dates(entries)
+    sundays = _sundays_in_year(year)
+    elapsed_sundays = [day for day in sundays if day <= effective]
+    free_elapsed = sum(day not in worked_dates for day in elapsed_sundays)
+    worked_sundays = sum(day in worked_dates for day in elapsed_sundays)
+    future_sundays = sum(day > effective for day in sundays)
+    max_free = free_elapsed + future_sundays
+
+    by_day: dict[date, list[models.TimeEntry]] = {}
+    for entry in entries:
+        by_day.setdefault(entry.work_date, []).append(entry)
+    night_days = sum(
+        night_minutes(day_entries) >= NIGHT_WORK_THRESHOLD_MINUTES
+        for day_entries in by_day.values()
+    )
+    return {
+        "year": year,
+        "free_sundays": free_elapsed,
+        "worked_sundays": worked_sundays,
+        "future_sundays": future_sundays,
+        "maximum_free_sundays": max_free,
+        "required_free_sundays": FREE_SUNDAYS_REQUIRED,
+        "free_sundays_missing": max(FREE_SUNDAYS_REQUIRED - free_elapsed, 0),
+        "sunday_rule_impossible": max_free < FREE_SUNDAYS_REQUIRED,
+        "sunday_rule_met": free_elapsed >= FREE_SUNDAYS_REQUIRED,
+        "night_work_days": night_days,
+        "night_worker_by_days": night_days >= 48,
+    }
+
+
+def refresh_annual_compliance(
+    db: Session, *, reference_date: Optional[date] = None,
+    user_ids: Optional[Iterable[int]] = None,
+) -> list[dict[str, object]]:
+    """Jahresregeln aktualisieren und §-11-Verstöße revisionssicher führen."""
+    reference = reference_date or date.today()
+    # Auch im laufenden Jahr deaktivierte Konten bleiben Teil des gesetzlichen
+    # Nachweises; die aufbewahrungssichere Deaktivierung darf sie nicht aus der
+    # Jahresprüfung verschwinden lassen.
+    query = db.query(models.User)
+    if user_ids is not None:
+        ids = list(user_ids)
+        if not ids:
+            return []
+        query = query.filter(models.User.id.in_(ids))
+    users = query.order_by(models.User.full_name).all()
+    reports: list[dict[str, object]] = []
+    for user in users:
+        report = annual_compliance_report(db, user.id, reference.year, reference_date=reference)
+        report["user"] = user
+        reports.append(report)
+        work_date = date(reference.year, 12, 31)
+        key = finding_key(user.id, work_date, {
+            "code": FREE_SUNDAYS_UNDER_15,
+        })
+        flag = (
+            db.query(models.ComplianceFlag)
+            .filter(models.ComplianceFlag.user_id == user.id)
+            .filter(models.ComplianceFlag.work_date == work_date)
+            .filter(models.ComplianceFlag.code == FREE_SUNDAYS_UNDER_15)
+            .first()
+        )
+        active = bool(report["sunday_rule_impossible"])
+        now = datetime.utcnow()
+        if active:
+            detail = (
+                f"Nur {report['free_sundays']} freie Sonntage bis "
+                f"{min(reference, work_date).strftime('%d.%m.%Y')}; selbst mit allen "
+                f"verbleibenden Sonntagen sind höchstens {report['maximum_free_sundays']} "
+                f"von gesetzlich mindestens {FREE_SUNDAYS_REQUIRED} erreichbar."
+            )
+            finding = {
+                "code": FREE_SUNDAYS_UNDER_15,
+                "severity": SEVERITY_CRITICAL,
+                "detail": detail,
+            }
+            digest = fingerprint(finding)
+            if flag is None:
+                flag = models.ComplianceFlag(
+                    user_id=user.id, work_date=work_date,
+                    code=FREE_SUNDAYS_UNDER_15,
+                    severity=SEVERITY_CRITICAL, detail=detail,
+                    state=models.ComplianceState.DETECTED, fingerprint=digest,
+                    finding_key=key, revision_no=1, updated_at=now,
+                )
+                db.add(flag)
+                db.flush()
+                log_change(db, flag, models.ComplianceAction.DETECTED,
+                           after=_flag_snapshot(flag), source="annual_rule_engine")
+            elif flag.fingerprint != digest or flag.state == models.ComplianceState.RESOLVED:
+                before = _flag_snapshot(flag)
+                was_acknowledged = flag.acknowledged_at is not None
+                flag.detail = detail
+                flag.fingerprint = digest
+                flag.severity = SEVERITY_CRITICAL
+                flag.resolved_at = None
+                flag.updated_at = now
+                flag.revision_no = int(flag.revision_no or 1) + 1
+                flag.state = (models.ComplianceState.REOPENED if was_acknowledged
+                              else models.ComplianceState.CHANGED)
+                if was_acknowledged:
+                    flag.reopened_at = now
+                    flag.acknowledged_at = None
+                    flag.acknowledged_by_id = None
+                log_change(db, flag, (models.ComplianceAction.REOPENED if was_acknowledged
+                           else models.ComplianceAction.CHANGED), before=before,
+                           after=_flag_snapshot(flag), source="annual_rule_engine")
+        elif flag is not None and flag.state != models.ComplianceState.RESOLVED:
+            before = _flag_snapshot(flag)
+            flag.state = models.ComplianceState.RESOLVED
+            flag.resolved_at = now
+            flag.updated_at = now
+            log_change(db, flag, models.ComplianceAction.RESOLVED,
+                       before=before, after=_flag_snapshot(flag), source="annual_rule_engine")
+    db.commit()
+    return reports
+
+
 def open_flags(
     db: Session,
     *,
@@ -1246,6 +1479,8 @@ __all__ = [
     "ExceptionError",
     "HANDLING_STATES",
     "LABELS",
+    "FREE_SUNDAYS_UNDER_15",
+    "NIGHT_WORK_OVER_8H",
     "REFERENCES",
     "REST_DAY_DEADLINE_DAYS",
     "SEVERITY_CRITICAL",
@@ -1253,6 +1488,7 @@ __all__ = [
     "SEVERITY_WARNING",
     "acknowledge",
     "action_label",
+    "annual_compliance_report",
     "compensation_report",
     "document_exception",
     "evaluate_day",
@@ -1264,6 +1500,7 @@ __all__ = [
     "log_change",
     "open_flags",
     "reference",
+    "refresh_annual_compliance",
     "refresh_day",
     "refresh_for_entry",
     "refresh_open_compensations",

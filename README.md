@@ -2,7 +2,25 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.19.0`
+**Version:** `0.20.0`
+
+> Seit 0.20.0 schöpft die Regelprüfung die technisch bestimmbaren Möglichkeiten
+> für Sonn- und Nachtarbeit weiter aus: Die Administration zeigt pro Person
+> freie und gearbeitete Sonntage, warnt revisionssicher, wenn die mindestens
+> 15 freien Sonntage nicht mehr erreichbar sind, zählt Tage mit mindestens zwei
+> Nachtstunden und kennzeichnet Nachtarbeit über acht Stunden. Rechte und
+> Geltungsbereiche entsprechen der vorhandenen Compliance-Übersicht. Details in
+> [`docs/RELEASE_NOTES_0.20.0.md`](docs/RELEASE_NOTES_0.20.0.md).
+
+> Seit 0.19.1 liegt eine **erneute Rechts- und Standardsprüfung** vor. Ihr
+> Ergebnis ist bewusst keine pauschale Konformitätszusage: Die Anwendung ist
+> für den regulären Grundfall technisch weitgehend geeignet, Betreiberpflichten
+> und Sonderregeln bleiben aber offen. Das betrifft insbesondere Nachtarbeit,
+> 15 freie Sonntage, besondere Beschäftigtengruppen, Mitbestimmung,
+> Datenschutzorganisation, externe Manipulationssicherung sowie formale
+> Sicherheits- und Barrierefreiheitsnachweise. Siehe
+> [`docs/LEGAL_COMPLIANCE_AUDIT_0.19.1.md`](docs/LEGAL_COMPLIANCE_AUDIT_0.19.1.md)
+> und [`docs/RELEASE_NOTES_0.19.1.md`](docs/RELEASE_NOTES_0.19.1.md).
 
 > Seit 0.19.0 werden Benutzerkonten aufbewahrungssicher deaktiviert und pseudonymisiert; Arbeitszeit- und Compliance-Nachweise bleiben erhalten. Sonntagsarbeit zählt vollständig zur Arbeitszeitprüfung, ohne den Werktagsnenner zu erhöhen, und die Zehn-Stunden-Grenze wird schichtbezogen über Mitternacht geprüft. Details stehen in [`docs/RELEASE_NOTES_0.19.0.md`](docs/RELEASE_NOTES_0.19.0.md).
 
