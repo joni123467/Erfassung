@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import logging
+import io
 import base64
 import hashlib
 import hmac
@@ -14,6 +15,7 @@ from typing import Iterable, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import secrets
+import qrcode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 
@@ -186,6 +188,7 @@ class LicenseFeatureMiddleware:
         ("/api/vacations", "vacation"),
         ("/api/companies", "orders"),
         ("/api/terminals", "terminals"),
+        ("/calendar", "calendar_sync"),
     )
 
     #: Einzelne Endpunkte, die sich am Präfix nicht erkennen lassen. Die
@@ -534,6 +537,9 @@ def ensure_schema() -> None:
     with database.engine.begin() as connection:
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
+        for table_name in ("work_schedules", "absence_types", "vacation_entitlement_entries", "calendar_feeds"):
+            if table_name not in table_names:
+                models.Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
         if "users" in table_names:
             user_columns = {column["name"] for column in inspector.get_columns("users")}
             if "is_active" not in user_columns:
@@ -553,6 +559,13 @@ def ensure_schema() -> None:
                         text(f"ALTER TABLE users ADD COLUMN {_column} DATE")
                     )
             connection.execute(text("UPDATE users SET is_active = 1 WHERE is_active IS NULL"))
+        if "vacation_requests" in table_names:
+            columns = {column["name"] for column in inspector.get_columns("vacation_requests")}
+            if "absence_type_key" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE vacation_requests ADD COLUMN absence_type_key "
+                    "VARCHAR(64) NOT NULL DEFAULT 'vacation'"
+                ))
         if "companies" not in table_names:
             models.Base.metadata.tables["companies"].create(bind=connection)
         else:
@@ -2804,6 +2817,7 @@ def submit_vacation(
     use_overtime: Optional[str] = Form(None),
     half_day_start: Optional[str] = Form(None),
     half_day_end: Optional[str] = Form(None),
+    absence_type_key: str = Form("vacation"),
     client_action_id: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
@@ -2832,7 +2846,15 @@ def submit_vacation(
             target=vac_target,
             error="Enddatum darf nicht vor dem Startdatum liegen",
         )
-    use_overtime_value = bool(use_overtime == "on" and user.overtime_vacation_enabled)
+    absence_type = db.get(models.AbsenceType, absence_type_key)
+    if not absence_type or not absence_type.active:
+        return _sync_result(request, target=vac_target, error="Unbekannte Abwesenheitsart")
+    if absence_type.deducts_overtime and not user.overtime_vacation_enabled:
+        return _sync_result(request, target=vac_target, error="Überstundenabbau ist für dieses Konto nicht freigeschaltet")
+    use_overtime_value = bool(
+        (use_overtime == "on" or absence_type.deducts_overtime)
+        and user.overtime_vacation_enabled
+    )
     half_start = half_day_start == "on"
     half_end = half_day_end == "on"
     if start_date == end_date:
@@ -2848,6 +2870,7 @@ def submit_vacation(
         overtime_minutes=0,
         half_day_start=half_start,
         half_day_end=half_end,
+        absence_type_key=absence_type.key,
     )
     if use_overtime_value:
         # Überstundenurlaub bucht genau die Minuten ab, die er kostet –
@@ -2862,7 +2885,10 @@ def submit_vacation(
             crud.get_holiday_dates_in_range(db, start_date, end_date),
         )
     try:
-        crud.create_vacation_request(db, pending)
+        created = crud.create_vacation_request(db, pending)
+        if not absence_type.requires_approval:
+            created.status = models.VacationStatus.APPROVED
+            db.commit()
     except ValueError as exc:
         error_message = "Urlaubsantrag konnte nicht gespeichert werden"
         if str(exc) == "VACATION_OVERLAP":
@@ -3030,16 +3056,125 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
     return templates.TemplateResponse(
         "records/vacations.html",
         {
-            "request": request,
-            "user": user,
-            "message": message,
-            "error": error,
-            "vacations": vacations,
-            "vacation_summary": vacation_summary,
+            "request": request, "user": user, "message": message, "error": error,
+            "vacations": vacations, "vacation_summary": vacation_summary,
             "pending_vacations": pending_vacations,
             "can_request_vacations": _can_request_vacations(user),
+            "absence_types": db.query(models.AbsenceType).filter(models.AbsenceType.active.is_(True)).order_by(models.AbsenceType.label).all(),
         },
     )
+
+
+def _calendar_rows(db: Session, vacations: Iterable[models.VacationRequest], *, reveal: bool = True) -> list[dict]:
+    labels = {item.key: item for item in db.query(models.AbsenceType).all()}
+    rows = []
+    for item in vacations:
+        kind = labels.get(getattr(item, "absence_type_key", "vacation"))
+        confidential = bool(kind and kind.confidential)
+        rows.append({"id": item.id, "start": item.start_date, "end": item.end_date,
+            "status": item.status, "person": item.user.full_name if getattr(item, "user", None) else "",
+            "label": (kind.label if kind else "Urlaub") if reveal and not confidential else "Abwesend"})
+    return rows
+
+
+@app.get("/records/vacations/calendar", response_class=HTMLResponse)
+def personal_vacation_calendar(request: Request, year: int = Query(default_factory=lambda: date.today().year), db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    vacations = crud.get_vacations_in_range(db, date(year, 1, 1), date(year, 12, 31), user_id=user.id)
+    return templates.TemplateResponse("records/vacation_calendar.html", {
+        "request": request, "user": user, "year": year, "calendar_rows": _calendar_rows(db, vacations),
+        "feed_url": request.query_params.get("feed_url"), "can_sync": licensing.has_feature("calendar_sync"),
+        "can_team_feed": permission_service.has(user, "Vacation.Overview"),
+        "feeds": db.query(models.CalendarFeed).filter(models.CalendarFeed.user_id == user.id, models.CalendarFeed.active.is_(True)).order_by(models.CalendarFeed.created_at.desc()).all(),
+    })
+
+
+@app.post("/records/vacations/calendar/feed")
+def create_calendar_feed(request: Request, scope: str = Form("self"), db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    if not licensing.has_feature("calendar_sync"):
+        raise HTTPException(status_code=402, detail="Kalendersynchronisation ist nicht lizenziert")
+    if scope == "team" and not permission_service.has(user, "Vacation.Overview"):
+        raise HTTPException(status_code=403)
+    scope = "team" if scope == "team" else "self"
+    token = secrets.token_urlsafe(32)
+    db.add(models.CalendarFeed(user_id=user.id, token_hash=hashlib.sha256(token.encode()).hexdigest(), scope=scope))
+    db.commit()
+    url = str(request.url_for("calendar_feed_ics", token=token))
+    logging_setup.log_audit("Kalenderfeed erstellt", user=user, detail=f"scope={scope}")
+    return RedirectResponse(url=_build_redirect("/records/vacations/calendar", feed_url=url), status_code=303)
+
+
+@app.post("/records/vacations/calendar/feed/{feed_id}/revoke")
+def revoke_calendar_feed(request: Request, feed_id: int, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    feed = db.query(models.CalendarFeed).filter(models.CalendarFeed.id == feed_id, models.CalendarFeed.user_id == user.id).first()
+    if not feed:
+        raise HTTPException(status_code=404)
+    feed.active = False
+    feed.revoked_at = datetime.utcnow()
+    db.commit()
+    logging_setup.log_audit("Kalenderfeed widerrufen", user=user, detail=f"feed={feed_id}")
+    return RedirectResponse(url="/records/vacations/calendar?msg=Feed+widerrufen", status_code=303)
+
+
+@app.get("/admin/vacations/calendar", response_class=HTMLResponse)
+def team_vacation_calendar(request: Request, year: int = Query(default_factory=lambda: date.today().year), db: Session = Depends(database.get_db)):
+    actor = get_logged_in_user(request, db)
+    if not actor:
+        return RedirectResponse(url="/login", status_code=303)
+    if not permission_service.has(actor, "Vacation.Overview"):
+        raise HTTPException(status_code=403)
+    allowed = permission_service.allowed_user_ids(db, actor, "Vacation.Overview")
+    query = db.query(models.VacationRequest).filter(
+        models.VacationRequest.start_date <= date(year, 12, 31),
+        models.VacationRequest.end_date >= date(year, 1, 1),
+        models.VacationRequest.status.in_((models.VacationStatus.PENDING, models.VacationStatus.APPROVED)),
+    )
+    if allowed is not None:
+        query = query.filter(models.VacationRequest.user_id.in_(allowed or {-1}))
+    return _admin_template("admin/vacation_calendar.html", request, actor,
+        year=year, calendar_rows=_calendar_rows(db, query.order_by(models.VacationRequest.start_date).all(), reveal=False))
+
+
+def _ics_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+@app.get("/calendar/{token}.ics", name="calendar_feed_ics")
+def calendar_feed_ics(token: str, db: Session = Depends(database.get_db)):
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    feed = db.query(models.CalendarFeed).filter(models.CalendarFeed.token_hash == digest, models.CalendarFeed.active.is_(True)).first()
+    if not feed:
+        raise HTTPException(status_code=404)
+    owner = db.get(models.User, feed.user_id)
+    allowed_ids: Optional[set[int]] = {feed.user_id}
+    if feed.scope == "team" and owner:
+        allowed_ids = permission_service.allowed_user_ids(db, owner, "Vacation.Overview")
+    query = db.query(models.VacationRequest).filter(models.VacationRequest.status == models.VacationStatus.APPROVED)
+    if allowed_ids is not None:
+        query = query.filter(models.VacationRequest.user_id.in_(allowed_ids or {-1}))
+    types = {item.key: item for item in db.query(models.AbsenceType).all()}
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Erfassung//Abwesenheiten//DE", "CALSCALE:GREGORIAN"]
+    stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    for item in query.order_by(models.VacationRequest.start_date).all():
+        kind = types.get(item.absence_type_key)
+        label = "Abwesend" if (feed.scope == "team" or (kind and kind.confidential)) else (kind.label if kind else "Urlaub")
+        if feed.scope == "team" and item.user:
+            label = f"{item.user.full_name}: Abwesend"
+        lines += ["BEGIN:VEVENT", f"UID:absence-{item.id}@erfassung", f"DTSTAMP:{stamp}",
+            f"DTSTART;VALUE=DATE:{item.start_date:%Y%m%d}",
+            f"DTEND;VALUE=DATE:{item.end_date + timedelta(days=1):%Y%m%d}",
+            f"SUMMARY:{_ics_escape(label)}", "TRANSP:TRANSPARENT", "END:VEVENT"]
+    lines.append("END:VCALENDAR")
+    return Response("\r\n".join(lines) + "\r\n", media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": "inline; filename=abwesenheiten.ics", "Cache-Control": "private, max-age=300"})
 
 
 @app.get("/records/pdf")
@@ -3792,6 +3927,7 @@ def admin_users_new(request: Request, db: Session = Depends(database.get_db)):
         groups=_manageable_groups(db, user),
         roles=_manageable_roles(db, user),
         form_user=None,
+        now_year=date.today().year,
     )
 
 
@@ -3828,7 +3964,94 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
         roles=_manageable_roles(db, user),
         form_user=target,
         mobile_quick_login_url=quick_login_url,
+        now_year=date.today().year,
     )
+
+
+@app.get("/admin/users/{user_id}/mobile-qr.png")
+def admin_user_mobile_qr(
+    request: Request, user_id: int, size: int = 200, download: bool = False,
+    db: Session = Depends(database.get_db),
+):
+    """QR-Code lokal rendern; die Login-URL verlässt niemals die Installation."""
+    actor = get_logged_in_user(request, db)
+    if not actor or not permission_service.has(actor, "User.View"):
+        raise HTTPException(status_code=403)
+    if not _user_in_permission_scope(db, actor, "User.View", user_id) or not crud.get_user(db, user_id):
+        raise HTTPException(status_code=404)
+    login_url = f"{request.url_for('mobile_quick_login')}?token={_create_mobile_autologin_token(user_id)}"
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=4)
+    qr.add_data(login_url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="erfassung-login-{user_id}.png"'
+    # QR bleibt rastergenau; ``size`` begrenzt nur die gewünschte Ausgabekante.
+    requested = min(max(size, 96), 800)
+    if image.width != requested:
+        image = image.resize((requested, requested), resample=0)
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+    return Response(output.getvalue(), media_type="image/png", headers=headers)
+
+
+@app.post("/admin/users/{user_id}/work-schedules")
+def add_work_schedule(
+    request: Request, user_id: int, valid_from: date = Form(...), name: str = Form(...),
+    monday_hours: float = Form(0), tuesday_hours: float = Form(0),
+    wednesday_hours: float = Form(0), thursday_hours: float = Form(0),
+    friday_hours: float = Form(0), saturday_hours: float = Form(0),
+    sunday_hours: float = Form(0), db: Session = Depends(database.get_db),
+):
+    actor = get_logged_in_user(request, db)
+    if not actor or not permission_service.has(actor, "User.Edit") or not _user_in_permission_scope(db, actor, "User.Edit", user_id):
+        raise HTTPException(status_code=403)
+    hours = (monday_hours, tuesday_hours, wednesday_hours, thursday_hours, friday_hours, saturday_hours, sunday_hours)
+    if any(value < 0 or value > 24 for value in hours) or sum(hours) <= 0:
+        return RedirectResponse(url=f"/admin/users/{user_id}?error=Ung%C3%BCltiger+Arbeitszeitplan", status_code=303)
+    previous = db.query(models.WorkSchedule).filter(
+        models.WorkSchedule.user_id == user_id,
+        models.WorkSchedule.valid_from < valid_from,
+        models.WorkSchedule.valid_until.is_(None),
+    ).order_by(models.WorkSchedule.valid_from.desc()).first()
+    if previous:
+        previous.valid_until = valid_from - timedelta(days=1)
+    plan = models.WorkSchedule(user_id=user_id, valid_from=valid_from, name=name.strip()[:255], **{
+        field: int(round(value * 60)) for field, value in zip(services._SCHEDULE_FIELDS, hours)
+    })
+    db.add(plan)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return RedirectResponse(url=f"/admin/users/{user_id}?error=Plan+ab+diesem+Datum+existiert+bereits", status_code=303)
+    logging_setup.log_audit("Arbeitszeitplan hinzugefügt", user=actor, detail=f"user={user_id}; ab={valid_from}")
+    return RedirectResponse(url=f"/admin/users/{user_id}?msg=Arbeitszeitplan+gespeichert", status_code=303)
+
+
+@app.post("/admin/users/{user_id}/vacation-entitlements")
+def add_vacation_entitlement(
+    request: Request, user_id: int, year: int = Form(...), days: float = Form(...),
+    kind: str = Form("adjustment"), reason: str = Form(...), expires_on: Optional[str] = Form(None),
+    db: Session = Depends(database.get_db),
+):
+    actor = get_logged_in_user(request, db)
+    if not actor or not permission_service.has(actor, "User.Edit") or not _user_in_permission_scope(db, actor, "User.Edit", user_id):
+        raise HTTPException(status_code=403)
+    try:
+        expiry = _parse_optional_date(expires_on)
+    except ValueError:
+        return RedirectResponse(url=f"/admin/users/{user_id}?error=Ung%C3%BCltiges+Verfallsdatum", status_code=303)
+    if not 2000 <= year <= 2200 or days == 0 or kind not in {"adjustment", "carryover", "contractual"}:
+        return RedirectResponse(url=f"/admin/users/{user_id}?error=Ung%C3%BCltige+Anspruchsbuchung", status_code=303)
+    db.add(models.VacationEntitlementEntry(user_id=user_id, year=year, days=days, kind=kind,
+        reason=reason.strip()[:500], expires_on=expiry, created_by_id=actor.id))
+    db.commit()
+    logging_setup.log_audit("Urlaubsanspruch gebucht", user=actor, detail=f"user={user_id}; jahr={year}; tage={days:+g}")
+    return RedirectResponse(url=f"/admin/users/{user_id}?msg=Urlaubsanspruch+gebucht", status_code=303)
 
 
 @app.get("/admin/groups", response_class=HTMLResponse)

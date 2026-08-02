@@ -5,6 +5,53 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionierung folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.20.3] – 2026-08-02
+
+### Hinzugefügt
+
+- Versionierte Arbeitszeitpläne mit Sollminuten je Wochentag; Teilzeit,
+  Vier-/Sechs-Tage-Woche und Samstagsarbeit fließen in Sollzeit, Urlaub und
+  Feiertagsgutschrift ein.
+- Persönlicher Abwesenheitskalender und datensparsamer Teamkalender.
+- Lizenzbaustein `calendar_sync` für persönliche und Team-ICS-Abonnements;
+  Feed-Tokens werden nur gehasht gespeichert.
+- Allgemeine Abwesenheitsarten mit Vertraulichkeits-, Genehmigungs-, Urlaubs-,
+  Überstunden- und Sollzeitmerkmalen.
+- Append-only Urlaubskontobuchungen mit Art, Begründung und optionalem
+  Verfallsdatum.
+
+### Geändert
+
+- Mobile Login-QR-Codes entstehen serverseitig und lokal als PNG. Die bisherige
+  Übertragung der vollständigen, 30 Tage gültigen Login-URL an
+  `api.qrserver.com` entfällt vollständig.
+- Bestehende Benutzer ohne Arbeitszeitplan behalten exakt die bisherige
+  Mo–Fr-Berechnung.
+
+### Behoben
+
+- Urlaub, Feiertagsgutschrift und Monatssoll setzen nicht mehr pauschal fünf
+  identische Arbeitstage voraus, sobald ein Arbeitszeitplan gepflegt ist.
+- Vertrauliche Abwesenheitsarten geben in Teamkalendern und ICS-Feeds weder Art
+  noch Kommentar preis.
+
+### Datenbankänderungen
+
+- Neue Tabellen `work_schedules`, `absence_types`,
+  `vacation_entitlement_entries` und `calendar_feeds`.
+- Neue Spalte `vacation_requests.absence_type_key VARCHAR(64) NOT NULL DEFAULT
+  'vacation'`.
+
+### Migrationshinweise
+
+- Migration 23 (`_add_planning_and_calendar`) ist portabel, idempotent und
+  datenerhaltend. Bestehende Anträge werden als `vacation` nachbefüllt; neue
+  Tabellen werden nur fehlend angelegt und Standard-Abwesenheitsarten nur
+  fehlend ergänzt.
+- Logische Backups nehmen die neuen Metadatentabellen automatisch auf; bestehende
+  Archive bleiben wiederherstellbar und schließen anschließend über Migration
+  23 auf.
+
 ## [0.20.2] – 2026-08-02
 
 Korrigiert drei Grenzfälle der Jahresprüfung für Sonn- und Nachtarbeit aus

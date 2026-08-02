@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Abwesenheitskalender – Erfassung{% endblock %}
+{% block content %}
+{% set records_active = 'vacations' %}{% include "records/_nav.html" %}
+<section class="card">
+  <div class="card-header"><h1>Abwesenheitskalender {{ year }}</h1><a class="button ghost" href="/records/vacations">Zur Übersicht</a></div>
+  <form method="get" class="inline-form"><label>Jahr <input type="number" name="year" value="{{ year }}" min="2000" max="2200"></label><button class="button">Anzeigen</button></form>
+  <div class="table-scroll"><table class="striped-table"><thead><tr><th>Zeitraum</th><th>Art</th><th>Status</th></tr></thead><tbody>
+  {% for row in calendar_rows %}<tr><td>{{ row.start|german_date }} – {{ row.end|german_date }}</td><td>{{ row.label }}</td><td>{{ row.status }}</td></tr>{% else %}<tr><td colspan="3">Keine Abwesenheiten.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% if can_sync %}<section class="card"><h2>iCalendar-Abonnement</h2><p>Der Feed enthält nur genehmigte Abwesenheiten. Das geheime Feed-Token kann wie ein Kennwort gelesen werden.</p>
+{% if feed_url %}<label>Neue Feed-Adresse<input readonly value="{{ feed_url }}" onclick="this.select()"></label>{% endif %}
+<form method="post" action="/records/vacations/calendar/feed"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><select name="scope"><option value="self">Mein Kalender</option>{% if can_team_feed %}<option value="team">Mein Team</option>{% endif %}</select><button class="button primary">Neue Feed-Adresse erzeugen</button></form></section>{% endif %}
+{% if feeds %}<ul>{% for feed in feeds %}<li>{{ feed.scope }} · {{ feed.created_at }} <form class="inline-form" method="post" action="/records/vacations/calendar/feed/{{ feed.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><button class="button danger small">Widerrufen</button></form></li>{% endfor %}</ul>{% endif %}
+{% endblock %}

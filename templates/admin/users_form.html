@@ -166,18 +166,43 @@
             </div>
         </form>
         {% if is_edit %}
+            <section class="card compact-card">
+                <h2>Versionierter Arbeitszeitplan</h2>
+                <form method="post" action="/admin/users/{{ form_user.id }}/work-schedules" class="form-grid">
+                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                    <label>Gültig ab<input type="date" name="valid_from" required></label>
+                    <label>Bezeichnung<input name="name" value="Regelarbeitszeit" maxlength="255" required></label>
+                    {% for key, label in [('monday','Mo'),('tuesday','Di'),('wednesday','Mi'),('thursday','Do'),('friday','Fr'),('saturday','Sa'),('sunday','So')] %}
+                        <label>{{ label }} (Std.)<input type="number" name="{{ key }}_hours" min="0" max="24" step="0.25" value="{{ 0 if key in ['saturday','sunday'] else (form_user.standard_weekly_hours / 5)|round(2) }}"></label>
+                    {% endfor %}
+                    <button class="button primary" type="submit">Arbeitszeitplan hinzufügen</button>
+                </form>
+                {% if form_user.work_schedules %}<ul>{% for plan in form_user.work_schedules %}<li>{{ plan.valid_from|german_date }}: {{ plan.name }}</li>{% endfor %}</ul>{% endif %}
+            </section>
+            <section class="card compact-card">
+                <h2>Urlaubsanspruch buchen</h2>
+                <form method="post" action="/admin/users/{{ form_user.id }}/vacation-entitlements" class="form-grid">
+                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                    <label>Jahr<input type="number" name="year" min="2000" max="2200" value="{{ now_year }}" required></label>
+                    <label>Tage (+/−)<input type="number" name="days" step="0.5" required></label>
+                    <label>Art<select name="kind"><option value="adjustment">Korrektur</option><option value="carryover">Übertrag</option><option value="contractual">Zusatzurlaub</option></select></label>
+                    <label>Verfällt am<input type="date" name="expires_on"></label>
+                    <label class="full-width">Begründung<input name="reason" maxlength="500" required></label>
+                    <button class="button primary" type="submit">Anspruch buchen</button>
+                </form>
+            </section>
             <aside class="user-qr" aria-label="Mobile Anmeldung">
                 <h2 class="user-qr__title">Mobile Anmeldung</h2>
                 <p class="user-qr__hint">QR-Code mit der Kamera oder der Erfassung-App scannen, um {{ form_user.full_name }} direkt auf dem Mobilgerät anzumelden.</p>
                 <div class="user-qr__code">
                     <img id="user-qr-img"
-                         src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={{ mobile_quick_login_url | urlencode }}"
+                         src="/admin/users/{{ form_user.id }}/mobile-qr.png?size=200"
                          alt="QR-Code für die mobile Anmeldung von {{ form_user.full_name }}"
                          width="200" height="200" loading="lazy">
                 </div>
                 <div class="user-qr__actions">
                     <a class="button ghost small"
-                       href="https://api.qrserver.com/v1/create-qr-code/?size=400x400&download=1&data={{ mobile_quick_login_url | urlencode }}"
+                       href="/admin/users/{{ form_user.id }}/mobile-qr.png?size=400&amp;download=1"
                        download="erfassung-login-{{ form_user.username }}.png">Download</a>
                     <a class="button ghost small" href="/admin/users/{{ form_user.id }}">Neu generieren</a>
                 </div>

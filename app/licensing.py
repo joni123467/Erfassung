@@ -151,6 +151,7 @@ FEATURES: dict[str, str] = {
     "vacation": "Urlaubsplanung",
     "reports": "Auswertungen & Exporte",
     "terminals": "RFID-Terminals",
+    "calendar_sync": "Kalendersynchronisation",
 }
 
 # --- Zustände --------------------------------------------------------------
@@ -528,7 +529,10 @@ class LicenseStatus:
         Die Basis – Stempeln, eigene Zeitübersicht, Benutzerverwaltung,
         Sicherungen – hängt nicht an dieser Prüfung.
         """
-        return self.add_ons_available and name in self.features
+        available = self.add_ons_available and name in self.features
+        if name == "calendar_sync":
+            return available and "vacation" in self.features
+        return available
 
     def to_dict(self) -> dict[str, Any]:
         """Für die API – ohne Aktivierungsschlüssel und ohne Signatur."""
