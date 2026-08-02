@@ -243,7 +243,9 @@ def _vacation_overview_rows(
             continue
         # Halbe Tage zählen halb – sowohl in der Tagesspalte als auch in der
         # Anrechnung (korrigiert in 0.14.2, vorher standen dort ganze Tage).
-        days = services.vacation_days_in_range(vacation, overlap_start, overlap_end)
+        days = services.vacation_days_in_range(
+            vacation, overlap_start, overlap_end, user=vacation.user
+        )
         vacation_type = "Überstundenabbau" if vacation.use_overtime else "Urlaub"
         if vacation.status == VacationStatus.APPROVED:
             credited = services.vacation_minutes_in_range(

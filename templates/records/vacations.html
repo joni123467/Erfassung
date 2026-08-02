@@ -5,7 +5,7 @@
 {% include "records/_nav.html" %}
 <section class="card records-hero">
     <div class="card-header">
-        <h1>Urlaubsübersicht</h1>
+        <h1>Urlaubsübersicht</h1><div class="actions"><a class="button ghost" href="/records/vacations/calendar">Mein Kalender</a>{% if can_team_calendar %}<a class="button ghost" href="/records/vacations/calendar?scope=team">Teamkalender</a>{% endif %}</div>
     </div>
     <dl class="dashboard-summary-list records-summary">
         <div class="dashboard-summary-list__item">
@@ -48,6 +48,14 @@
     <form method="post" action="/vacations" class="form-grid">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <label>
+            Abwesenheitsart
+            <select name="absence_type_key">
+                {% for type in absence_types %}
+                    <option value="{{ type.key }}">{{ type.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
             Startdatum
             <input type="date" name="start_date" required>
             <span class="checkbox">
@@ -67,6 +75,7 @@
             Halbe Tage zählen mit 0,5 Urlaubstagen und der halben Tagessollzeit.
             Bei einem eintägigen Antrag genügt eines der beiden Häkchen.
         </p>
+        {% if can_team_calendar %}<p class="form-hint full-width" id="vacation-conflict-hint" role="status">Zeitraum wählen, um gleichzeitige Teamabwesenheiten zu sehen.</p>{% endif %}
         <label class="full-width">
             Kommentar
             <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
@@ -100,6 +109,7 @@
             <thead>
             <tr>
                 <th>Zeitraum</th>
+                <th>Art</th>
                 <th>Status</th>
                 <th>Überstundenabbau</th>
                 <th>Kommentar</th>
@@ -110,6 +120,7 @@
             {% for vacation in vacations %}
                 <tr class="status-{{ vacation.status }}">
                     <td>{{ vacation.start_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_start %} <small>(½)</small>{% endif %}{% if vacation.start_date != vacation.end_date %} – {{ vacation.end_date.strftime('%d.%m.%Y') }}{% if vacation.half_day_end %} <small>(½)</small>{% endif %}{% endif %}</td>
+                    <td>{{ vacation.absence_type_key|replace('vacation', 'Urlaub')|replace('overtime', 'Überstundenabbau')|replace('sick', 'Abwesend')|replace('special', 'Sonderurlaub')|replace('parental', 'Elternzeit')|replace('unpaid', 'Unbezahlt') }}</td>
                     <td class="status-label status-{{ vacation.status }}">
                         {% if vacation.status == 'approved' %}
                             Genehmigt
@@ -145,10 +156,11 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="5">Keine Urlaubsanträge vorhanden.</td></tr>
+                <tr><td colspan="6">Keine Abwesenheitsanträge vorhanden.</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
 </section>
+{% if can_team_calendar %}<script type="application/json" id="team-conflict-data">{{ team_conflicts|tojson }}</script><script>(function(){const data=JSON.parse(document.getElementById('team-conflict-data').textContent||'[]'),start=document.querySelector('input[name=start_date]'),end=document.querySelector('input[name=end_date]'),hint=document.getElementById('vacation-conflict-hint');if(!start||!end||!hint)return;const update=()=>{if(!start.value||!end.value)return;const hits=data.filter(x=>x.start<=end.value&&x.end>=start.value);hint.textContent=hits.length?`Im gewählten Zeitraum sind ${hits.length} Teammitglied${hits.length===1?'':'er'} ebenfalls abwesend: ${[...new Set(hits.map(x=>x.person))].join(', ')}.`:'Keine bekannte genehmigte Teamabwesenheit überschneidet sich.'};start.addEventListener('change',update);end.addEventListener('change',update);})();</script>{% endif %}
 {% endblock %}

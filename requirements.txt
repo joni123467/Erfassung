@@ -14,3 +14,4 @@ PyMySQL==1.1.1
 psycopg2-binary==2.9.10
 smbprotocol==1.15.0
 cryptography==43.0.3
+qrcode[pil]==8.2

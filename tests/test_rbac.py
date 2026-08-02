@@ -201,7 +201,7 @@ def test_registry_is_consistent(client):
         # Seit 0.14.2: die Urlaubsübersicht ist ein eigenes Recht – wer den
         # Resturlaub eines Teams sieht, entscheidet nicht zwingend über
         # Anträge.
-        "Vacation.Overview",
+        "Vacation.Overview", "Vacation.TeamCalendar",
         # Seit 0.19.0: Compliance-Daten zu bearbeiten ist ein eigenes Recht.
         # ``Time.View`` bleibt reines Leserecht.
         "Time.Compliance.Manage",
