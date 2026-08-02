@@ -212,6 +212,12 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
             # entscheiden. Wer plant, braucht den Überblick; wer genehmigt,
             # nicht zwingend umgekehrt.
             Permission(
+                key="Vacation.TeamCalendar",
+                label="Teamkalender einsehen",
+                description="Abwesenheitszeiträume im eigenen Team oder für alle Benutzer einsehen.",
+                scoped=True,
+            ),
+            Permission(
                 key="Vacation.Overview",
                 label="Urlaubsübersicht einsehen",
                 description=(

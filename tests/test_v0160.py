@@ -252,8 +252,8 @@ def _self_entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0160(client):
-    assert client.app.version == "0.20.2"
-    assert client.get("/health").json()["version"] == "0.20.2"
+    assert client.app.version == "0.20.4"
+    assert client.get("/health").json()["version"] == "0.20.4"
 
 
 # ── 1. Selbstbedienungsrechte ─────────────────────────────────────────────

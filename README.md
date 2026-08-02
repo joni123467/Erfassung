@@ -2,7 +2,19 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.2`
+**Version:** `0.20.4`
+
+> Seit 0.20.4: **Arbeitszeit- und Abwesenheitsplanung** – versionierte
+> Wochentags-Sollzeiten bilden Teilzeit, Vier-/Sechs-Tage-Woche und Samstagsarbeit
+> historisch korrekt ab. Persönlicher und datensparsamer Teamkalender,
+> widerrufbare iCalendar-Feeds, allgemeine Abwesenheitsarten und append-only
+> Anspruchsbuchungen erweitern die Urlaubsplanung. Mobile Login-QR-Codes werden
+> vollständig lokal erzeugt; Login-URLs fließen nicht mehr an `api.qrserver.com`
+> oder andere Dritte. Details in
+> [`docs/RELEASE_NOTES_0.20.4.md`](docs/RELEASE_NOTES_0.20.4.md).
+> Der Teamkalender liegt mit eigenem Recht direkt unter „Urlaub“ und bietet
+> Monat, Woche und Liste. Arbeitszeitpläne werden in einem Modal verwaltet;
+> ihre Wochenstunden sind die Summe der sieben Tageswerte.
 
 > Seit 0.20.2: **Die Jahresprüfung für Sonn- und Nachtarbeit rechnet an drei
 > Stellen genauer.** Exakt zwei Stunden Nachtzeit sind **keine** Nachtarbeit
@@ -450,7 +462,7 @@ Berechtigungen**.
 | Eigene Zeiterfassung | `Own.Time.Edit`, `Own.Time.Cancel`, `Own.Comment.Edit`, `Own.Vacation.Request` | – |
 | Aufträge & Firmen | `Company.Create`, `Company.Manage` | – |
 | Zeiten & Freigaben | `Time.Approve`, `Time.Edit`, `Time.View`, `Time.Compliance.Manage` | ✔ |
-| Urlaub | `Vacation.Manage`, `Vacation.Overview` | ✔ |
+| Urlaub | `Vacation.Manage`, `Vacation.TeamCalendar`, `Vacation.Overview` | ✔ |
 | Benutzerverwaltung | `User.View`, `User.Create`, `User.Edit`, `User.Delete` | ✔ |
 | System | `System.Groups`, `System.Terminals`, `System.Roles`, `System.Settings`, `System.Backup` | – |
 
@@ -1146,6 +1158,32 @@ Datenbankgrenzen hinweg.
 
 ## Urlaub
 
+### Arbeitszeitpläne, Abwesenheitskalender und iCalendar (seit 0.20.4)
+
+Unter *Administration → Benutzer → Person* können Arbeitszeitpläne mit einem
+Gültigkeitsbeginn und eigenen Sollstunden für Montag bis Sonntag angelegt
+werden. Der vorherige offene Plan endet automatisch am Vortag. Ohne Plan gilt
+für Bestandsdaten weiterhin die bisherige Mo–Fr-Berechnung.
+
+Persönlicher und datensparsamer Teamkalender liegen gemeinsam unter
+`/records/vacations/calendar`; der frühere Adminpfad leitet dorthin weiter. Vertrauliche
+Abwesenheiten und Teamfeeds zeigen ausschließlich „Abwesend"; Kommentare werden
+nie exportiert. Der Zusatzbaustein `calendar_sync` schaltet persönliche und
+Team-ICS-Feeds frei. Feed-Adressen enthalten ein widerrufbares Geheimnis, von
+dem die Datenbank nur SHA-256 speichert. Erfassung bleibt führend; der Feed ist
+lesend und verändert keine Anträge.
+
+Neben Urlaub und Überstundenabbau stehen Krankheit/„Abwesend", Sonderurlaub,
+Elternzeit und unbezahlte Freistellung als datensparsame Typen bereit. Das
+Urlaubskonto kann über begründete, append-only Zu-/Abbuchungen mit optionalem
+Verfallsdatum ergänzt werden; abgelaufene Buchungen erhöhen den verfügbaren
+Anspruch nicht mehr.
+
+Ist „Übertrag aus dem Vorjahr“ aktiviert, legt der Startprozess den tatsächlichen
+Rest des Vorjahres einmalig als Anspruchsbuchung im neuen Jahr an. Ein eindeutiger
+Quellschlüssel verhindert Doppelüberträge. Ein endgültiger Verfall erfolgt nicht
+automatisch, sondern bleibt eine dokumentierte Betreiberentscheidung.
+
 Urlaubsanträge laufen über `/records/vacations`. Zusätzlich zu ganzen Tagen
 lassen sich **erster und letzter Tag halbieren** (seit 0.11.1): Beim Antrag
 stehen unter Start- und Enddatum je ein Häkchen „nur ein halber Tag". Bei einem
@@ -1247,6 +1285,7 @@ Zubuchbar sind vier Bausteine:
 | `vacation` | Urlaubsanträge, Urlaubskonten, Urlaubsfreigaben |
 | `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
 | `terminals` | RFID-Terminals und Geräte-Synchronisation |
+| `calendar_sync` | widerrufbare persönliche und Team-iCalendar-Feeds |
 
 Eine Lizenz ohne jeden Baustein ist damit eine reine **Stempel-Lizenz** – und
 genau so viel kann eine Installation ohne Lizenz auch.

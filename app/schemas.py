@@ -366,6 +366,7 @@ class VacationRequestBase(BaseModel):
     #: genügt eines der beiden Kennzeichen.
     half_day_start: bool = False
     half_day_end: bool = False
+    absence_type_key: str = "vacation"
 
 
 class VacationRequestCreate(VacationRequestBase):
