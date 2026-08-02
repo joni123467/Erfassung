@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Abwesenheitskalender – Erfassung{% endblock %}
+{% block content %}
+{% set records_active = 'vacations' %}{% include "records/_nav.html" %}
+<nav class="vacation-subnav" aria-label="Urlaubsansichten">
+  <a href="/records/vacations">Meine Anträge</a>
+  <a class="is-active" href="/records/vacations/calendar?scope=self">Mein Kalender</a>
+  {% if can_team_calendar %}<a class="{% if calendar_scope == 'team' %}is-active{% endif %}" href="/records/vacations/calendar?scope=team">Teamkalender</a>{% endif %}
+</nav>
+<section class="card vacation-calendar-card">
+  <div class="card-header"><div><h1>{{ 'Teamkalender' if calendar_scope == 'team' else 'Mein Kalender' }}</h1><p class="card-header__hint">Abwesenheiten abstimmen, ohne vertrauliche Gründe offenzulegen.</p></div></div>
+  <form method="get" class="calendar-toolbar">
+    <input type="hidden" name="scope" value="{{ calendar_scope }}">
+    <label>Monat<input type="month" name="month" value="{{ month_value }}"></label>
+    <div class="calendar-view-switch" aria-label="Darstellung">
+      {% for value, label in [('month','Monat'),('week','Woche'),('list','Liste')] %}<button name="view" value="{{ value }}" class="button small {% if calendar_view == value %}primary{% else %}ghost{% endif %}">{{ label }}</button>{% endfor %}
+    </div>
+    {% if can_sync %}<button type="button" class="button ghost" id="calendar-feed-open">Kalender abonnieren</button>{% endif %}
+  </form>
+  {% if calendar_view != 'list' %}
+  <div class="vacation-calendar-grid" role="grid" aria-label="Kalender {{ month_value }}">
+    {% for label in ['Mo','Di','Mi','Do','Fr','Sa','So'] %}<div class="vacation-calendar-weekday" role="columnheader">{{ label }}</div>{% endfor %}
+    {% for week in weeks %}{% for cell in week %}
+      <div class="vacation-calendar-day{% if not cell %} is-empty{% endif %}{% if cell and cell.holiday %} is-holiday{% endif %}" role="gridcell">
+      {% if cell %}<div class="vacation-calendar-date"><span>{{ cell.number }}</span>{% if cell.holiday %}<small title="{{ cell.holiday }}">{{ cell.holiday }}</small>{% endif %}</div>
+        <div class="vacation-calendar-events">{% for event in cell.events %}<div class="vacation-calendar-event status-{{ event.status }}" title="{{ event.person }} {{ event.label }}">{% if event.person %}<strong>{{ event.person }}</strong>{% endif %} {{ event.label }}{% if event.half %} · ½{% endif %}</div>{% endfor %}</div>
+      {% endif %}</div>
+    {% endfor %}{% endfor %}
+  </div>
+  {% else %}
+  <div class="table-scroll"><table class="striped-table"><thead><tr>{% if calendar_scope == 'team' %}<th>Person</th>{% endif %}<th>Zeitraum</th><th>Anzeige</th><th>Status</th></tr></thead><tbody>
+  {% for row in calendar_rows %}<tr>{% if calendar_scope == 'team' %}<td>{{ row.person }}</td>{% endif %}<td>{{ row.start|german_date }} – {{ row.end|german_date }}</td><td>{{ row.label }}</td><td>{{ row.status }}</td></tr>{% else %}<tr><td colspan="4">Keine Abwesenheiten.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% endif %}
+</section>
+{% if can_sync %}<div class="modal" id="calendar-feed-modal" aria-hidden="true"><div class="modal__backdrop" data-close></div><div class="modal__dialog modal__dialog--scroll" role="dialog" aria-modal="true" aria-labelledby="calendar-feed-title"><header class="modal__head"><h3 id="calendar-feed-title">Kalender abonnieren</h3><button type="button" class="modal__close" data-close aria-label="Schließen">&times;</button></header><div class="modal__body"><p>Die geheime Feed-Adresse ist wie ein Kennwort zu behandeln. Exportiert werden nur genehmigte Abwesenheiten und keine Kommentare.</p>{% if feed_url %}<label>Neue Feed-Adresse<input readonly value="{{ feed_url }}" onclick="this.select()"></label>{% endif %}<form method="post" action="/records/vacations/calendar/feed" class="form-grid"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><label>Umfang<select name="scope"><option value="self">Mein Kalender</option>{% if can_team_feed %}<option value="team">Mein Team</option>{% endif %}</select></label><button class="button primary">Neue Feed-Adresse erzeugen</button></form>{% if feeds %}<ul>{% for feed in feeds %}<li>{{ feed.scope }} · {{ feed.created_at }} <form class="inline-form" method="post" action="/records/vacations/calendar/feed/{{ feed.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><button class="button danger small">Widerrufen</button></form></li>{% endfor %}</ul>{% endif %}</div></div></div>
+<script>(function(){const m=document.getElementById('calendar-feed-modal'),o=document.getElementById('calendar-feed-open');if(!m||!o)return;const show=v=>{m.classList.toggle('is-visible',v);m.setAttribute('aria-hidden',v?'false':'true');document.body.classList.toggle('modal-open',v)};o.addEventListener('click',()=>show(true));m.querySelectorAll('[data-close]').forEach(x=>x.addEventListener('click',()=>show(false)));document.addEventListener('keydown',e=>{if(e.key==='Escape')show(false)});{% if feed_url %}show(true);{% endif %}})();</script>{% endif %}
+{% endblock %}

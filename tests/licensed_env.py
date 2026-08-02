@@ -45,7 +45,7 @@ PUBLIC_PEM = _PRIVATE_KEY.public_key().public_bytes(
 ).decode("ascii")
 
 #: Alle zubuchbaren Bausteine – der Normalfall für einen Fachtest.
-ALL_FEATURES = ("orders", "vacation", "reports", "terminals")
+ALL_FEATURES = ("orders", "vacation", "reports", "terminals", "calendar_sync")
 
 
 def _sign(document: dict) -> dict:

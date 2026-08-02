@@ -70,8 +70,8 @@ def login(client):
 # --- version ---------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.20.2"
-    assert client.get("/health").json()["version"] == "0.20.2"
+    assert client.main.APP_VERSION == "0.20.5"
+    assert client.get("/health").json()["version"] == "0.20.5"
 
 
 # --- navigation: reiter design + single open behaviour ---------------------
@@ -138,7 +138,8 @@ def test_user_edit_shows_qr_code(client):
     login(client)
     html = client.get("/admin/users/1").text
     assert "user-qr" in html
-    assert "create-qr-code" in html
+    assert "/mobile-qr.png?size=200" in html
+    assert "api.qrserver.com" not in html
     assert "Mobile Anmeldung" in html
     assert "Neu generieren" in html
 
@@ -159,7 +160,7 @@ def test_settings_has_sections(client):
         assert f"<legend>{section}</legend>" in html
     assert "settings-section" in html
     # Allgemein shows the running version and database backend.
-    assert "0.20.2" in html
+    assert "0.20.5" in html
     assert "SQLite" in html
 
 

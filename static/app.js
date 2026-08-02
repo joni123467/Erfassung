@@ -86,13 +86,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function fillPicker(picker, locations, keepValue) {
     const previous = keepValue ? picker.value : '';
-    // „Remote" gibt es nur, wenn der Server es gerendert hat – das Kennzeichen
-    // hängt am Benutzer. Der Standort selbst hängt nicht daran.
-    const allowRemote = picker.hasAttribute('data-allow-remote');
+    // „Vor Ort" und „Remote" stehen **immer** in der Liste – genau wie im
+    // servergerenderten Formular. Bis 0.20.2 fragte diese Stelle noch ein
+    // Attribut `data-allow-remote` ab, das die Vorlage seit 0.20.1 gar nicht
+    // mehr setzt. `hasAttribute` lieferte damit immer false, und sobald eine
+    // Firma gewählt war, baute dieses Skript die Liste **ohne** „Remote" neu
+    // auf. Die Serverantwort war korrekt, erst der Browser verlor die Option.
     picker.innerHTML = '';
-    const fixed = allowRemote
-      ? [['onsite', 'Vor Ort'], ['remote', 'Remote']]
-      : [['onsite', 'Vor Ort']];
+    const fixed = [['onsite', 'Vor Ort'], ['remote', 'Remote']];
     fixed.forEach(([value, label]) => {
       const option = document.createElement('option');
       option.value = value;
