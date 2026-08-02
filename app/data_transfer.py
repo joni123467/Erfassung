@@ -1,16 +1,17 @@
-"""Logical, database-independent data export/import (§0.9.9).
+"""Logischer, datenbankunabhängiger Export und Import.
 
-The backup/restore subsystem must be fully database independent: backups store a
-*logical* representation of all business data (JSON per table) instead of a raw
-SQLite file or a vendor-specific dump. The same logical representation can be
-imported into **any** configured backend (SQLite, MySQL, MariaDB, PostgreSQL),
-which is what makes cross-database restore possible.
+Sicherung und Rücksicherung müssen von der Datenbank unabhängig sein. Ein
+Archiv enthält deshalb eine **logische** Abbildung aller Geschäftsdaten – je
+Tabelle eine JSON-Struktur – statt einer SQLite-Datei oder eines
+herstellerspezifischen Abzugs. Dieselbe Abbildung lässt sich in **jedes**
+konfigurierte Backend einspielen (SQLite, MySQL, MariaDB, PostgreSQL); erst das
+macht eine Rücksicherung über Datenbankgrenzen hinweg möglich.
 
-Values are read through the typed SQLAlchemy ``Table`` objects (so they come back
-as native Python types) and serialised to JSON-safe primitives. On import the
-column types drive the conversion back to native Python objects, so every dialect
-binds them correctly. The import runs inside a single transaction and never
-leaves a partial state behind.
+Gelesen wird über die typisierten ``Table``-Objekte von SQLAlchemy, sodass
+native Python-Werte zurückkommen; geschrieben wird als JSON-taugliche
+Grundtypen. Beim Import führen die Spaltentypen zurück zu nativen Werten, damit
+jeder Dialekt sie korrekt bindet. Der Import läuft in **einer** Transaktion und
+hinterlässt nie einen halben Stand.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from . import models
 
 LOGGER = logging.getLogger("erfassung.application")
 
-# Current on-disk layout of the logical export inside a backup archive.
+# So liegt der logische Export im Sicherungsarchiv.
 BACKUP_FORMAT_VERSION = 1
 
 
@@ -49,7 +50,8 @@ def _serialize(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, bytes):
         return {"__bytes__": base64.b64encode(value).decode("ascii")}
-    # Decimal and any other exotic type -> string (lossless enough for our data).
+    # ``Decimal`` und alles weitere Ausgefallene wird zur Zeichenkette – für
+    # unsere Daten verlustfrei genug.
     return str(value)
 
 
@@ -90,7 +92,7 @@ def _column_python_types(table) -> dict[str, type | None]:
 # -- export -----------------------------------------------------------------
 
 def export_database(engine: Engine) -> dict[str, Any]:
-    """Return a JSON-serialisable logical dump of every model table."""
+    """Logischer Abzug aller Modelltabellen als JSON-taugliche Struktur."""
     tables: dict[str, list[dict[str, Any]]] = {}
     with engine.connect() as conn:
         for table in ordered_tables():
@@ -127,12 +129,15 @@ def _fix_postgres_sequences(engine: Engine) -> None:
 
 
 def import_database(engine: Engine, payload: dict[str, Any]) -> dict[str, int]:
-    """Replace all model-table data with ``payload`` inside one transaction.
+    """Alle Modelltabellen in **einer** Transaktion durch ``payload`` ersetzen.
 
-    Only columns present in the *current* schema are imported; unknown columns in
-    the backup are ignored and missing columns fall back to their model default.
-    Returns the per-table imported row counts. Raises on any error (the
-    transaction is rolled back, so no partial import remains).
+    Übernommen werden nur Spalten, die es im **aktuellen** Schema gibt: Spalten,
+    die das Archiv zusätzlich mitbringt, werden übergangen; fehlende Spalten
+    bekommen den Vorgabewert des Modells. So lässt sich auch eine ältere
+    Sicherung einspielen.
+
+    Rückgabe sind die übernommenen Zeilenzahlen je Tabelle. Bei jedem Fehler
+    wird die Transaktion zurückgerollt – ein halber Import bleibt nie zurück.
     """
     tables_data = payload.get("tables", {}) if isinstance(payload, dict) else {}
     inspector = inspect(engine)
@@ -141,7 +146,7 @@ def import_database(engine: Engine, payload: dict[str, Any]) -> dict[str, int]:
 
     ordered = [t for t in ordered_tables() if t.name in existing]
     with engine.begin() as conn:
-        # Clear existing rows in reverse FK order (children first).
+        # Bestand in umgekehrter Fremdschlüsselreihenfolge leeren – Kinder zuerst.
         for table in reversed(ordered):
             conn.execute(table.delete())
         # Insert backup rows in FK order (parents first).

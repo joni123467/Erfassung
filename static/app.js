@@ -5,8 +5,9 @@
 // Registrierungs-URL flatterte dann zwischen ?v=<version> und ?v=dev und
 // erzeugte ständige Neuinstallationen mit falschem Cache-Namen.
 
-// Info tooltips: hover/focus is pure CSS; this click handler covers touch
-// devices (tap to open, tap elsewhere or Escape to close).
+// Hinweisblasen: Zeigen und Tastaturfokus regelt reines CSS. Dieser Klickgriff
+// ist für Geräte mit Berührungseingabe – antippen öffnet, ein Tipp daneben oder
+// Escape schließt.
 document.addEventListener('click', (event) => {
   const trigger = event.target.closest('.info-tip__trigger');
   const openTips = document.querySelectorAll('.info-tip.is-open');
@@ -35,15 +36,19 @@ document.addEventListener('keydown', (event) => {
 
 window.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
-    // The service worker is served from the application root (/sw.js) with a
-    // `Service-Worker-Allowed: /` header so its scope can be the whole origin.
-    // Registering a /static/sw.js with {scope:'/'} would be REJECTED by the
-    // browser (a worker's max scope is its own path), which is why the offline
-    // start previously failed: install never ran, nothing was precached.
+    // Der Service Worker wird aus dem Wurzelverzeichnis ausgeliefert (/sw.js),
+    // samt Kopffeld `Service-Worker-Allowed: /`. Nur so darf sein Bereich der
+    // ganze Ursprung sein.
     //
-    // updateViaCache 'none' + explicit update() checks make releases reach
-    // installed PWAs reliably (esp. iOS): the /sw.js route stamps the version
-    // into the script bytes, so every check after a release finds a new worker.
+    // Eine Registrierung von /static/sw.js mit {scope:'/'} würde der Browser
+    // **abweisen** – der Bereich eines Workers reicht höchstens so weit wie
+    // sein eigener Pfad. Genau daran scheiterte früher der Offline-Start: Die
+    // Installation lief nie, und nichts wurde vorab gespeichert.
+    //
+    // updateViaCache 'none' und ausdrückliche update()-Prüfungen sorgen dafür,
+    // dass eine neue Fassung installierte Apps zuverlässig erreicht – vor allem
+    // unter iOS. Die Route /sw.js stanzt die Version in die Skriptbytes, jede
+    // Prüfung nach einer Veröffentlichung findet dadurch einen neuen Worker.
     navigator.serviceWorker
       .register('/sw.js', { scope: '/', updateViaCache: 'none' })
       .then((registration) => {

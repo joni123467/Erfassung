@@ -22,7 +22,7 @@
             <header class="dashboard-day-card__header">
                 <div>
                     <h1 class="dashboard-heading">Heute</h1>
-                    <p class="dashboard-day-card__date">{{ today.strftime('%A, %d.%m.%Y') }}</p>
+                    <p class="dashboard-day-card__date">{{ today | german_date }}</p>
                 </div>
                 <div class="dashboard-day-card__total">
                     <span>Gesamtzeit</span>
@@ -126,11 +126,11 @@
                         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/dashboard">
                         <input type="hidden" name="action" value="start_work">
-                        {% if can_flag_remote %}
-                            {# Der Einsatzort gilt für die Buchung, nicht für einen
-                               einzelnen Knopf – deshalb eine eigene Zeile darüber. #}
-                            <div class="punch-controls__location">{{ location_toggle() }}</div>
-                        {% endif %}
+                        {# Der Einsatzort gilt für die Buchung, nicht für einen
+                           einzelnen Knopf – deshalb eine eigene Zeile darüber.
+                           Beim Schnellstart gibt es keine Firma und damit keine
+                           Standortliste; hier bleibt es beim Umschalter. #}
+                        <div class="punch-controls__location">{{ location_toggle() }}</div>
                         <div class="punch-controls__row">
                             <button type="submit" class="button primary">Arbeitszeit starten</button>
                             {% if companies or can_create_companies %}
@@ -181,12 +181,7 @@
                                 Kommentar (optional)
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
-                            {# Kein can_flag_remote hier: Der Standort einer Firma ist
-                               keine Remote-Arbeit. Wer nie remote arbeitet, muss
-                               trotzdem sagen können, an welchem Standort er ist –
-                               die Option „Remote" blendet das Makro selbst aus. #}
-                            {{ location_picker(catalogue=location_catalogue_data, block=True,
-                                               allow_remote=can_flag_remote) }}
+                            {{ location_picker(catalogue=location_catalogue_data, block=True) }}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
                                     <span class="modal-action__icon" aria-hidden="true">✕</span>
@@ -291,7 +286,7 @@
             <ul class="dashboard-week-card__days">
                 {% for day in weekly_summary.days %}
                     <li class="dashboard-week-card__day {% if day.is_today %}is-today{% endif %}">
-                        <span class="dashboard-week-card__day-label">{{ day.date.strftime('%a, %d.%m.') }}</span>
+                        <span class="dashboard-week-card__day-label">{{ day.date | weekday_short }}, {{ day.date.strftime('%d.%m.') }}</span>
                         <span class="dashboard-week-card__day-actual">
                             {{ day.minutes|format_minutes }} Std
                             {% if day.vacation_minutes %}
@@ -481,8 +476,7 @@
             Kommentar
             <textarea name="notes" rows="2" placeholder="z. B. Projekt oder Kunde"></textarea>
         </label>
-        <div class="full-width">{{ location_picker(catalogue=location_catalogue_data,
-                                                   allow_remote=can_flag_remote) }}</div>
+        <div class="full-width">{{ location_picker(catalogue=location_catalogue_data) }}</div>
         <button type="submit" class="button primary full-width">Zeitbuchung speichern</button>
     </form>
     <p class="form-hint">Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.</p>

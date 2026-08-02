@@ -1,24 +1,28 @@
-"""Professional, file based logging system for Erfassung.
+"""Dateibasierte Protokollierung.
 
-One rotating log file per channel lives in :data:`app.paths.LOGS_DIR`
-(:data:`CHANNELS` is the single source of truth):
+Je Kanal liegt eine rotierende Protokolldatei in :data:`app.paths.LOGS_DIR`;
+:data:`CHANNELS` ist dafür die einzige Quelle:
 
 ===================  ========================================================
-``application.log``  general application events
-``api.log``          API calls
-``sync.log``         offline / TimeMoto synchronisation
-``security.log``     logins, logouts, permission related events
-``error.log``        errors and exceptions (aggregated from all channels)
-``audit.log``        administrative actions
-``backup.log``       backup and restore (since 0.9.4)
-``database.log``     database management and migration (since 0.9.7)
-``terminal.log``     terminal management and synchronisation (since 0.9.8)
-``license.log``      licence activation and verification (since 0.11.0)
+``application.log``  allgemeine Anwendungsereignisse
+``api.log``          Aufrufe der Schnittstelle
+``sync.log``         Offline- und TimeMoto-Synchronisation
+``security.log``     An- und Abmeldungen, Rechteentscheidungen
+``error.log``        Fehler und Ausnahmen, gesammelt aus allen Kanälen
+``audit.log``        administrative Vorgänge
+``backup.log``       Sicherung und Rücksicherung (seit 0.9.4)
+``database.log``     Datenbankverwaltung und Umzüge (seit 0.9.7)
+``terminal.log``     Terminalverwaltung und -abgleich (seit 0.9.8)
+``license.log``      Lizenzaktivierung und -prüfung (seit 0.11.0)
 ===================  ========================================================
 
-Every record is structured (timestamp, level, channel, optional user, message)
-and rotated by size.  Behaviour is driven by :class:`app.app_config.LoggingConfig`
-which is persisted in the ``config`` volume, so changes survive restarts.
+Jeder Eintrag ist gleich aufgebaut: Zeitpunkt, Stufe, Kanal, wahlweise Benutzer
+und die Meldung; rotiert wird nach Dateigröße. Gesteuert wird das über
+:class:`app.app_config.LoggingConfig` im ``config``-Volume – eine Änderung
+übersteht damit jeden Neustart.
+
+**Nie protokolliert werden** Kennwörter, PINs, Tokens, API-Schlüssel und exakte
+Standortdaten.
 """
 
 from __future__ import annotations
@@ -59,7 +63,7 @@ _CONFIGURED = False
 
 
 class _ContextFilter(logging.Filter):
-    """Ensure ``channel`` and ``user`` fields are always present."""
+    """Sorgt dafür, dass ``channel`` und ``user`` in jedem Eintrag stehen."""
 
     def __init__(self, channel: str) -> None:
         super().__init__()
@@ -111,10 +115,10 @@ def _clear_managed_handlers() -> None:
 
 
 def configure_logging(config: LoggingConfig | None = None) -> LoggingConfig:
-    """(Re)configure all logging handlers from ``config``.
+    """Alle Protokollziele aus ``config`` (neu) aufsetzen.
 
-    Idempotent: existing managed handlers are removed before new ones are
-    attached, so this can be called again whenever settings change.
+    Beliebig oft aufrufbar: Bereits verwaltete Ziele werden abgehängt, bevor
+    neue angebracht werden. Eine geänderte Einstellung greift dadurch sofort.
     """
 
     global _CONFIGURED, _ERROR_HANDLER
@@ -129,7 +133,8 @@ def configure_logging(config: LoggingConfig | None = None) -> LoggingConfig:
 
     _clear_managed_handlers()
 
-    # error.log aggregates ERROR+ records from every channel via the root logger.
+    # ``error.log`` sammelt über den Wurzel-Logger alle Einträge ab Stufe ERROR
+    # aus sämtlichen Kanälen.
     error_handler = _build_handler(channel_path("error"), config, logging.ERROR)
     error_handler.addFilter(_ContextFilter("application"))
     _ERROR_HANDLER = error_handler
@@ -220,7 +225,7 @@ def log_error(message: str, *, user: object = None, exc_info: bool = True) -> No
 
 
 def log_backup(message: str, *, level: int = logging.INFO, user: object = None) -> None:
-    """Backup/restore audit trail in the dedicated backup.log channel (§11)."""
+    """Nachweis zu Sicherung und Rücksicherung im eigenen Kanal ``backup.log``."""
     _log("backup", level, message, user=user)
 
 

@@ -17,10 +17,6 @@ import secrets
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 
-try:  # FastAPI <=0.75 did not re-export BackgroundTasks
-    from fastapi import BackgroundTasks
-except ImportError:  # pragma: no cover - fallback for older FastAPI releases
-    from starlette.background import BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -74,7 +70,7 @@ _HTTPS_ONLY_SESSION = os.environ.get("HTTPS_ONLY_SESSION", "false").lower() == "
 
 
 def get_csrf_token(request: Request) -> str:
-    """Return the CSRF token for the current session, creating it if absent."""
+    """CSRF-Token der laufenden Sitzung; wird bei Bedarf angelegt."""
     if "session" not in request.scope:
         return ""
     token = request.session.get("csrf_token")
@@ -85,16 +81,18 @@ def get_csrf_token(request: Request) -> str:
 
 
 class CSRFMiddleware:
-    """Validate synchronizer CSRF tokens on all state-changing requests.
+    """Prüft das CSRF-Token bei jeder zustandsändernden Anfrage.
 
-    Implemented as a pure ASGI middleware (not ``BaseHTTPMiddleware``): to read
-    the ``csrf_token`` from a form POST we must consume the request body, which
-    would otherwise leave nothing for the downstream endpoint to parse (causing
-    a 422 "Field required" on e.g. /login). We therefore buffer the body and
-    replay it to the application via a fresh ASGI ``receive`` callable.
+    Bewusst als reine ASGI-Middleware und nicht als ``BaseHTTPMiddleware``: Um
+    ``csrf_token`` aus einem Formular zu lesen, muss der Anfragekörper gelesen
+    werden – danach bliebe für den eigentlichen Endpunkt nichts mehr übrig, und
+    etwa ``/login`` antwortete mit „422 Field required". Der Körper wird deshalb
+    zwischengespeichert und der Anwendung über ein frisches ``receive`` erneut
+    vorgelegt.
 
-    SessionMiddleware is registered *after* this middleware so that it runs
-    further out; by the time we execute, ``scope["session"]`` is populated.
+    Die ``SessionMiddleware`` wird **nach** dieser Middleware registriert und
+    läuft dadurch weiter außen: Wenn dieser Code an die Reihe kommt, ist
+    ``scope["session"]`` bereits gefüllt.
     """
 
     _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
@@ -112,7 +110,7 @@ class CSRFMiddleware:
 
     @staticmethod
     def _replay(body: bytes):
-        """Return an ASGI ``receive`` that yields the buffered body once."""
+        """Ein ``receive``, das den zwischengespeicherten Körper einmal ausliefert."""
         delivered = False
 
         async def receive():
@@ -137,10 +135,10 @@ class CSRFMiddleware:
         session = scope.get("session")
         session_token = session.get("csrf_token") if isinstance(session, dict) else None
 
-        # Accept the token from an explicit header (fetch/XHR) …
+        # Token entweder aus einem eigenen Kopffeld (fetch/XHR) …
         submitted_token = request.headers.get("x-csrf-token")
 
-        # … or from the form body. Only then do we consume + replay the stream.
+        # … oder aus dem Formular. Erst dann wird der Körper gelesen und erneut vorgelegt.
         if not submitted_token:
             content_type = request.headers.get("content-type", "")
             if (
@@ -252,11 +250,12 @@ app = FastAPI(
     version=APP_VERSION,
 )
 
-# NOTE: Starlette applies middleware in reverse registration order, so the
-# LAST middleware added becomes the OUTERMOST (runs first). SessionMiddleware
-# must run before CSRFMiddleware, otherwise request.session is not yet populated
-# when the CSRF check reads it — which would reject every POST (incl. /login)
-# with a 403 "Ungültige Sitzung". Therefore register CSRF first, Session last.
+# Achtung: Starlette wendet Middleware in umgekehrter Reihenfolge an – die
+# **zuletzt** hinzugefügte liegt **außen** und läuft zuerst. Die
+# ``SessionMiddleware`` muss vor der ``CSRFMiddleware`` laufen; sonst wäre
+# ``request.session`` noch nicht gefüllt, wenn die CSRF-Prüfung darauf zugreift,
+# und jede POST-Anfrage bekäme ein „403 Ungültige Sitzung" – auch ``/login``.
+# Deshalb zuerst CSRF registrieren, die Sitzung zuletzt.
 app.add_middleware(CSRFMiddleware)
 app.add_middleware(LicenseFeatureMiddleware)
 app.add_middleware(
@@ -272,13 +271,16 @@ _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 @app.get("/sw.js", include_in_schema=False)
 def service_worker() -> Response:
-    """Serve the service worker from the application ROOT.
+    """Den Service Worker aus dem **Wurzelverzeichnis** ausliefern.
 
-    A service worker can only control URLs under the path it is served from,
-    unless the `Service-Worker-Allowed` header widens that scope. The app needs
-    scope "/" so the worker can serve the `/mobile` start_url offline. Serving
-    the script from /sw.js (root) with the header below makes scope "/" valid;
-    a /static/sw.js registration with {scope:'/'} would be rejected by browsers.
+    Ein Service Worker kann nur Adressen unterhalb seines eigenen Pfades
+    bedienen – es sei denn, das Kopffeld ``Service-Worker-Allowed`` erweitert
+    seinen Bereich. Die Anwendung braucht den Bereich „/", damit der Worker die
+    Startadresse ``/mobile`` auch offline ausliefern kann.
+
+    Das Skript unter ``/sw.js`` samt dem Kopffeld unten macht „/" gültig; eine
+    Registrierung von ``/static/sw.js`` mit ``{scope:'/'}`` würden die Browser
+    zurückweisen.
     """
     content = (_STATIC_DIR / "sw.js").read_text(encoding="utf-8")
     # Die Version wird in den DATEIINHALT eingebrannt (nicht nur in die
@@ -293,8 +295,8 @@ def service_worker() -> Response:
         media_type="application/javascript",
         headers={
             "Service-Worker-Allowed": "/",
-            # The SW script itself must never be served stale, otherwise updates
-            # (new cache version) would not roll out.
+            # Das Worker-Skript selbst darf nie aus dem Zwischenspeicher kommen –
+            # sonst käme eine neue Fassung nie bei den Geräten an.
             "Cache-Control": "no-cache",
         },
     )
@@ -335,6 +337,64 @@ def _format_minutes(value: object) -> str:
 
 
 templates.env.filters["format_minutes"] = _format_minutes
+
+#: Wochentage und Monate auf Deutsch – bewusst als eigene Tabelle statt über
+#: ``locale.setlocale``. Die Betriebssystem-Locale ``de_DE`` ist in den
+#: schlanken Container-Abbildern gar nicht vorhanden; ``strftime('%A')`` gab
+#: dort „Monday" aus. Eine Tabelle kann nicht fehlschlagen und macht die
+#: Ausgabe unabhängig davon, wie der Host eingerichtet ist.
+WEEKDAY_NAMES = (
+    "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag",
+)
+WEEKDAY_NAMES_SHORT = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
+MONTH_NAMES = (
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+)
+
+
+def _weekday_name(value: object) -> str:
+    """Ausgeschriebener Wochentag, z. B. ``Dienstag``."""
+    try:
+        return WEEKDAY_NAMES[value.weekday()]  # type: ignore[union-attr]
+    except (AttributeError, IndexError, TypeError):
+        return ""
+
+
+def _weekday_short(value: object) -> str:
+    """Kurzform des Wochentags, z. B. ``Di``."""
+    try:
+        return WEEKDAY_NAMES_SHORT[value.weekday()]  # type: ignore[union-attr]
+    except (AttributeError, IndexError, TypeError):
+        return ""
+
+
+def _month_name(value: object) -> str:
+    """Ausgeschriebener Monat, z. B. ``März``.
+
+    Nimmt ein Datum oder direkt die Monatszahl 1–12.
+    """
+    number = getattr(value, "month", value)
+    try:
+        return MONTH_NAMES[int(number) - 1]
+    except (IndexError, TypeError, ValueError):
+        return ""
+
+
+def _german_date(value: object) -> str:
+    """``Dienstag, 10.03.2026`` – die Standardform in der Oberfläche."""
+    day = _weekday_name(value)
+    try:
+        formatted = value.strftime("%d.%m.%Y")  # type: ignore[union-attr]
+    except AttributeError:
+        return day
+    return f"{day}, {formatted}" if day else formatted
+
+
+templates.env.filters["weekday"] = _weekday_name
+templates.env.filters["weekday_short"] = _weekday_short
+templates.env.filters["month_name"] = _month_name
+templates.env.filters["german_date"] = _german_date
 
 HOLIDAY_STATE_CHOICES = sorted(holiday_calculator.GERMAN_STATES.items(), key=lambda item: item[1])
 HOLIDAY_STATE_CODES = set(holiday_calculator.GERMAN_STATES.keys())
@@ -393,7 +453,7 @@ _UNCOUNTED_STATUSES = frozenset(
 
 
 def _row_get(row: object, key: str, fallback_index: int | None = None):
-    """Return a value from a SQLite PRAGMA row that may be tuple-like."""
+    """Wert aus einer SQLite-PRAGMA-Zeile lesen, die sich wie ein Tupel verhält."""
 
     mapping = getattr(row, "_mapping", None)
     if mapping and key in mapping:
@@ -416,7 +476,7 @@ if _SESSION_SECRET == "zeit-erfassung-secret-key":
 
 
 def get_logged_in_user(request: Request, db: Session) -> Optional[models.User]:
-    """Return the user referenced by the active session, if any."""
+    """Benutzer der laufenden Sitzung – oder ``None``, wenn niemand angemeldet ist."""
 
     if "session" not in request.scope:
         return None
@@ -445,11 +505,12 @@ def _should_force_password_change(path: str) -> bool:
 
 
 def ensure_schema() -> None:
-    # ensure_schema() is a legacy SQLite upgrade helper using SQLite-specific
-    # SQL (PRAGMA, "CREATE UNIQUE INDEX IF NOT EXISTS", length-less VARCHAR).
-    # On MySQL the full current schema is created by metadata.create_all() and
-    # any incremental column changes are applied by the dialect-aware versioned
-    # migrations (app/db_migrations.py + app/db_schema.py).
+    # ``ensure_schema()`` ist die alte SQLite-Aufrüsthilfe und benutzt
+    # SQLite-eigenes SQL (PRAGMA, „CREATE UNIQUE INDEX IF NOT EXISTS", VARCHAR
+    # ohne Längenangabe). Auf MySQL/MariaDB und PostgreSQL entsteht das
+    # vollständige Schema über ``metadata.create_all()``; einzelne Spalten
+    # ergänzen die dialektunabhängigen versionierten Migrationen
+    # (``app/db_migrations.py`` und ``app/db_schema.py``).
     if not database.IS_SQLITE:
         return
     with database.engine.begin() as connection:
@@ -654,7 +715,7 @@ def ensure_schema() -> None:
                     )
                 )
             if "auto_break_deduction" not in columns:
-                # Default 1 keeps the existing behaviour for all current users.
+                # Vorgabe 1 erhält das bisherige Verhalten für alle Bestandsbenutzer.
                 connection.execute(
                     text("ALTER TABLE users ADD COLUMN auto_break_deduction BOOLEAN DEFAULT 1")
                 )
@@ -1345,8 +1406,10 @@ def _seed_default_records() -> None:
 
 
 def _ensure_holiday_data() -> None:
-    """Automatic holiday management: keep the current and the next year
-    populated for the configured region without any manual sync action."""
+    """Feiertage selbsttätig pflegen.
+
+    Das laufende und das kommende Jahr bleiben für die eingestellte Region
+    gefüllt, ohne dass jemand einen Abgleich anstoßen muss."""
     db = database.SessionLocal()
     try:
         region = crud.get_default_holiday_region(db)
@@ -1361,10 +1424,10 @@ def _ensure_holiday_data() -> None:
 
 
 def _initialize_runtime() -> None:
-    """Prepare persistent volumes and the logging system on start-up.
+    """Beim Start die dauerhaften Verzeichnisse und die Protokollierung aufsetzen.
 
-    Section 16 of the 0.9.0 spec: verify that config/data/logs exist, create
-    them if missing and document the result in ``application.log``.
+    Geprüft wird, ob ``config``, ``data`` und ``logs`` vorhanden sind; fehlende
+    werden angelegt und das Ergebnis in ``application.log`` festgehalten.
     """
 
     volume_report = paths.ensure_directories()
@@ -1538,10 +1601,11 @@ def _migrate_legacy_backup_config() -> None:
 
 
 def _log_env_initialization() -> None:
-    """Log the Docker ENV first-initialisation to database.log (§1/§7).
+    """Die Erstinitialisierung über Docker-Umgebungsvariablen festhalten.
 
-    Only fires when the active configuration was created from ``DB_*`` ENV
-    variables on this (first) start. Credentials are never logged (§5).
+    Greift nur, wenn die aktive Konfiguration bei genau diesem ersten Start aus
+    den ``DB_*``-Variablen entstanden ist. Zugangsdaten werden dabei **nie**
+    protokolliert.
     """
     if database.INIT_SOURCE != "env":
         return
@@ -1564,11 +1628,11 @@ def _log_env_initialization() -> None:
 
 
 def _apply_versioned_migrations() -> None:
-    """Apply all versioned, dialect-aware migrations automatically at start-up.
+    """Beim Start alle versionierten Migrationen anwenden.
 
-    Works for SQLite and MySQL/MariaDB. Migration state is tracked in the
-    portable ``schema_migrations`` table, so every schema change is applied
-    exactly once and existing data is preserved (§23).
+    Läuft auf SQLite, MySQL/MariaDB und PostgreSQL. Der Stand steht in der
+    portablen Tabelle ``schema_migrations``; jede Schemaänderung greift dadurch
+    genau einmal, und vorhandene Daten bleiben erhalten.
     """
     env_init = database.INIT_SOURCE == "env"
     if env_init:
@@ -1885,7 +1949,6 @@ def _build_dashboard_context(db: Session, user: models.User):
         "can_submit_manual_entries": _can_submit_manual_entries(user),
         "can_edit_own_notes": _can_edit_own_notes(user),
         "can_request_vacations": _can_request_vacations(user),
-        "can_flag_remote": _can_flag_remote(user),
         "vacations": vacations,
         "pending_vacations": sum(
             1
@@ -2044,6 +2107,10 @@ def submit_time_entry(
     company_id: Optional[str] = Form(None),
     new_company_name: Optional[str] = Form(None),
     is_remote: Optional[str] = Form(None),
+    #: Vermerk des Formulars, dass es ein Einsatzortfeld enthält – siehe
+    #: ``templates/_components.html``. Fehlt er, bleibt der gespeicherte
+    #: Einsatzort unangetastet.
+    location_field: Optional[str] = Form(None),
     work_location: Optional[str] = Form(None),
     next_url: str = Form("/time"),
     db: Session = Depends(database.get_db),
@@ -2087,13 +2154,11 @@ def submit_time_entry(
         except (TypeError, ValueError):
             redirect = _build_redirect(_sanitize_next(next_url), error="Ungültige Firmenauswahl")
             return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
-    # Der Standort wird immer aufgelöst; nur „Remote" hängt am Kennzeichen.
     remote_value, location_value = _resolve_work_location(
         db,
         work_location,
         fallback_remote=_parse_checkbox(is_remote),
         company_id=company_value,
-        allow_remote=_can_flag_remote(user),
     )
     try:
         entry = schemas.TimeEntryCreate(
@@ -2177,8 +2242,11 @@ def api_ping(request: Request, db: Session = Depends(database.get_db)):
 
 @app.get("/api/csrf")
 def api_csrf(request: Request):
-    """Return a fresh CSRF token for the current session.
-    Used by the mobile app to refresh the token before syncing offline actions."""
+    """Frisches CSRF-Token für die laufende Sitzung.
+
+    Die Mobilansicht holt es sich, bevor sie zwischengespeicherte Vorgänge
+    überträgt.
+    """
     return JSONResponse({"csrf_token": get_csrf_token(request)})
 
 @app.get("/mobile/sync-data")
@@ -2264,7 +2332,6 @@ def mobile_sync_data(
             # die Offline-Shell soll den Antrag gar nicht erst anbieten und ihn
             # nicht in die Warteschlange legen.
             "request_vacations": _can_request_vacations(user) and vacation_licensed,
-            "flag_remote": _can_flag_remote(user),
         },
         "metrics": {
             "worked_minutes": (
@@ -2295,14 +2362,18 @@ def mobile_sync_data(
 
 
 def _parse_event_time(value: Optional[str]) -> datetime:
-    """Use the client-supplied wall-clock time of the punch (so an event made
-    offline keeps its real time instead of the much later sync time), falling
-    back to the server clock when absent/implausible.
+    """Die vom Gerät gemeldete Uhrzeit der Stempelung übernehmen.
 
-    The client sends local naive ISO ("YYYY-MM-DDTHH:MM:SS"), matching how the
-    server records online punches via datetime.now(); a trailing 'Z' or an
-    explicit offset is normalised away. Values far outside a sane window are
-    rejected to guard against a badly skewed device clock.
+    Nur so behält eine offline erfasste Stempelung ihre **tatsächliche** Zeit
+    und nicht die viel spätere Übertragungszeit. Fehlt die Angabe oder ist sie
+    unplausibel, gilt die Serveruhr.
+
+    Das Gerät schickt eine lokale Zeit ohne Zonenangabe
+    („JJJJ-MM-TTTHH:MM:SS") – genauso hält der Server eine Online-Stempelung
+    über ``datetime.now()`` fest. Ein angehängtes „Z" oder ein ausdrücklicher
+    Versatz wird herausgerechnet. Werte weit außerhalb eines vernünftigen
+    Fensters werden abgewiesen; sonst schlüge eine grob falsch gestellte
+    Geräteuhr voll durch.
     """
     if value:
         text_value = value.strip()
@@ -2322,17 +2393,22 @@ def _parse_event_time(value: Optional[str]) -> datetime:
 
 
 def _wants_json(request: Request) -> bool:
-    """True for offline-sync / XHR callers that send `Accept: application/json`.
+    """Wahr für Aufrufer, die ``Accept: application/json`` schicken.
 
-    Normal browser form posts (Accept: text/html) keep the classic 303 redirect
-    behaviour, so the desktop web UI is unaffected.
+    Das sind die Offline-Übertragung und XHR-Aufrufe. Ein gewöhnliches
+    Browserformular (``Accept: text/html``) bekommt weiterhin die
+    303-Weiterleitung – an der Bedienung im Browser ändert sich nichts.
     """
     return "application/json" in request.headers.get("accept", "").lower()
 
 
 def _auth_required_response(request: Request):
-    """401 JSON for sync clients (so they can keep the queued action and retry
-    after re-authentication), 303 to /login for normal browsers."""
+    """Fehlende Anmeldung beantworten.
+
+    Für übertragende Geräte ein JSON mit 401 – sie behalten den Vorgang in der
+    Warteschlange und versuchen es nach erneuter Anmeldung noch einmal. Für
+    gewöhnliche Browser eine 303-Weiterleitung nach ``/login``.
+    """
     if _wants_json(request):
         return JSONResponse(
             {"ok": False, "duplicate": False, "retryable": True, "message": "Sitzung abgelaufen"},
@@ -2350,14 +2426,19 @@ def _sync_result(
     duplicate: bool = False,
     retryable: bool = False,
 ):
-    """Return a machine-readable JSON outcome for offline-sync callers, or the
-    classic 303 redirect for normal browser form submissions.
+    """Ergebnis eines Vorgangs zurückgeben.
 
-    The JSON shape lets the client decide reliably whether to remove an action
-    from its offline queue:
-      - ok / duplicate  -> action is done on the server -> delete locally
-      - retryable       -> transient/ordering issue     -> keep, retry later
-      - neither         -> definitive rejection          -> drop (won't succeed)
+    Für die Offline-Übertragung als auswertbares JSON, für ein gewöhnliches
+    Browserformular als 303-Weiterleitung.
+
+    Am JSON erkennt das Gerät verlässlich, ob es den Vorgang aus seiner
+    Warteschlange nehmen darf:
+
+    * ``ok`` / ``duplicate`` – auf dem Server erledigt → örtlich löschen
+    * ``retryable``          – vorübergehend oder Reihenfolgeproblem → behalten
+      und später erneut versuchen
+    * weder noch             – endgültig abgewiesen → verwerfen, es wird nie
+      klappen
     """
     ok = bool(message) and not error
     if _wants_json(request):
@@ -2389,6 +2470,10 @@ def punch_action(
     entry_id: Optional[str] = Form(None),
     notes: str = Form(""),
     is_remote: Optional[str] = Form(None),
+    #: Vermerk des Formulars, dass es ein Einsatzortfeld enthält – siehe
+    #: ``templates/_components.html``. Fehlt er, bleibt der gespeicherte
+    #: Einsatzort unangetastet.
+    location_field: Optional[str] = Form(None),
     work_location: Optional[str] = Form(None),
     next_url: str = Form("/dashboard"),
     client_action_id: Optional[str] = Form(None),
@@ -2412,10 +2497,6 @@ def punch_action(
     now = _parse_event_time(event_time)
     message = ""
     error = ""
-    # Remote nur, wenn das Kennzeichen für den Benutzer gesetzt ist. Der
-    # Standort einer Firma hängt nicht daran – er wird immer aufgelöst.
-    remote_allowed = _can_flag_remote(user)
-
     def _work_location(company_id: Optional[int]) -> tuple[bool, Optional[int]]:
         """Einsatzort für **diese** Firma auflösen.
 
@@ -2429,7 +2510,6 @@ def punch_action(
             work_location,
             fallback_remote=_parse_checkbox(is_remote),
             company_id=company_id,
-            allow_remote=remote_allowed,
         )
 
     remote_value, location_value = _work_location(None)
@@ -2459,10 +2539,10 @@ def punch_action(
                 overlapping_active = crud.get_open_time_entry(db, user.id)
                 if overlapping_active:
                     return False
-                # No open entry but the new interval collides with an existing
-                # (closed) booking. Surface a clean, definitive error instead of
-                # letting the exception become a 500 (which an offline client
-                # would retry forever).
+                # Keine laufende Buchung, aber der neue Zeitraum überschneidet
+                # sich mit einer bereits beendeten. Hier gehört eine klare,
+                # endgültige Absage hin statt eines Serverfehlers – den würde
+                # ein Offline-Gerät endlos wiederholen.
                 db.rollback()
                 error = "Zeitraum überschneidet sich mit einer vorhandenen Buchung."
                 return False
@@ -2612,12 +2692,18 @@ def punch_action(
         else:
             # Der Einsatzort gehört zur Firma **dieser** Buchung.
             notes_remote, notes_location = _work_location(target_entry.company_id)
+            # Nur wenn das Formular ein Einsatzortfeld hatte, wird der
+            # Einsatzort überschrieben. Ein reiner Kommentar-Nachtrag – etwa aus
+            # einer älteren Offline-Warteschlange – lässt ihn unangetastet.
+            location_submitted = bool(location_field) or bool(
+                (work_location or "").strip()
+            )
             try:
                 crud.update_time_entry_notes(
                     db,
                     target_entry,
                     notes.strip(),
-                    is_remote=notes_remote if remote_allowed else None,
+                    is_remote=notes_remote if location_submitted else None,
                     location_id=notes_location,
                     # Nur wenn der Einsatzort überhaupt mitgeschickt wurde; ein
                     # reiner Kommentar-Nachtrag lässt ihn unangetastet. Der
@@ -2651,10 +2737,11 @@ def punch_action(
                 action=action,
             )
 
-    # An end_* / break action that found no open entry is most likely an
-    # ordering issue (the matching start_work hasn't been applied on the server
-    # yet). Mark it retryable so the offline client keeps it and retries after
-    # the earlier action has synced, instead of dropping the clock-out.
+    # Ein Beenden oder eine Pause ohne laufende Buchung ist meist ein
+    # Reihenfolgeproblem: Der zugehörige Start ist auf dem Server noch nicht
+    # angekommen. Als wiederholbar kennzeichnen, damit das Gerät den Vorgang
+    # behält und nach dem Start erneut schickt – sonst ginge das Ausstempeln
+    # verloren.
     retryable = bool(error) and active_entry is None and action in {
         "end_work",
         "end_company",
@@ -2984,8 +3071,9 @@ def export_records_pdf(request: Request, month: Optional[str] = None, db: Sessio
         if overtime_limit_minutes and not overtime_limit_exceeded
         else 0
     )
-    # All requests overlapping the period (any status) – the PDF vacation
-    # overview shows pending/rejected/cancelled entries with their status.
+    # Alle Anträge, die in den Zeitraum ragen, unabhängig vom Status: Die
+    # Urlaubsübersicht im PDF weist offene, abgelehnte und zurückgezogene
+    # Anträge mit ihrem Status aus.
     period_vacations = [
         vacation
         for vacation in vacations
@@ -3098,7 +3186,6 @@ def _resolve_work_location(
     *,
     fallback_remote: bool,
     company_id: Optional[int] = None,
-    allow_remote: bool = True,
 ) -> tuple[bool, Optional[int]]:
     """Formularwert des Einsatzorts zu ``(is_remote, location_id)`` auflösen.
 
@@ -3114,21 +3201,35 @@ def _resolve_work_location(
     oder nicht lizenzierter Standort gilt als „vor Ort". Eine Stempelung darf
     nie an einer Stammdatenfrage scheitern.
 
-    ``allow_remote`` bildet das Benutzerkennzeichen ab und betrifft **nur**
-    Remote. Ein Firmenstandort ist keine Remote-Arbeit: Wer nie remote
-    arbeitet, soll trotzdem festhalten können, an welchem Standort er war.
+    **„Remote" steht ab 0.20.1 jeder Person offen.** Bis 0.20.0 hing die Option
+    an ``users.remote_flag_enabled``. Dieses Kennzeichen stammte aus 0.9.21, als
+    „Remote" die *gesamte* Einsatzorterfassung war – ein Haken, den man je
+    Person freischaltete. Seit 0.13.0 ist der Einsatzort eine Liste von
+    Arbeitsorten und seit 0.14.1 wird sie immer angezeigt; das Kennzeichen
+    entfernte damit nur noch **einen Eintrag** aus dieser Liste, während seine
+    Beschriftung weiterhin „Einsatzort erfassen" versprach. Wer das las, sah ein
+    bereits erfülltes Versprechen, ließ den Haken weg – und „Remote" verschwand
+    unbemerkt aus der Auswahl.
+
+    Ob jemand remote arbeiten darf, steht im Arbeitsvertrag. Eine Zeiterfassung
+    soll festhalten, wo gearbeitet wurde, und die Antwort nicht verstecken.
+
+    **Offene Entscheidung, bewusst dokumentiert:** Soll es stattdessen eine
+    echte personenbezogene Erlaubnis geben, gehört sie als ``Own.Time.Remote``
+    ins Rollenmodell und nicht als stiller Haken in die Stammdaten. Diese
+    Umsetzung greift der Entscheidung nicht vor.
     """
     raw = (value or "").strip()
     if not raw:
-        return bool(fallback_remote) and allow_remote, None
+        return bool(fallback_remote), None
     if raw == "remote":
-        return bool(allow_remote), None
+        return True, None
     if raw == "onsite":
         return False, None
     try:
         location_id = int(raw)
     except ValueError:
-        return bool(fallback_remote) and allow_remote, None
+        return bool(fallback_remote), None
     if not _can_clock_on_orders() or company_id is None:
         return False, None
     location = crud.get_company_location(db, location_id)
@@ -3336,7 +3437,7 @@ def _self_service_entry(
         break_minutes=trusted.break_minutes,
         company_id=trusted.company_id,
         location_id=_validated_location(db, trusted.company_id, trusted.location_id),
-        is_remote=bool(trusted.is_remote) and _can_flag_remote(actor),
+        is_remote=bool(trusted.is_remote),
         notes=trusted.notes,
         status=models.TimeEntryStatus.PENDING,
         is_manual=True,
@@ -3520,15 +3621,6 @@ def _can_edit_own_notes(user: models.User) -> bool:
 
 def _can_request_vacations(user: models.User) -> bool:
     return permission_service.has(user, "Own.Vacation.Request")
-
-
-def _can_flag_remote(user: Optional[models.User]) -> bool:
-    """Einsatzort-Kennzeichen (Remote/vor Ort) für diesen Benutzer aktiv?
-
-    Wird – wie das Zeitkonto – je Benutzer in der Benutzerverwaltung
-    freigeschaltet und ist kein Recht im Sinne des Rollenmodells.
-    """
-    return bool(getattr(user, "remote_flag_enabled", False))
 
 
 def _resolve_admin_permissions(user: models.User) -> dict[str, bool]:
@@ -4787,7 +4879,7 @@ def admin_time_reports_page(request: Request, db: Session = Depends(database.get
 def _build_user_report_data(
     params, db: Session, allowed_user_ids: Optional[set[int]] = None
 ) -> dict[str, object]:
-    """Per-user evaluation for a selectable set of users and period."""
+    """Auswertung je Person für eine wählbare Personengruppe und einen Zeitraum."""
     today = date.today()
     default_start = today.replace(day=1)
     default_end = date(today.year, today.month, monthrange(today.year, today.month)[1])
@@ -4984,8 +5076,9 @@ def admin_time_reports_pdf(request: Request, db: Session = Depends(database.get_
     report_data = _build_time_report_data(
         request.query_params, db, _scoped_user_ids(db, user, "Time.View")
     )
-    # report_data["vacations"] only contains approved requests (KPI basis);
-    # the PDF vacation overview lists every request in the period with status.
+    # ``report_data["vacations"]`` enthält nur genehmigte Anträge – sie bilden
+    # die Kennzahlen. Die Urlaubsübersicht im PDF listet dagegen jeden Antrag
+    # des Zeitraums samt Status.
     period_vacations = crud.get_vacations_in_range(
         db,
         report_data["start_date"],
@@ -5184,7 +5277,6 @@ def create_user_html(
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
     auto_break_deduction: Optional[str] = Form(None),
-    remote_flag_enabled: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -5219,7 +5311,6 @@ def create_user_html(
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
     auto_break_value = auto_break_deduction == "on"
-    remote_flag_value = remote_flag_enabled == "on"
     try:
         overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
     except ValueError:
@@ -5249,7 +5340,6 @@ def create_user_html(
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
                 auto_break_deduction=auto_break_value,
-                remote_flag_enabled=remote_flag_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -5289,7 +5379,6 @@ def update_user_html(
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
     auto_break_deduction: Optional[str] = Form(None),
-    remote_flag_enabled: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -5320,7 +5409,6 @@ def update_user_html(
     carryover_days_value = vacation_carryover_days if carryover_enabled else 0
     rfid_value = (rfid_tag or "").strip() or None
     auto_break_value = auto_break_deduction == "on"
-    remote_flag_value = remote_flag_enabled == "on"
     try:
         overtime_limit_minutes = _parse_overtime_limit_hours(monthly_overtime_limit_hours)
     except ValueError:
@@ -5353,7 +5441,6 @@ def update_user_html(
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
                 auto_break_deduction=auto_break_value,
-                remote_flag_enabled=remote_flag_value,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -5662,9 +5749,6 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
         next_url=sanitized_next,
         redirect_user=redirect_user or (str(entry.user_id) if entry.user_id else None),
         active_tab=active_tab,
-        # Einsatzort nur anbieten, wenn er für den Benutzer freigeschaltet ist
-        # oder die Buchung bereits als Remote erfasst wurde.
-        remote_editable=_can_flag_remote(entry.user) or bool(entry.is_remote),
         location_catalogue_data=_location_catalogue(db),
         entry_locations=_locations_of(db, entry.company_id),
     )
@@ -5682,6 +5766,10 @@ def update_time_entry_html(
     company_id: Optional[str] = Form(None),
     notes: str = Form(""),
     is_remote: Optional[str] = Form(None),
+    #: Vermerk des Formulars, dass es ein Einsatzortfeld enthält – siehe
+    #: ``templates/_components.html``. Fehlt er, bleibt der gespeicherte
+    #: Einsatzort unangetastet.
+    location_field: Optional[str] = Form(None),
     work_location: Optional[str] = Form(None),
     change_reason: str = Form(""),
     redirect_user: Optional[str] = Form(None),
@@ -5713,15 +5801,11 @@ def update_time_entry_html(
         )
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     company_value = int(company_id) if company_id else None
-    # Der Standort ist immer bearbeitbar – er ist keine Remote-Arbeit. Nur das
-    # Remote-Kennzeichen hängt am Benutzer; hat er es nicht (und war die
-    # Buchung bisher nicht remote), bleibt der bisherige Wert erhalten, statt
-    # still gelöscht zu werden.
     remote_current = bool(existing_entry.is_remote) if existing_entry else False
     location_current = existing_entry.location_id if existing_entry else None
-    remote_editable = _can_flag_remote(crud.get_user(db, user_id)) or remote_current
-    if work_location is None and not remote_editable:
-        # Formular ohne Einsatzortfeld: nichts anfassen.
+    if not location_field and work_location is None:
+        # Ein Formular ohne Einsatzortfeld darf den vorhandenen Wert nicht
+        # stillschweigend löschen.
         remote_value, location_value = remote_current, location_current
     else:
         remote_value, location_value = _resolve_work_location(
@@ -5729,7 +5813,6 @@ def update_time_entry_html(
             work_location,
             fallback_remote=_parse_checkbox(is_remote),
             company_id=company_value,
-            allow_remote=remote_editable,
         )
     payload = schemas.TimeEntryCreate(
         user_id=user_id,
@@ -6074,13 +6157,14 @@ TERMINAL_STATUS_LABELS = {
 
 
 def _terminal_fields_from_form(form, *, keep_password_from=None) -> dict:
-    """Build terminal column values from the modal form (driver agnostic)."""
+    """Spaltenwerte eines Terminals aus dem Formular – ohne Treiberbezug."""
     import json as _json
 
     term_type = (form.get("type") or "timemoto").strip()
     if not terminals.is_known_type(term_type):
         term_type = "timemoto"
-    # Driver-specific extras are kept in config_json so new types need no schema.
+    # Treibereigene Zusatzangaben stehen in ``config_json``; ein neuer
+    # Terminaltyp braucht dadurch keine Schemaänderung.
     extra: dict[str, object] = {}
     for key in ("login_path", "users_path", "events_path", "events_limit", "timeout"):
         value = (form.get(key) or "").strip()
@@ -6219,7 +6303,7 @@ async def admin_terminal_save(request: Request, db: Session = Depends(database.g
 
 @app.post("/admin/terminals/test")
 async def admin_terminal_test(request: Request, db: Session = Depends(database.get_db)):
-    """Connection test for the values currently entered in the modal (JSON)."""
+    """Verbindungstest mit den gerade im Formular stehenden Werten (JSON)."""
     user, redirect = _require_system_admin(request, db)
     if redirect:
         return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
@@ -6327,7 +6411,7 @@ def api_terminal_sync(
 
 @app.get("/admin/integrations/timemoto", include_in_schema=False)
 def admin_timemoto_redirect(request: Request):
-    """Backward-compatible redirect from the removed TimeMoto page (§0.9.8)."""
+    """Weiterleitung von der entfallenen TimeMoto-Seite – für alte Lesezeichen."""
     return RedirectResponse(url="/admin/terminals", status_code=status.HTTP_308_PERMANENT_REDIRECT)
 
 
@@ -7061,8 +7145,9 @@ def admin_system_settings_save(
     if wanted_zone and not zone_rejected:
         payload["timezone"] = wanted_zone
     system_settings = app_config.SystemSettings.from_dict(payload)
-    # Audit the change while the previous logging policy is still active, so the
-    # entry is never lost when the new settings disable audit logging.
+    # Die Änderung noch unter der **bisherigen** Protokolleinstellung festhalten.
+    # Schaltet die neue Einstellung das Audit-Protokoll ab, ginge der Eintrag
+    # sonst gerade dabei verloren.
     logging_setup.log_audit(
         "Systemeinstellungen geändert", user=user, detail=f"level={logging_config.level}"
     )
@@ -7254,7 +7339,8 @@ def _backup_job_fields_from_form(form, *, keep_passwords_from=None) -> dict:
         "retention_count": _safe_int(form.get("retention_count"), 10),
         "retention_days": _safe_int(form.get("retention_days"), 30),
     }
-    # Keep stored passwords when the form leaves them blank (masked field).
+    # Gespeicherte Kennwörter behalten, wenn das Formular sie leer lässt – das
+    # Feld wird maskiert angezeigt.
     if keep_passwords_from is not None:
         if not fields["ftp_password"]:
             fields["ftp_password"] = keep_passwords_from.ftp_password
@@ -7352,7 +7438,7 @@ def admin_backup_job_delete(request: Request, job_id: int, db: Session = Depends
 
 @app.post("/admin/system/backups/test")
 async def admin_backup_job_test(request: Request, db: Session = Depends(database.get_db)):
-    """Connection test for the values currently entered in the modal (JSON)."""
+    """Verbindungstest mit den gerade im Formular stehenden Werten (JSON)."""
     user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
@@ -7485,7 +7571,7 @@ async def admin_restore_upload(request: Request, db: Session = Depends(database.
             status_code=status.HTTP_303_SEE_OTHER,
         )
     original = getattr(upload, "filename", "") or "upload"
-    # §24: only accept our archive extensions; storage name is generated server-side.
+    # Nur die eigenen Archivendungen annehmen; den Ablagenamen vergibt der Server.
     if not original.lower().endswith((".zip",)):
         backup_manager.log_backup(
             f"Upload abgelehnt (Dateityp): {original}", level=logging.WARNING, user=user
@@ -7533,7 +7619,7 @@ async def admin_restore_upload(request: Request, db: Session = Depends(database.
             url=_build_redirect("/admin/system/restore", error="Hochgeladene Datei ist kein gültiges Backup-Archiv"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    final = backup_manager.register_uploaded_file(tmp_path, original)
+    final = backup_manager.register_uploaded_file(tmp_path)
     logging_setup.log_audit("Backup hochgeladen", user=user, detail=f"{original} -> {final.name}")
     backup_manager.log_backup(f"Integritätsprüfung erfolgreich, übernommen als {final.name}", user=user)
     return RedirectResponse(
@@ -7549,9 +7635,11 @@ def admin_restore_run(
     confirm: str = Form(""),
     db: Session = Depends(database.get_db),
 ):
-    """Validate and *queue* a restore. The actual restore runs asynchronously
-    in a background worker so the database swap never tears down this request
-    (§0.9.5 – no more "Internal Server Error")."""
+    """Rücksicherung prüfen und **einstellen**.
+
+    Ausgeführt wird sie im Hintergrund: Der Datenbanktausch würde sonst genau
+    die Verbindung abreißen, über die diese Anfrage läuft.
+    """
     user, redirect = _require_system_admin(request, db, permission="System.Backup")
     if redirect:
         return redirect
@@ -7578,7 +7666,8 @@ def admin_restore_run(
             url=_build_redirect("/admin/system/restore/progress", error="Es läuft bereits eine Wiederherstellung"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    # Schritt 3+4: create the job, respond immediately (redirect to progress).
+    # Schritt 3+4: Auftrag anlegen und sofort antworten (Weiterleitung auf die
+    # Fortschrittsseite).
     token = restore_jobs.start_restore(path, username=user.username)
     logging_setup.log_audit("Backup wiederhergestellt (gestartet)", user=user, detail=f"{path.name} (Job {token})")
     return RedirectResponse(
@@ -7602,11 +7691,12 @@ def admin_restore_progress(request: Request, db: Session = Depends(database.get_
 
 @app.get("/api/restore/status")
 def api_restore_status(request: Request):
-    """Lightweight status endpoint (§ Restore-Status API).
+    """Schlanke Statusabfrage zur laufenden Rücksicherung.
 
-    Reads only the JSON status file – it never touches the database, so it keeps
-    working while the database is being swapped. Authorisation is by session
-    only (no DB lookup) so polling survives the restore window.
+    Liest ausschließlich die JSON-Statusdatei und rührt die Datenbank nicht an –
+    die Abfrage funktioniert dadurch auch, während die Datenbank getauscht wird.
+    Geprüft wird allein die Sitzung, ohne Datenbankzugriff; nur so übersteht das
+    regelmäßige Nachfragen den Zeitraum der Rücksicherung.
     """
     if not request.session.get("user_id"):
         return JSONResponse({"state": "unauthorized"}, status_code=401)
@@ -7714,7 +7804,8 @@ def _database_config_from_form(form, *, keep_password_from=None) -> "app_config.
             "timeout": form.get("timeout"),
         }
     )
-    # Keep the stored password when the form leaves it blank (masked field).
+    # Gespeichertes Kennwort behalten, wenn das Formular es leer lässt – das
+    # Feld wird maskiert angezeigt.
     if keep_password_from is not None and not config.password:
         config.password = keep_password_from.password
     return config
@@ -7743,7 +7834,7 @@ def admin_system_database(request: Request, db: Session = Depends(database.get_d
 
 @app.post("/admin/system/database/test")
 async def admin_system_database_test(request: Request, db: Session = Depends(database.get_db)):
-    """Connection test for the values entered in the modal (JSON)."""
+    """Verbindungstest mit den im Formular stehenden Werten (JSON)."""
     user, redirect = _require_system_admin(request, db)
     if redirect:
         return JSONResponse({"ok": False, "message": "Nicht angemeldet"}, status_code=401)
@@ -7759,10 +7850,11 @@ async def admin_system_database_test(request: Request, db: Session = Depends(dat
 
 @app.post("/admin/system/database/save")
 async def admin_system_database_save(request: Request, db: Session = Depends(database.get_db)):
-    """Persist the connection configuration WITHOUT switching the backend.
+    """Verbindungsdaten speichern, **ohne** die Datenbank zu wechseln.
 
-    Used to store/adjust credentials for the active backend. Switching backends
-    (and migrating data) happens via the dedicated migrate endpoint.
+    Gedacht zum Anlegen und Ändern der Zugangsdaten der laufenden Datenbank.
+    Der Wechsel selbst – samt Umzug der Daten – läuft über den eigenen
+    Migrationsendpunkt.
     """
     user, redirect = _require_system_admin(request, db)
     if redirect:
@@ -7776,8 +7868,8 @@ async def admin_system_database_save(request: Request, db: Session = Depends(dat
             url=_build_redirect("/admin/system/database", error=reason),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    # Only allow saving config for the currently active backend here; a different
-    # type must go through migration so the data is carried over.
+    # Hier lässt sich nur die Konfiguration der **laufenden** Datenbank sichern.
+    # Ein anderer Typ muss über den Umzug gehen, sonst blieben die Daten zurück.
     if database.normalise_type(config.type) != database.DB_TYPE:
         return RedirectResponse(
             url=_build_redirect(
@@ -7797,8 +7889,12 @@ async def admin_system_database_save(request: Request, db: Session = Depends(dat
 
 @app.post("/admin/system/database/migrate")
 async def admin_system_database_migrate(request: Request, db: Session = Depends(database.get_db)):
-    """Validate + queue a database migration. The copy runs asynchronously so the
-    engine swap never tears down this request (mirrors the restore worker)."""
+    """Datenbankumzug prüfen und einstellen.
+
+    Kopiert wird im Hintergrund – das Umhängen der Verbindung würde sonst genau
+    die Verbindung abreißen, über die diese Anfrage läuft. Gleiches Vorgehen wie
+    bei der Rücksicherung.
+    """
     user, redirect = _require_system_admin(request, db)
     if redirect:
         return redirect
@@ -7850,8 +7946,11 @@ def admin_system_database_progress(request: Request, db: Session = Depends(datab
 
 @app.get("/api/database/migration/status")
 def api_database_migration_status(request: Request):
-    """Lightweight status endpoint – reads only the JSON status file so it keeps
-    working while the engine is being swapped (session-only auth)."""
+    """Schlanke Statusabfrage zum laufenden Umzug.
+
+    Liest ausschließlich die JSON-Statusdatei und funktioniert dadurch auch,
+    während die Verbindung umgehängt wird. Geprüft wird allein die Sitzung.
+    """
     if not request.session.get("user_id"):
         return JSONResponse({"state": "unauthorized"}, status_code=401)
     return JSONResponse(db_migration_jobs.read_status())

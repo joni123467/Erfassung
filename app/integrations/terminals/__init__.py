@@ -1,11 +1,13 @@
-"""Pluggable time-recording terminal drivers (§0.9.8).
+"""Austauschbare Treiber für Zeiterfassungsterminals.
 
-The generic terminal management does not contain any terminal-specific logic.
-Each supported terminal type is implemented as a *driver* that conforms to
-:class:`app.integrations.terminals.base.TerminalDriver` and registers itself in
-the :data:`REGISTRY`. The UI and the routing layer only ever talk to the driver
-interface, so adding a new terminal type (ZKTeco, Suprema, generic REST/CSV, …)
-is a matter of dropping in a new driver module and registering it here.
+Die allgemeine Terminalverwaltung enthält **keine** Logik für einen bestimmten
+Terminaltyp. Jeder unterstützte Typ steckt in einem eigenen Treiber, der
+:class:`app.integrations.terminals.base.TerminalDriver` erfüllt und sich in
+:data:`REGISTRY` einträgt.
+
+Oberfläche und Wegewahl sprechen ausschließlich mit der Treiberschnittstelle.
+Ein neuer Terminaltyp (ZKTeco, Suprema, allgemeines REST/CSV, …) ist deshalb
+eine neue Treiberdatei und ein Eintrag hier – sonst nichts.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ def get_driver(key: str) -> TerminalDriver | None:
 
 
 def available_types() -> list[dict[str, str]]:
-    """Terminal types offered in the UI (driver key + human label)."""
+    """Terminaltypen für die Oberfläche: Treiberkennung und lesbare Bezeichnung."""
 
     return [
         {"key": driver.key, "label": driver.label}
@@ -42,8 +44,8 @@ def is_known_type(key: str) -> bool:
     return key in REGISTRY
 
 
-# -- Built-in drivers -------------------------------------------------------
-# Further terminal types are registered the same way, e.g.:
+# -- Mitgelieferte Treiber --------------------------------------------------
+# Weitere Terminaltypen werden genauso eingetragen, etwa:
 #   register(ZKTecoDriver())
 #   register(SupremaDriver())
 register(TimeMotoDriver())

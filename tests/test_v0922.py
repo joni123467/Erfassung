@@ -111,8 +111,8 @@ def _closed_entry(user_id, start, end, *, is_remote=False):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.20.0"
-    assert client.get("/health").json()["version"] == "0.20.0"
+    assert client.main.APP_VERSION == "0.20.1"
+    assert client.get("/health").json()["version"] == "0.20.1"
 
 
 # --- Umschalter statt Checkbox --------------------------------------------------
@@ -196,7 +196,8 @@ def test_toggle_still_submits_the_flag(client):
         db.close()
 
 
-def test_toggle_hidden_without_permission(client):
+def test_toggle_stays_visible_without_the_old_flag(client):
+    """Ab 0.20.1 blendet das alte Kennzeichen den Einsatzort nicht mehr aus."""
     from app import crud, database
 
     db = database.SessionLocal()
@@ -209,4 +210,4 @@ def test_toggle_hidden_without_permission(client):
     login(client)
     for url in ("/dashboard", "/mobile"):
         html = client.get(url).text
-        assert "location-toggle" not in html
+        assert "location-toggle" in html

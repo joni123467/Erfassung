@@ -1,14 +1,19 @@
-"""Central resolution of the persistent volume directories.
+"""Zentrale Auflösung der dauerhaften Ablageverzeichnisse.
 
-Erfassung uses three persistent volumes that map to dedicated purposes:
+Erfassung trennt drei Volumes strikt nach Zweck:
 
-* ``config`` – only configuration (system settings, logging, UI, mail, sync, PWA)
-* ``data``   – only business data (database, users, vacation, holidays, …)
-* ``logs``   – only log files
+* ``config`` – ausschließlich Konfiguration (Systemeinstellungen, Protokollierung,
+  Oberfläche, Mail, Synchronisation, PWA)
+* ``data``   – ausschließlich Geschäftsdaten (Datenbank, Benutzer, Urlaub,
+  Feiertage, …)
+* ``logs``   – ausschließlich Protokolldateien
 
-Paths can be overridden via environment variables so that operators can mount
-the volumes anywhere they like.  By default they live next to the application
-package (``/app/config``, ``/app/data``, ``/app/logs`` inside the container).
+Die Pfade lassen sich über Umgebungsvariablen umbiegen, damit der Betrieb die
+Volumes dort einhängen kann, wo er möchte. Ohne Angabe liegen sie neben dem
+Anwendungspaket (im Container ``/app/config``, ``/app/data``, ``/app/logs``).
+
+Jede Pfadangabe läuft über dieses Modul; nirgends sonst steht ein fester Pfad.
+Sonst landeten Geschäftsdaten früher oder später im Log-Volume.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from . import database
 
 
 def _discover_project_root() -> Path:
-    """Return the folder that contains the application package."""
+    """Verzeichnis, in dem das Anwendungspaket liegt."""
 
     current = Path(__file__).resolve()
     for candidate in current.parents:
@@ -37,7 +42,7 @@ PROJECT_ROOT = _discover_project_root()
 
 
 def _data_dir_default() -> Path:
-    """Derive the data directory from the configured SQLite database path."""
+    """Datenverzeichnis aus dem konfigurierten SQLite-Pfad ableiten."""
 
     url = database.SQLALCHEMY_DATABASE_URL
     if url.startswith("sqlite:///"):
@@ -66,10 +71,10 @@ def all_directories() -> dict[str, Path]:
 
 
 def ensure_directories() -> dict[str, dict[str, object]]:
-    """Create the persistent directories if they are missing.
+    """Fehlende dauerhafte Verzeichnisse anlegen.
 
-    Returns a status mapping describing, per volume, whether it already
-    existed, whether it could be created and whether it is writable.
+    Rückgabe ist eine Übersicht je Volume: ob es schon vorhanden war, ob es
+    angelegt werden konnte und ob hineingeschrieben werden darf.
     """
 
     report: dict[str, dict[str, object]] = {}
@@ -98,7 +103,7 @@ def _is_writable(path: Path) -> bool:
 
 
 def directory_stats(path: Path) -> dict[str, object]:
-    """Return size, file count and last-modified timestamp for a directory."""
+    """Größe, Dateizahl und letzte Änderung eines Verzeichnisses."""
 
     total_size = 0
     file_count = 0
@@ -126,7 +131,7 @@ def directory_stats(path: Path) -> dict[str, object]:
 
 
 def free_space_bytes(path: Path | None = None) -> int:
-    """Return the free space (in bytes) of the filesystem holding ``path``."""
+    """Freier Speicher in Byte auf dem Dateisystem, das ``path`` trägt."""
 
     target = path or DATA_DIR
     probe = target if target.exists() else PROJECT_ROOT

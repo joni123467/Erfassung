@@ -1,14 +1,19 @@
-"""Job-based backup engine (§0.9.2).
+"""Auftragsbasierte Sicherung.
 
-Each :class:`app.models.BackupJob` defines what to back up (database / config /
-logs), where to store it (local / FTP / SMB) and how long to keep it. Runs are
-recorded as :class:`app.models.BackupRun` history rows.
+Jeder :class:`app.models.BackupJob` legt fest, **was** gesichert wird
+(Datenbank / Konfiguration / Protokolle), **wohin** (lokal / FTP / SMB) und
+**wie lange** die Sicherung aufbewahrt wird. Jeder Lauf hinterlässt eine
+Historienzeile :class:`app.models.BackupRun`.
 
-Design goals:
-* consistent database snapshots (SQLite online-backup API; mysqldump for MySQL)
-* integrity check after every run (file present, plausible size, readable ZIP)
-* per-job retention (count and/or age), best-effort on remote targets
-* credentials are persisted in the DB but never written to any log
+Leitgedanken:
+
+* in sich stimmige Datenbankabzüge (Online-Backup-Schnittstelle bei SQLite,
+  ``mysqldump`` bei MySQL/MariaDB)
+* Integritätsprüfung nach jedem Lauf: Datei vorhanden, plausible Größe,
+  lesbares ZIP
+* Aufbewahrung je Auftrag (Anzahl und/oder Alter), auf entfernten Zielen nach
+  bestem Bemühen
+* Zugangsdaten liegen in der Datenbank, stehen aber **nie** in einem Protokoll
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ META_NAME = "backup_meta.json"
 # Logical, database-independent data dump inside every archive (§0.9.9).
 LOGICAL_DATA_NAME = "data/database.json"
 
-# Key entities surfaced in metadata + the restore preview (§9/§11).
+# Kennzahlen für die Metadaten und die Vorschau vor einer Rücksicherung.
 _COUNT_ENTITIES = {
     "users": "Benutzer",
     "time_entries": "Buchungen",
@@ -50,7 +55,7 @@ _COUNT_ENTITIES = {
 
 
 def log_backup(message, *, level=logging.INFO, user=None):
-    """Backup/restore events go to the dedicated backup.log (§11-§18)."""
+    """Sicherungs- und Rücksicherungsereignisse in die eigene ``backup.log``."""
     try:
         logging_setup.log_backup(message, level=level, user=user)
     except Exception:  # pragma: no cover - logging must never break a backup
@@ -71,13 +76,17 @@ def _sqlite_path() -> Optional[Path]:
 
 
 def _dump_database(staging: Path) -> tuple[Optional[Path], Optional[str]]:
-    """Return (snapshot_path, warning). Snapshot is consistent for SQLite."""
+    """Datenbankabzug anlegen; Rückgabe ``(Pfad, Warnung)``.
+
+    Bei SQLite ist der Abzug in sich stimmig, auch wenn nebenher geschrieben
+    wird – dafür sorgt die Online-Backup-Schnittstelle.
+    """
     if database.IS_SQLITE:
         src = _sqlite_path()
         if not src or not src.exists():
             return None, "SQLite-Datei nicht gefunden"
         snapshot = staging / "erfassung.db"
-        # Online backup API -> consistent snapshot even during writes.
+        # Online-Backup-Schnittstelle: stimmiger Abzug auch bei laufenden Schreibzugriffen.
         with sqlite3.connect(src) as source, sqlite3.connect(snapshot) as dest:
             source.backup(dest)
         return snapshot, None
@@ -109,7 +118,7 @@ def _dump_database(staging: Path) -> tuple[Optional[Path], Optional[str]]:
 # -- metadata --------------------------------------------------------------
 
 def _build_metadata(contents: list[str], backup_type: str, counts: Optional[dict] = None) -> dict:
-    """Metadata embedded in every archive for compatibility checks (§9/§10).
+    """Metadaten, die jedem Archiv für den Verträglichkeitsabgleich beiliegen.
 
     Metadata is informational only: it is used for analysis, compatibility hints
     and the restore preview – never to automatically switch the active database
@@ -133,7 +142,7 @@ def _build_metadata(contents: list[str], backup_type: str, counts: Optional[dict
 
 
 def _logical_payload() -> tuple[dict, dict]:
-    """Return (logical_export, key_entity_counts) for the active database."""
+    """Logischer Export der aktiven Datenbank samt Kennzahlen je Tabelle."""
     payload = data_transfer.export_database(database.engine)
     all_counts = data_transfer.table_counts_from_export(payload)
     counts = {name: all_counts.get(name, 0) for name in _COUNT_ENTITIES}
@@ -174,7 +183,7 @@ def read_logical_data(archive_path: Path) -> Optional[dict]:
 # -- archive ---------------------------------------------------------------
 
 def _build_archive(job, staging: Path, *, backup_type: str = "job") -> tuple[Path, list[str]]:
-    """Build the ZIP for ``job`` in ``staging``. Returns (path, warnings)."""
+    """ZIP für ``job`` in ``staging`` bauen; Rückgabe ``(Pfad, Warnungen)``."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     archive_path = BACKUP_DIR / f"backup_job{job.id}_{timestamp}.zip"
@@ -208,7 +217,7 @@ def _build_archive(job, staging: Path, *, backup_type: str = "job") -> tuple[Pat
 
 
 def create_safety_backup(*, prefix: str = "pre_restore", backup_type: str = "safety") -> Path:
-    """Create a safety backup of DB + config (§6).
+    """Sicherheitskopie von Datenbank und Konfiguration anlegen.
 
     ``prefix`` controls the file name so callers can distinguish pre-restore
     safety backups (``pre_restore_*``) from pre/post database-migration
@@ -322,7 +331,7 @@ def verify(archive_path: Path, *, user=None) -> dict:
 
 
 def backup_file_info(archive_path: Path) -> dict:
-    """Metadata + filesystem info for one local archive (for listings)."""
+    """Metadaten und Dateiangaben eines lokalen Archivs – für die Übersicht."""
     path = Path(archive_path)
     stat = path.stat()
     meta = read_metadata(path) or {}
@@ -348,7 +357,7 @@ def backup_file_info(archive_path: Path) -> dict:
 
 
 def list_local_backups() -> list[dict]:
-    """All restorable archives in the local backup directory (incl. uploads)."""
+    """Alle rücksicherbaren Archive im lokalen Verzeichnis, auch hochgeladene."""
     items: list[dict] = []
     for directory in (BACKUP_DIR,):
         if directory.exists():
@@ -362,10 +371,11 @@ def list_local_backups() -> list[dict]:
 
 
 def resolve_backup_path(name: str) -> Optional[Path]:
-    """Safely resolve a backup file name to a path inside BACKUP_DIR.
+    """Dateinamen sicher zu einem Pfad **innerhalb** von ``BACKUP_DIR`` auflösen.
 
-    Guards against path traversal (§24): only plain file names within the
-    backup directory are accepted.
+    Schützt vor Pfadtraversierung: Akzeptiert werden ausschließlich schlichte
+    Dateinamen aus dem Sicherungsverzeichnis – ``../../etc/passwd`` führt hier
+    nicht heraus.
     """
     if not name or "/" in name or "\\" in name or ".." in name:
         return None
@@ -396,7 +406,7 @@ def _smb_register(job):
     import smbclient
 
     server, _share, _sub = _parse_unc(job.smb_path)
-    # smbprotocol accepts "DOMAIN\\user" and "user@domain" in ``username``.
+    # ``smbprotocol`` nimmt in ``username`` „DOMÄNE\\Benutzer" wie „Benutzer@domäne".
     smbclient.register_session(server, username=job.smb_username, password=job.smb_password)
     return smbclient, server
 
@@ -404,7 +414,7 @@ def _smb_register(job):
 # -- transfer --------------------------------------------------------------
 
 def _transfer(job, archive_path: Path) -> tuple[str, Optional[str]]:
-    """Move/upload the archive to the job target. Returns (location, local_file)."""
+    """Archiv zum Ziel des Auftrags übertragen; Rückgabe ``(Ort, lokale Datei)``."""
     if job.target_type == "local":
         dest_dir = Path(job.local_path) if job.local_path else BACKUP_DIR
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -501,7 +511,7 @@ def _apply_local_retention(job, directory: Path) -> int:
 
 
 def apply_retention(job) -> int:
-    """Prune old archives for ``job`` according to its retention rules."""
+    """Alte Archive eines Auftrags nach seinen Aufbewahrungsregeln entfernen."""
     try:
         if job.target_type == "local":
             directory = Path(job.local_path) if job.local_path else BACKUP_DIR
@@ -540,7 +550,7 @@ def _apply_ftp_retention(job) -> int:
         if job.ftp_path and job.ftp_path != "/":
             ftp.cwd(job.ftp_path)
         # FTP lacks reliable mtimes via NLST; the timestamped filename sorts
-        # chronologically, so lexical descending order keeps the newest.
+        # chronologisch; absteigend sortiert stehen die neuesten also vorn.
         names = [
             name.rsplit("/", 1)[-1]
             for name in ftp.nlst()
@@ -599,7 +609,7 @@ def run_job(db: Session, job, *, triggered_by: str = "manual", user=None) -> "ob
     size = 0
     location = "-"
     local_file: Optional[str] = None
-    # §12: log start (never include credentials, only the target type/path).
+    # Start protokollieren – niemals Zugangsdaten, nur Zielart und Pfad.
     log_backup(f"Backup gestartet: Job '{job.name}' (Typ {job.target_type}, Auslöser {triggered_by})", user=user)
     try:
         archive_path, warnings = _build_archive(job, BACKUP_DIR)
@@ -658,7 +668,7 @@ def run_job(db: Session, job, *, triggered_by: str = "manual", user=None) -> "ob
 
 
 def test_connection(job, *, user=None) -> tuple[bool, str]:
-    """Verify the job's target is reachable without creating a backup."""
+    """Erreichbarkeit des Ziels prüfen, ohne eine Sicherung anzulegen."""
     ok, message = _test_connection(job)
     # §16: log connection tests (target type, result) – never credentials.
     target = job.target_type
@@ -717,8 +727,14 @@ def _test_connection(job) -> tuple[bool, str]:
 
 # -- uploads & remote retrieval -------------------------------------------
 
-def register_uploaded_file(temp_path: Path, original_name: str) -> Path:
-    """Move a verified upload into the backup directory under a safe name (§3/§24)."""
+def register_uploaded_file(temp_path: Path) -> Path:
+    """Eine geprüfte hochgeladene Datei unter sicherem Namen ins Sicherungs-
+    verzeichnis übernehmen.
+
+    Der Name des Uploads wird bewusst **nicht** übernommen: Er stammt vom
+    Client und könnte aus dem Verzeichnis herausführen. Der Ablagename entsteht
+    hier aus dem Zeitstempel.
+    """
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_suffix = ".zip"
@@ -728,7 +744,7 @@ def register_uploaded_file(temp_path: Path, original_name: str) -> Path:
 
 
 def fetch_remote_to_temp(job, filename: str) -> Path:
-    """Download a named backup file from a job's FTP/SMB target to a temp file."""
+    """Eine benannte Sicherung vom FTP-/SMB-Ziel in eine temporäre Datei holen."""
     fd, tmp_name = tempfile.mkstemp(prefix="fetch_", suffix=".zip", dir=str(BACKUP_DIR))
     os.close(fd)
     tmp_path = Path(tmp_name)

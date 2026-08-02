@@ -1,10 +1,11 @@
-"""Dialect-aware schema helpers shared by SQLite and MySQL/MariaDB.
+"""Dialektunabhängige Schemahilfen für SQLite, MySQL/MariaDB und PostgreSQL.
 
-The versioned migration runner historically relied on SQLite's
-``PRAGMA user_version``. To support MySQL 8+/MariaDB as well, migration state
-is now tracked in a portable ``schema_migrations`` table. Existing SQLite
-installations are migrated transparently: their ``user_version`` is read once
-and back-filled into the new table so applied migrations are never re-run.
+Der versionierte Migrationslauf stützte sich früher auf SQLites
+``PRAGMA user_version``. Damit auch MySQL 8+/MariaDB und PostgreSQL laufen,
+steht der Migrationsstand jetzt in der portablen Tabelle
+``schema_migrations``. Bestehende SQLite-Installationen ziehen unbemerkt um:
+Ihr ``user_version`` wird einmal gelesen und in die neue Tabelle übernommen –
+eine bereits angewendete Migration läuft dadurch nie ein zweites Mal.
 """
 
 from __future__ import annotations
@@ -40,12 +41,15 @@ def add_column(
     default: str | None = None,
     backfill_null_to: str | None = None,
 ) -> bool:
-    """Add ``column`` to ``table`` if missing. Returns True when it was added.
+    """``column`` an ``table`` ergänzen, falls sie fehlt.
 
-    ``column_type`` must be a portable SQL type that both SQLite and MySQL
-    accept (e.g. ``INTEGER``, ``BOOLEAN``, ``FLOAT``, ``VARCHAR(255)``,
-    ``TEXT``, ``DATE``, ``TIME``, ``DATETIME``). ``VARCHAR`` must always carry
-    an explicit length so MySQL accepts it.
+    Rückgabe ``True``, wenn die Spalte tatsächlich angelegt wurde.
+
+    ``column_type`` muss ein portabler SQL-Typ sein, den SQLite, MySQL/MariaDB
+    und PostgreSQL gleichermaßen kennen (etwa ``INTEGER``, ``BOOLEAN``,
+    ``FLOAT``, ``VARCHAR(255)``, ``TEXT``, ``DATE``, ``TIME``, ``DATETIME``).
+    ``VARCHAR`` braucht **immer** eine Längenangabe – ohne sie weist MySQL die
+    Anweisung zurück.
     """
 
     if not has_table(engine, table):
@@ -113,7 +117,7 @@ def mark_applied(engine: Engine, version: int) -> None:
             {"v": version, "ts": datetime.utcnow().isoformat()},
         )
         if engine.dialect.name == "sqlite":
-            # Keep PRAGMA user_version in sync for any external tooling.
+            # ``PRAGMA user_version`` mitführen – externe Werkzeuge lesen es womöglich.
             connection.execute(text(f"PRAGMA user_version = {int(version)}"))
 
 

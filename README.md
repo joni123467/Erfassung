@@ -2,7 +2,20 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.0`
+**Version:** `0.20.1`
+
+> Seit 0.20.1: **„Remote" steht wieder in der Einsatzortauswahl** – und zwar
+> für alle. Das alte Benutzerkennzeichen entfernte seit 0.14.1 nur noch einen
+> Eintrag aus der Liste, versprach in seiner Beschriftung aber weiterhin die
+> ganze Einsatzorterfassung; wer es deshalb ausließ, verlor „Remote"
+> unbemerkt. Außerdem: **Wochentage erscheinen auf Deutsch** (die Locale
+> `de_DE` fehlt in schlanken Container-Abbildern), der Sperrsatz auf der
+> Anmeldeseite ist weg, „Anzurechnung" heißt jetzt „Angerechnete Zeit", die
+> Schaltflächen in der App kleben nicht mehr aneinander, ein erfülltes
+> Sonntagsminimum ist grün statt gelb, alle Kommentare sind auf Deutsch und
+> rund 220 Zeilen toter CSS-Code samt einigen ungenutzten Funktionen sind
+> entfernt. Details in
+> [`docs/RELEASE_NOTES_0.20.1.md`](docs/RELEASE_NOTES_0.20.1.md).
 
 > Seit 0.20.0 schöpft die Regelprüfung die technisch bestimmbaren Möglichkeiten
 > für Sonn- und Nachtarbeit weiter aus: Die Administration zeigt pro Person
@@ -703,17 +716,25 @@ kann die Prüfung entfernen – stehen in
 
 ## Einsatzort (Remote / vor Ort / Standort)
 
-Optionales Feld je Buchung: Wo wurde gearbeitet? Es wird – wie das Zeitkonto –
-**je Benutzer** in der Benutzerverwaltung freigeschaltet:
+Feld je Buchung: Wo wurde gearbeitet? Es steht **allen Personen** offen und
+braucht seit 0.20.1 keine Freischaltung mehr.
 
-> Administration → Benutzer → *Benutzer* → **Zeitkonto & Buchungen** →
-> „Einsatzort erfassen (Remote / vor Ort)"
+Bis 0.20.0 hing „Remote" an einem Benutzerkennzeichen. Das stammte aus 0.9.21,
+als „Remote" die *gesamte* Einsatzorterfassung war. Seit 0.13.0 ist der
+Einsatzort eine Liste von Arbeitsorten und wird seit 0.14.1 immer angezeigt –
+das Kennzeichen entfernte damit nur noch **einen Eintrag** aus dieser Liste,
+während seine Beschriftung „Einsatzort erfassen" weiterhin das Ganze versprach.
+Wer das las, ließ den Haken weg, und „Remote" verschwand unbemerkt.
 
-Ist die Option aus, erscheint das Feld nirgends und alle Buchungen gelten als
-vor Ort – der bisherige Zustand bleibt unverändert.
+> **Offene Entscheidung:** Soll es eine personenbezogene Erlaubnis für
+> Remote-Arbeit geben, gehört sie als `Own.Time.Remote` ins Rollenmodell und
+> nicht als stiller Haken in die Stammdaten. Diese Umsetzung greift dem nicht
+> vor. Ob jemand remote arbeiten darf, steht im Arbeitsvertrag; eine
+> Zeiterfassung hält fest, wo gearbeitet wurde.
 
-Ist sie an, steht ein **Umschalter** an den unten genannten Stellen. Er
-wechselt Farbe und Beschriftung (seit 0.9.22, davor eine Checkbox):
+Ohne gepflegte Standorte steht ein **Umschalter** an den unten genannten
+Stellen. Er wechselt Farbe und Beschriftung (seit 0.9.22, davor eine
+Checkbox):
 
 | Zustand | Darstellung |
 |---------|-------------|

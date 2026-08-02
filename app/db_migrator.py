@@ -1,28 +1,29 @@
-"""Cross-database migration engine (§0.9.7).
+"""Umzug zwischen Datenbanken.
 
-Moves *all* business data from the currently active database into a freshly
-selected target backend (SQLite ⇄ MySQL ⇄ MariaDB ⇄ PostgreSQL) without data
-loss. The design is ORM/metadata driven so it is fully dialect agnostic:
+Bringt **alle** Geschäftsdaten aus der laufenden Datenbank in ein frisch
+gewähltes Ziel (SQLite ⇄ MySQL ⇄ MariaDB ⇄ PostgreSQL), ohne dass etwas
+verlorengeht. Gearbeitet wird über die Modellbeschreibung und damit unabhängig
+vom Dialekt:
 
-* the schema is created on the target with ``Base.metadata.create_all`` – the
-  same portable column types used everywhere else in the app,
-* rows are read through the typed SQLAlchemy ``Table`` objects (so values come
-  back as native Python types – ``date``/``datetime``/``bool``/…) and written
-  back through the target's typed columns, so every dialect converts correctly,
-* tables are copied in foreign-key dependency order (``sorted_tables``),
-* the portable ``schema_migrations`` bookkeeping table is recreated and seeded
-  so the migration state is identical on the target.
+* Das Schema entsteht im Ziel über ``Base.metadata.create_all`` – mit denselben
+  portablen Spaltentypen, die die Anwendung überall benutzt.
+* Zeilen werden über die typisierten ``Table``-Objekte gelesen (native Werte wie
+  ``date``, ``datetime``, ``bool``) und über die typisierten Zielspalten wieder
+  geschrieben. Jeder Dialekt wandelt dadurch richtig um.
+* Kopiert wird in Fremdschlüsselreihenfolge (``sorted_tables``).
+* Die portable Buchführungstabelle ``schema_migrations`` wird neu angelegt und
+  gefüllt, damit der Migrationsstand im Ziel derselbe ist.
 
-Safety model (no downtime, no data loss):
+Sicherheitsnetz – ohne Ausfallzeit, ohne Datenverlust:
 
-1. validate + connect to the target,
-2. create a mandatory pre-migration safety backup (rollback point),
-3. build the target schema and refuse to overwrite a non-empty target,
-4. copy all data, fix PostgreSQL sequences,
-5. run an integrity check (table count, per-table row counts, key entities),
-6. only on success switch the live engine over and persist the selection,
-7. on any failure the *source* database stays active and untouched (rollback),
-8. everything is logged to ``database.log``.
+1. Ziel prüfen und verbinden,
+2. eine Sicherheitskopie anlegen (Pflicht, dient als Rückfallpunkt),
+3. Zielschema aufbauen und ein **nicht leeres** Ziel ablehnen,
+4. Daten kopieren, PostgreSQL-Sequenzen nachziehen,
+5. Integrität prüfen (Tabellenzahl, Zeilenzahlen je Tabelle, Kennzahlen),
+6. erst bei Erfolg die laufende Verbindung umhängen und die Wahl speichern,
+7. bei jedem Fehler bleibt die **Quelldatenbank** aktiv und unangetastet,
+8. jeder Schritt steht in ``database.log``.
 """
 
 from __future__ import annotations
@@ -38,8 +39,8 @@ from . import app_config, backup_manager, database, db_schema, logging_setup, mo
 
 LOGGER = logging.getLogger("erfassung.application")
 
-# Tables whose emptiness is required on the target before a migration so we can
-# never silently overwrite an existing installation (data-loss guard, §4/§6).
+# Diese Tabellen müssen im Ziel leer sein, bevor umgezogen wird. Sonst
+# überschriebe der Umzug unbemerkt eine bestehende Installation.
 ProgressFn = Callable[[str, int, str], None]
 
 
@@ -68,7 +69,7 @@ def _server_version(engine: Engine) -> Optional[str]:
 
 
 def build_target_engine(config: "app_config.DatabaseConfig") -> Engine:
-    """Build an engine for ``config`` without touching the live engine."""
+    """Verbindung für ``config`` aufbauen, ohne die laufende anzurühren."""
     conn_cfg = config.connection_config()
     url = database.build_url(conn_cfg)
     options = database._engine_options(database.normalise_type(config.type), conn_cfg)
@@ -77,7 +78,7 @@ def build_target_engine(config: "app_config.DatabaseConfig") -> Engine:
 
 
 def test_connection(config: "app_config.DatabaseConfig", *, user: object = None) -> dict:
-    """Verify the target is reachable; returns ``{ok, message, version}``."""
+    """Erreichbarkeit des Ziels prüfen; Rückgabe ``{ok, message, version}``."""
     ok_cfg, reason = app_config.validate_database_config(config)
     if not ok_cfg:
         log_db(f"Verbindungstest fehlgeschlagen: {reason}", level=logging.WARNING, user=user)
@@ -136,8 +137,8 @@ def _ensure_target_empty(engine: Engine) -> None:
 
 def _create_target_schema(target: Engine) -> None:
     models.Base.metadata.create_all(bind=target)
-    # Recreate + seed the portable migration bookkeeping table so the target
-    # reports the same applied versions as the source.
+    # Die portable Buchführungstabelle neu anlegen und füllen, damit das Ziel
+    # denselben Migrationsstand meldet wie die Quelle.
     db_schema._ensure_version_table(target)
     source_versions = db_schema.applied_versions(database.engine)
     target_versions = db_schema.applied_versions(target)
@@ -146,7 +147,10 @@ def _create_target_schema(target: Engine) -> None:
 
 
 def _copy_table(source: Engine, target: Engine, table, batch_size: int = 500) -> int:
-    """Copy all rows of ``table`` from source to target. Returns row count."""
+    """Alle Zeilen einer Tabelle von der Quelle ins Ziel kopieren.
+
+    Rückgabe ist die Zahl der kopierten Zeilen.
+    """
     copied = 0
     with source.connect() as src_conn:
         result = src_conn.execution_options(stream_results=True).execute(table.select())
@@ -203,7 +207,7 @@ KEY_ENTITY_TABLES = {
 
 
 def integrity_check(source: Engine, target: Engine) -> dict:
-    """Compare source and target after a copy. Returns a structured report."""
+    """Quelle und Ziel nach dem Kopieren vergleichen; Rückgabe ist ein Bericht."""
     source_counts = _row_counts(source)
     target_counts = _row_counts(target)
     mismatches: list[dict] = []
@@ -248,7 +252,11 @@ def migrate(
     token: str = "",
     progress: Optional[ProgressFn] = None,
 ) -> dict:
-    """Run the full migration pipeline. Never raises – returns a result dict."""
+    """Den gesamten Umzug ausführen.
+
+    Wirft nie eine Ausnahme, sondern liefert das Ergebnis als Struktur zurück –
+    ein Abbruch mitten im Umzug wäre schwerer zu deuten als ein Bericht.
+    """
 
     def emit(state: str, percent: int, message: str) -> None:
         if progress:

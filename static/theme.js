@@ -1,7 +1,7 @@
 // Light/dark theme switching. The persisted choice (localStorage key
-// "erfassung-theme") is applied BEFORE first paint by a small inline snippet
-// in the <head> of base.html and mobile-offline-shell.html — this file only
-// wires up the toggle buttons and keeps the browser UI color in sync.
+// "erfassung-theme") wird **vor** dem ersten Bildaufbau von einem kurzen
+// Schnipsel im <head> von base.html und mobile-offline-shell.html gesetzt.
+// Diese Datei verdrahtet nur die Umschalter und hält die Browserfarbe passend.
 (function () {
   var KEY = 'erfassung-theme';
   var root = document.documentElement;
@@ -26,7 +26,8 @@
     }
   }
 
-  // Sync meta/aria with the state the inline head snippet already applied.
+  // Meta- und ARIA-Angaben mit dem Zustand abgleichen, den der Schnipsel im
+  // Kopfbereich bereits gesetzt hat.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       applyTheme(currentTheme());
@@ -45,7 +46,8 @@
     try {
       localStorage.setItem(KEY, next);
     } catch (e) {
-      /* storage unavailable (private mode) – theme still switches for the session */
+      /* Kein Speicher verfügbar (privates Fenster) – das Aussehen wechselt
+         trotzdem, nur eben nicht über die Sitzung hinaus. */
     }
     applyTheme(next);
   });

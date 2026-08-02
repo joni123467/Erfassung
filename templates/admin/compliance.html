@@ -43,7 +43,9 @@
                         {% if report.sunday_rule_impossible %}
                             <span class="license-state license-state--invalid">15 freie Sonntage nicht mehr erreichbar</span>
                         {% elif report.sunday_rule_met %}
-                            <span class="license-state">Sonntagsminimum erfüllt</span>
+                            {# Grün, nicht gelb: Das Minimum ist erreicht, hier
+                               ist nichts zu tun. Gelb hieße „aufpassen". #}
+                            <span class="license-state license-state--valid">Sonntagsminimum erfüllt</span>
                         {% else %}
                             Noch {{ report.free_sundays_missing }} freie Sonntage erforderlich;
                             {{ report.future_sundays }} Sonntage verbleiben.

@@ -1,11 +1,16 @@
-"""Regression tests for 0.9.21 – Einsatzort einer Buchung (Remote / vor Ort).
+"""Tests zum Einsatzort einer Buchung (Remote / vor Ort), ursprünglich 0.9.21.
 
-Covers: version bump, both new columns plus migration 13, the per-user
-switch (``users.remote_flag_enabled``) gating the field, clocking in remote via
-``/punch`` (and correcting it afterwards through the comment step), manual
-bookings via ``/time``, the admin edit form, the flag surviving entry splits,
-the mobile sync payload, and the conditional „Ort" column in the PDF/Excel
-exports.
+Abgedeckt sind die neuen Spalten samt Migration 13, das Stempeln als Remote
+über ``/punch`` und die spätere Korrektur über den Kommentar-Nachtrag, manuelle
+Buchungen über ``/time``, die Bearbeitungsmaske der Administration, das
+Überleben des Kennzeichens beim Teilen einer Buchung, die Daten der
+Mobilansicht sowie die Spalte „Ort", die in PDF und Excel nur erscheint, wenn
+sie gebraucht wird.
+
+**Seit 0.20.1** ist „Remote" ein Arbeitsort wie jeder andere und steht allen
+offen. Das frühere Benutzerkennzeichen ``users.remote_flag_enabled`` wird nicht
+mehr ausgewertet – Begründung in ``app.main._resolve_work_location``. Die Tests
+dazu prüfen jetzt genau das.
 """
 
 from __future__ import annotations
@@ -148,8 +153,8 @@ def _closed_entry(user_id, start, end, *, is_remote=False, notes="Büro", day=DA
 # --- version & schema ------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.20.0"
-    assert client.get("/health").json()["version"] == "0.20.0"
+    assert client.main.APP_VERSION == "0.20.1"
+    assert client.get("/health").json()["version"] == "0.20.1"
 
 
 def test_columns_exist(client):
@@ -199,7 +204,7 @@ def test_punch_start_work_remote(client):
 
 
 def test_punch_start_work_without_flag_is_on_site(client):
-    _enable_remote()
+    """Ohne Angabe gilt eine Buchung als „vor Ort"."""
     login(client)
     token = _csrf(client, "/dashboard")
     client.post(
@@ -210,8 +215,14 @@ def test_punch_start_work_without_flag_is_on_site(client):
     assert _entries(_admin_id())[0].is_remote is False
 
 
-def test_punch_remote_ignored_when_not_enabled(client):
-    """Ohne Freischaltung wird ein mitgesendeter Haken nicht übernommen."""
+def test_remote_needs_no_activation(client):
+    """Seit 0.20.1 genügt der Haken – eine Freischaltung gibt es nicht mehr.
+
+    Bis 0.20.0 wurde ein mitgesendeter Haken ohne ``remote_flag_enabled``
+    stillschweigend verworfen. Genau das ließ „Remote" aus der Einsatzortauswahl
+    verschwinden.
+    """
+    _enable_remote(False)
     login(client)
     token = _csrf(client, "/dashboard")
     client.post(
@@ -220,7 +231,7 @@ def test_punch_remote_ignored_when_not_enabled(client):
               "next_url": "/dashboard"},
         follow_redirects=False,
     )
-    assert _entries(_admin_id())[0].is_remote is False
+    assert _entries(_admin_id())[0].is_remote is True
 
 
 def test_punch_update_notes_corrects_location(client):
@@ -233,15 +244,20 @@ def test_punch_update_notes_corrects_location(client):
     client.post(
         "/punch",
         data={"csrf_token": token, "action": "update_notes", "entry_id": str(entry_id),
-              "notes": "Telefonat", "is_remote": "1", "next_url": "/dashboard"},
+              "notes": "Telefonat", "is_remote": "1", "location_field": "1",
+              "next_url": "/dashboard"},
         follow_redirects=False,
     )
     updated = _entry(entry_id)
     assert updated.is_remote is True and updated.notes == "Telefonat"
 
 
-def test_update_notes_keeps_location_when_not_enabled(client):
-    """Ohne Freischaltung bleibt ein bereits gesetzter Einsatzort erhalten."""
+def test_update_notes_without_location_field_keeps_the_value(client):
+    """Ein reiner Kommentar-Nachtrag lässt den Einsatzort unangetastet.
+
+    Das Formular schickt dann weder ``work_location`` noch ``is_remote`` – der
+    gespeicherte Wert darf davon nicht stillschweigend gelöscht werden.
+    """
     login(client)
     uid = _admin_id()
     entry_id = _closed_entry(uid, time(8, 0), time(12, 0), is_remote=True)
@@ -329,13 +345,15 @@ def test_split_of_running_entry_keeps_location(client):
 
 # --- admin edit ------------------------------------------------------------------
 
-def test_admin_form_shows_checkbox_only_when_enabled(client):
+def test_admin_form_always_offers_the_location(client):
+    """Die Bearbeitungsmaske bietet den Einsatzort immer an (ab 0.20.1)."""
     login(client)
     uid = _admin_id()
     entry_id = _closed_entry(uid, time(8, 0), time(12, 0))
     url = f"/admin/time-entries/{entry_id}/edit?next=/admin/reports/time&user={uid}"
 
-    assert 'name="is_remote"' not in client.get(url).text
+    _enable_remote(False)
+    assert 'name="is_remote"' in client.get(url).text
     _enable_remote()
     assert 'name="is_remote"' in client.get(url).text
 
@@ -346,10 +364,12 @@ def test_admin_update_sets_and_clears_location(client):
     uid = _admin_id()
     entry_id = _closed_entry(uid, time(8, 0), time(12, 0))
     url = f"/admin/time-entries/{entry_id}/edit?next=/admin/reports/time&user={uid}"
+    # ``location_field`` ist der Vermerk des Formulars, dass es ein
+    # Einsatzortfeld enthält – ohne ihn bleibt der gespeicherte Wert stehen.
     base = {
         "user_id": str(uid), "work_date": DAY.isoformat(), "start_time": "08:00",
         "end_time": "12:00", "break_minutes": "0", "notes": "Büro",
-        "next_url": "/admin/reports/time",
+        "location_field": "1", "next_url": "/admin/reports/time",
     }
 
     client.post(f"/admin/time-entries/{entry_id}/update",
@@ -365,8 +385,9 @@ def test_admin_update_sets_and_clears_location(client):
     assert _entry(entry_id).is_remote is False
 
 
-def test_admin_update_keeps_location_when_not_enabled(client):
-    """Ist das Feld für den Benutzer aus, bleibt der Bestandswert erhalten."""
+def test_admin_update_sets_remote_without_activation(client):
+    """Auch ohne das alte Kennzeichen lässt sich „Remote" setzen (ab 0.20.1)."""
+    _enable_remote(False)
     login(client)
     uid = _admin_id()
     entry_id = _closed_entry(uid, time(8, 0), time(12, 0), is_remote=False)
@@ -377,35 +398,38 @@ def test_admin_update_keeps_location_when_not_enabled(client):
               "change_reason": "Test: Korrektur",
               "work_date": DAY.isoformat(), "start_time": "08:00", "end_time": "11:00",
               "break_minutes": "0", "notes": "Büro", "is_remote": "1",
-              "next_url": "/admin/reports/time"},
+              "location_field": "1", "next_url": "/admin/reports/time"},
         follow_redirects=False,
     )
     updated = _entry(entry_id)
-    assert updated.is_remote is False and updated.end_time == time(11, 0)
+    assert updated.is_remote is True and updated.end_time == time(11, 0)
 
 
-def test_user_form_offers_setting(client):
+def test_user_form_no_longer_offers_the_switch(client):
+    """Der irreführende Haken ist weg – der Hinweis erklärt, warum (ab 0.20.1)."""
     login(client)
     html = client.get("/admin/users/new").text
-    assert 'name="remote_flag_enabled"' in html
-    assert "Einsatzort erfassen" in html
+    assert 'name="remote_flag_enabled"' not in html
+    assert "Einsatzort" in html
 
 
 # --- surfaces --------------------------------------------------------------------
 
-def test_dashboard_checkbox_follows_setting(client):
+def test_dashboard_always_offers_the_location(client):
+    """Der Einsatzort steht auf dem Dashboard immer zur Wahl (ab 0.20.1)."""
     login(client)
-    assert 'name="is_remote"' not in client.get("/dashboard").text
+    _enable_remote(False)
+    assert 'name="is_remote"' in client.get("/dashboard").text
     _enable_remote()
     assert 'name="is_remote"' in client.get("/dashboard").text
 
 
 def test_mobile_sync_exposes_location(client):
-    _enable_remote()
     login(client)
     _closed_entry(_admin_id(), time(8, 0), time(12, 0), is_remote=True, day=date.today())
     payload = client.get("/mobile/sync-data").json()
-    assert payload["permissions"]["flag_remote"] is True
+    # ``flag_remote`` ist ab 0.20.1 entfallen – der Einsatzort gilt für alle.
+    assert "flag_remote" not in payload["permissions"]
     assert any(entry["is_remote"] for entry in payload["entries"])
 
 

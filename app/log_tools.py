@@ -1,4 +1,4 @@
-"""Reading, filtering, exporting and cleaning the structured log files."""
+"""Protokolldateien lesen, filtern, ausgeben und aufräumen."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class LogLine:
 
 
 def available_logs() -> list[dict[str, object]]:
-    """Metadata for every known log channel (existing or not)."""
+    """Angaben zu jedem bekannten Protokollkanal – auch zu noch leeren."""
 
     result: list[dict[str, object]] = []
     for channel, filename in logging_setup.CHANNELS.items():
@@ -84,7 +84,7 @@ def read_log(
     end: Optional[date] = None,
     limit: int = 1000,
 ) -> list[LogLine]:
-    """Return parsed log lines (newest first) matching the filters."""
+    """Passende Protokollzeilen, ausgewertet und mit der neuesten zuerst."""
 
     if channel not in logging_setup.CHANNELS:
         raise KeyError(channel)
@@ -142,7 +142,7 @@ def clear_all_logs() -> None:
 
 
 def build_zip(channels: Iterable[str]) -> io.BytesIO:
-    """Bundle the requested log files into an in-memory ZIP archive."""
+    """Die gewünschten Protokolldateien zu einem ZIP im Arbeitsspeicher bündeln."""
 
     buffer = io.BytesIO()
     selected = [c for c in channels if c in logging_setup.CHANNELS] or list(
@@ -165,7 +165,7 @@ def single_log_bytes(channel: str) -> bytes:
 
 
 def error_overview() -> dict[str, object]:
-    """Aggregate statistics from the error log for the admin dashboard."""
+    """Kennzahlen aus dem Fehlerprotokoll für die Systemübersicht."""
 
     now = datetime.now()
     last_24h = 0

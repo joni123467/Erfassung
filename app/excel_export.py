@@ -168,7 +168,7 @@ def export_time_entries(
     vacation_list = list(vacations or [])
     if vacation_list:
         vacation_ws = wb.create_sheet(title="Urlaub")
-        vacation_ws.append(["Start", "Ende", "Anzurechnung (Min)", "Typ", "Kommentar"])
+        vacation_ws.append(["Start", "Ende", "Angerechnete Zeit (Min)", "Typ", "Kommentar"])
         for cell in vacation_ws[1]:
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center")

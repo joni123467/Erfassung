@@ -24,7 +24,7 @@
     <header class="mobile-dashboard__header">
         <div>
             <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
-            <p class="mobile-dashboard__date">{{ today.strftime('%A, %d.%m.%Y') }}</p>
+            <p class="mobile-dashboard__date">{{ today | german_date }}</p>
         </div>
         <p class="mobile-dashboard__status" data-state="active" {% if not active_entry %}hidden{% endif %}>
             <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
@@ -134,9 +134,9 @@
                         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                         <input type="hidden" name="next_url" value="/mobile">
                         <input type="hidden" name="action" value="start_work">
-                        {% if can_flag_remote %}
-                            {{ location_toggle(block=True) }}
-                        {% endif %}
+                        {# Schnellstart ohne Firma: keine Standortliste, nur der
+                           Umschalter „Vor Ort / Remote". #}
+                        {{ location_toggle(block=True) }}
                         <button type="submit" class="mobile-button primary" data-toggle-disabled="true">Arbeitszeit starten</button>
                     </form>
                     {% if companies or can_create_companies %}
@@ -231,10 +231,7 @@
                                 Kommentar (optional)
                                 <input type="text" name="notes" placeholder="z. B. Projekt oder Kundenname">
                             </label>
-                            {# Kein can_flag_remote hier – siehe templates/dashboard.html:
-                               der Standort einer Firma ist keine Remote-Arbeit. #}
-                            {{ location_picker(catalogue=location_catalogue_data, block=True,
-                                               allow_remote=can_flag_remote) }}
+                            {{ location_picker(catalogue=location_catalogue_data, block=True) }}
                             <div class="modal__actions modal-action-bar">
                                 <button type="button" class="button ghost modal-action" data-close>
                                     <span class="modal-action__icon" aria-hidden="true">✕</span>
@@ -266,9 +263,10 @@
                             Kommentar
                             <textarea name="notes" rows="3" maxlength="255" placeholder="z. B. Projekt oder Tätigkeit"></textarea>
                         </label>
-                        {% if can_flag_remote %}
-                            {{ location_toggle(block=True) }}
-                        {% endif %}
+                        {# Nachträglich zur beendeten Buchung: Die Firma steht
+                           schon fest, eine Standortliste gäbe es hier nicht –
+                           deshalb nur der Umschalter „Vor Ort / Remote". #}
+                        {{ location_toggle(block=True) }}
                         <div class="modal__actions modal-action-bar">
                             <button type="button" class="button ghost modal-action" data-close>
                                 <span class="modal-action__icon" aria-hidden="true">✕</span>
