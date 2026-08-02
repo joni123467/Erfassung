@@ -141,8 +141,8 @@ def _picker(html: str) -> str:
 
 
 def test_version_is_0201(client):
-    assert client.app.version == "0.20.1"
-    assert client.get("/health").json()["version"] == "0.20.1"
+    assert client.app.version == "0.20.2"
+    assert client.get("/health").json()["version"] == "0.20.2"
 
 
 # ── 1. „Remote" steht wieder zur Wahl ─────────────────────────────────────
@@ -307,7 +307,21 @@ def test_exports_use_the_correct_word():
 
 
 def test_met_sunday_minimum_is_green(client):
-    """Gelb heißt „aufpassen" – erfüllt gehört grün."""
+    """Gelb heißt „aufpassen" – erfüllt gehört grün.
+
+    Seit 0.20.2 setzt ein positives Prüfurteil einen bekannten
+    Beschäftigungsbeginn voraus; ohne ihn steht dort „Beschäftigungsbeginn
+    fehlt". Der Test hinterlegt deshalb ein Eintrittsdatum.
+    """
+    from app import database, models
+
+    with database.SessionLocal() as db:
+        person = db.query(models.User).filter(
+            models.User.id == _admin_id()
+        ).first()
+        person.employment_start_date = date(date.today().year, 1, 1)
+        db.commit()
+
     _login(client)
     html = client.get("/admin/compliance").text
     marker = html.index("Sonntagsminimum erfüllt")

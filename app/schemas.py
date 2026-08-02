@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator, model_validator
 
 from . import models
 
@@ -119,6 +119,13 @@ class UserBase(BaseModel):
     monthly_overtime_limit_minutes: Optional[int] = None
     auto_break_deduction: bool = True
     remote_flag_enabled: bool = False
+    #: Beschäftigungszeitraum (ab 0.20.2). Er begrenzt die Jahresprüfung der
+    #: freien Sonntage: Sonntage vor dem Eintritt oder nach dem Austritt sind
+    #: keine „beschäftigungsfreien" Sonntage. Beide Felder bleiben optional –
+    #: Bestandskonten behalten ``None``, und ohne Beginn trifft die Anwendung
+    #: kein positives Prüfurteil.
+    employment_start_date: Optional[date] = None
+    employment_end_date: Optional[date] = None
     #: Mehrfachzugehörigkeit (RBAC). ``group_id`` bleibt aus Kompatibilität
     #: erhalten und wird beim Anlegen als einzelne Mitgliedschaft übernommen.
     group_ids: Optional[List[int]] = None
@@ -146,6 +153,25 @@ class UserBase(BaseModel):
         if value < 0:
             raise ValueError("Überstundenlimit darf nicht negativ sein")
         return value
+
+    @model_validator(mode="after")
+    def validate_employment_period(self) -> "UserBase":
+        """Das Beschäftigungsende darf nicht vor dem Beginn liegen.
+
+        Serverseitig geprüft, nicht nur im Formular: Die Schnittstelle nimmt
+        dieselben Daten entgegen, und ein umgedrehter Zeitraum ließe die
+        Sonntagsprüfung über einen leeren Zeitraum laufen.
+
+        Beginn und Ende am selben Tag sind zulässig – ein eintägiges
+        Beschäftigungsverhältnis ist ungewöhnlich, aber möglich.
+        """
+        start = self.employment_start_date
+        end = self.employment_end_date
+        if start is not None and end is not None and end < start:
+            raise ValueError(
+                "Beschäftigungsende darf nicht vor dem Beschäftigungsbeginn liegen"
+            )
+        return self
 
 
 class UserCreate(UserBase):

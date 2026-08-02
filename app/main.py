@@ -307,6 +307,24 @@ templates.env.globals["now"] = datetime.utcnow
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["get_csrf_token"] = get_csrf_token
 
+
+def _parse_optional_date(value: Optional[str]) -> Optional[date]:
+    """Datum aus einem Formularfeld; leer heißt ``None``.
+
+    Ein unbrauchbarer Wert wird abgewiesen statt still verworfen: Beim
+    Beschäftigungszeitraum entscheidet das Datum über die Sonntagsprüfung, und
+    ein stillschweigend gelöschter Eintritt führte genau zu dem Ergebnis, das
+    diese Fassung abstellen soll.
+    """
+    text_value = (value or "").strip()
+    if not text_value:
+        return None
+    try:
+        return date.fromisoformat(text_value)
+    except ValueError as exc:
+        raise ValueError("INVALID_DATE") from exc
+
+
 def _parse_overtime_limit_hours(value: Optional[str]) -> Optional[int]:
     if value is None:
         return None
@@ -524,6 +542,16 @@ def ensure_schema() -> None:
                 connection.execute(text("ALTER TABLE users ADD COLUMN deactivated_at DATETIME"))
             if "deactivation_reason" not in user_columns:
                 connection.execute(text("ALTER TABLE users ADD COLUMN deactivation_reason VARCHAR(500)"))
+            # Beschäftigungszeitraum (ab 0.20.2, Inhalte der Migration 22).
+            # ``DATE`` ist über SQLite, MySQL/MariaDB und PostgreSQL portabel.
+            # Bewusst **ohne** Vorgabewert und ohne Nachbefüllung: Ein geratenes
+            # Eintrittsdatum wäre in einem gesetzlichen Nachweis schlimmer als
+            # eine ehrliche Lücke. Bestandskonten bleiben deshalb NULL.
+            for _column in ("employment_start_date", "employment_end_date"):
+                if _column not in user_columns:
+                    connection.execute(
+                        text(f"ALTER TABLE users ADD COLUMN {_column} DATE")
+                    )
             connection.execute(text("UPDATE users SET is_active = 1 WHERE is_active IS NULL"))
         if "companies" not in table_names:
             models.Base.metadata.tables["companies"].create(bind=connection)
@@ -5277,6 +5305,8 @@ def create_user_html(
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
     auto_break_deduction: Optional[str] = Form(None),
+    employment_start_date: Optional[str] = Form(None),
+    employment_end_date: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -5319,6 +5349,14 @@ def create_user_html(
             status_code=status.HTTP_303_SEE_OTHER,
         )
     try:
+        employment_start = _parse_optional_date(employment_start_date)
+        employment_end = _parse_optional_date(employment_end_date)
+    except ValueError:
+        return RedirectResponse(
+            url="/admin/users/new?error=Ung%C3%BCltiger+Besch%C3%A4ftigungszeitraum",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
         if password != password_confirm:
             raise ValueError("PASSWORD_CONFIRM_MISMATCH")
         security.validate_password_strength(password)
@@ -5340,6 +5378,8 @@ def create_user_html(
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
                 auto_break_deduction=auto_break_value,
+                employment_start_date=employment_start,
+                employment_end_date=employment_end,
             ),
         )
     except (ValueError, IntegrityError) as exc:
@@ -5379,6 +5419,8 @@ def update_user_html(
     vacation_carryover_days: int = Form(0),
     rfid_tag: Optional[str] = Form(None),
     auto_break_deduction: Optional[str] = Form(None),
+    employment_start_date: Optional[str] = Form(None),
+    employment_end_date: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
     user = get_logged_in_user(request, db)
@@ -5417,6 +5459,14 @@ def update_user_html(
             status_code=status.HTTP_303_SEE_OTHER,
         )
     try:
+        employment_start = _parse_optional_date(employment_start_date)
+        employment_end = _parse_optional_date(employment_end_date)
+    except ValueError:
+        return RedirectResponse(
+            url=f"/admin/users/{user_id}?error=Ung%C3%BCltiger+Besch%C3%A4ftigungszeitraum",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
         reset_password_value = reset_password.strip()
         if reset_password_value:
             if reset_password != reset_password_confirm:
@@ -5441,6 +5491,8 @@ def update_user_html(
                 rfid_tag=rfid_value,
                 monthly_overtime_limit_minutes=overtime_limit_minutes,
                 auto_break_deduction=auto_break_value,
+                employment_start_date=employment_start,
+                employment_end_date=employment_end,
             ),
         )
     except (ValueError, IntegrityError) as exc:

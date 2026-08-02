@@ -840,6 +840,35 @@ def _add_user_deactivation(engine: Engine) -> None:
     db_schema.add_column(engine, "users", "deactivation_reason", "VARCHAR(500)")
 
 
+def _add_employment_period(engine: Engine) -> None:
+    """Beschäftigungszeitraum am Benutzer (ab 0.20.2).
+
+    Die Jahresprüfung der freien Sonntage nach § 11 Abs. 1 ArbZG rechnete bis
+    0.20.1 über das **ganze** Kalenderjahr. Wer im September eingetreten war,
+    bekam damit die Sonntage von Januar bis August als „beschäftigungsfrei"
+    gutgeschrieben – Sonntage, an denen es überhaupt kein
+    Beschäftigungsverhältnis gab. Das Ergebnis war eine Zusicherung, die die
+    Daten nicht hergaben.
+
+    Beide Spalten sind ``DATE NULL``. Bestandskonten bekommen ausdrücklich
+    **kein** erfundenes Eintrittsdatum: Ein geratenes Datum wäre in einem
+    gesetzlichen Nachweis schlimmer als eine ehrliche Lücke. Ohne Beginn weist
+    die Anwendung „Beschäftigungsbeginn fehlt" aus und trifft kein positives
+    Prüfurteil.
+
+    Portabel über SQLite, MySQL/MariaDB und PostgreSQL, beliebig oft
+    wiederholbar und datenerhaltend: ``db_schema.add_column`` prüft die
+    Spaltenexistenz vorher und rührt vorhandene Zeilen nicht an.
+    """
+    if not db_schema.has_table(engine, "users"):
+        models.Base.metadata.tables["users"].create(bind=engine, checkfirst=True)
+        return
+    # Kein ``default`` und kein ``backfill_null_to``: NULL ist hier die
+    # richtige Antwort und soll NULL bleiben.
+    db_schema.add_column(engine, "users", "employment_start_date", "DATE")
+    db_schema.add_column(engine, "users", "employment_end_date", "DATE")
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -862,6 +891,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (19, _add_finding_keys_and_holiday_notes),
     (20, _add_compliance_logs),
     (21, _add_user_deactivation),
+    (22, _add_employment_period),
 ]
 
 

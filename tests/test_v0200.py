@@ -52,7 +52,7 @@ def _entry(main, day, start, end):
 
 
 def test_version(main):
-    assert main.APP_VERSION == "0.20.1"
+    assert main.APP_VERSION == "0.20.2"
 
 
 def test_night_work_over_eight_hours_is_flagged(main):
@@ -100,9 +100,22 @@ def test_saturday_night_counts_as_sunday_work(main):
 
 
 def test_too_few_free_sundays_creates_annual_finding(main):
+    """Seit 0.20.2 setzt ein Verstoß einen bekannten Beschäftigungsbeginn voraus.
+
+    Ohne Eintrittsdatum lässt sich nicht sagen, welche Sonntage überhaupt in
+    das Beschäftigungsverhältnis fallen – dann behauptet die Anwendung weder
+    einen Verstoß noch die Einhaltung. Der Test hinterlegt deshalb einen
+    Beginn; geprüft wird weiterhin die revisionssichere Feststellung.
+    """
     from app import compliance, database, models
+    with database.SessionLocal() as db:
+        person = db.query(models.User).filter(
+            models.User.id == _admin(main)
+        ).first()
+        person.employment_start_date = date(2026, 1, 1)
+        db.commit()
     # Im Gesamtjahr an 40 Sonntagen arbeiten: höchstens 12 bleiben frei.
-    sundays = compliance._sundays_in_year(2026)
+    sundays = compliance._sundays_between(date(2026, 1, 1), date(2026, 12, 31))
     for day in sundays[:40]:
         _entry(main, day, time(9, 0), time(10, 0))
     with database.SessionLocal() as db:
@@ -115,6 +128,24 @@ def test_too_few_free_sundays_creates_annual_finding(main):
     assert reports[0]["sunday_rule_impossible"] is True
     assert flag.state == models.ComplianceState.DETECTED
     assert flag.severity == compliance.SEVERITY_CRITICAL
+
+
+def test_annual_finding_needs_a_known_employment_start(main):
+    """Ohne Eintrittsdatum entsteht keine Feststellung (ab 0.20.2)."""
+    from app import compliance, database, models
+    sundays = compliance._sundays_between(date(2026, 1, 1), date(2026, 12, 31))
+    for day in sundays[:40]:
+        _entry(main, day, time(9, 0), time(10, 0))
+    with database.SessionLocal() as db:
+        reports = compliance.refresh_annual_compliance(
+            db, reference_date=date(2026, 12, 31), user_ids=[_admin(main)]
+        )
+        assert db.query(models.ComplianceFlag).filter(
+            models.ComplianceFlag.code == compliance.FREE_SUNDAYS_UNDER_15
+        ).count() == 0
+    assert reports[0]["employment_period_known"] is False
+    assert reports[0]["sunday_rule_impossible"] is False
+    assert reports[0]["sunday_rule_met"] is False
 
 
 def test_compliance_page_contains_annual_overview(main):
