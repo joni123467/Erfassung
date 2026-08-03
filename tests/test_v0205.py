@@ -1,4 +1,4 @@
-"""Regressionstests für den grafischen Kalender in Version 0.20.5."""
+"""Regressionstests für den grafischen Kalender in Version 0.20.6."""
 
 from datetime import date
 import sys

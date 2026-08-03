@@ -1,5 +1,39 @@
 {% extends "base.html" %}
-{% block title %}{% if form_user %}Benutzer bearbeiten{% else %}Benutzer anlegen{% endif %} – Erfassung{% endblock %}
+{% block title %}{% if form_user %}Benutzer bearbeiten{% else %}Benutzer anlegen{% endif %} – Erfassung{% if is_edit %}
+<div class="modal work-schedules-modal" id="work-schedules-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="work-schedules-title">
+  <div class="modal__backdrop" data-work-schedules-close></div>
+  <div class="modal__dialog modal__dialog--scroll">
+    <header class="modal__head"><h2 id="work-schedules-title">Arbeitszeitpläne</h2><button type="button" class="modal__close" data-work-schedules-close aria-label="Schließen">&times;</button></header>
+    <div class="modal__body">
+      <h3>Vorhandene Pläne</h3>
+      {% if form_user.work_schedules %}<ul class="work-schedule-list">{% for plan in form_user.work_schedules %}<li><strong>{{ plan.valid_from|german_date }}</strong><span>{{ plan.name }}</span></li>{% endfor %}</ul>{% else %}<p class="form-hint">Noch keine Arbeitszeitpläne vorhanden.</p>{% endif %}
+      <h3>Neuen Plan anlegen</h3>
+      <form method="post" action="/admin/users/{{ form_user.id }}/work-schedules" class="form-grid" id="work-schedule-form">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label>Gültig ab<input type="date" name="valid_from" required></label>
+        <label>Bezeichnung<input name="name" value="Regelarbeitszeit" maxlength="255" required></label>
+        {% for key, label in [('monday','Mo'),('tuesday','Di'),('wednesday','Mi'),('thursday','Do'),('friday','Fr'),('saturday','Sa'),('sunday','So')] %}<label>{{ label }} (Std.)<input type="number" name="{{ key }}_hours" min="0" max="24" step="0.25" value="{{ 0 if key in ['saturday','sunday'] else (form_user.standard_weekly_hours / 5)|round(2) }}"></label>{% endfor %}
+        <div class="modal__foot full-width"><button type="button" class="button ghost" data-work-schedules-close>Schließen</button><button class="button primary" type="submit">Arbeitszeitplan hinzufügen</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const modal = document.getElementById('work-schedules-modal');
+  const trigger = document.getElementById('work-schedules-open');
+  const firstField = modal.querySelector('input[name="valid_from"]');
+  const setOpen = (open) => {
+    modal.classList.toggle('is-visible', open); modal.setAttribute('aria-hidden', open ? 'false' : 'true'); document.body.classList.toggle('modal-open', open);
+    if (open) firstField.focus(); else trigger.focus();
+  };
+  trigger.addEventListener('click', () => setOpen(true));
+  modal.querySelectorAll('[data-work-schedules-close]').forEach(el => el.addEventListener('click', () => setOpen(false)));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && modal.classList.contains('is-visible')) setOpen(false); });
+})();
+</script>
+{% endif %}
+{% endblock %}
 {% block content %}
 {% set admin_active = 'users' %}
 {% set admin_nav_collapse = true %}
@@ -166,18 +200,10 @@
             </div>
         </form>
         {% if is_edit %}
-            <section class="card compact-card">
-                <h2>Versionierter Arbeitszeitplan</h2>
-                <form method="post" action="/admin/users/{{ form_user.id }}/work-schedules" class="form-grid">
-                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                    <label>Gültig ab<input type="date" name="valid_from" required></label>
-                    <label>Bezeichnung<input name="name" value="Regelarbeitszeit" maxlength="255" required></label>
-                    {% for key, label in [('monday','Mo'),('tuesday','Di'),('wednesday','Mi'),('thursday','Do'),('friday','Fr'),('saturday','Sa'),('sunday','So')] %}
-                        <label>{{ label }} (Std.)<input type="number" name="{{ key }}_hours" min="0" max="24" step="0.25" value="{{ 0 if key in ['saturday','sunday'] else (form_user.standard_weekly_hours / 5)|round(2) }}"></label>
-                    {% endfor %}
-                    <button class="button primary" type="submit">Arbeitszeitplan hinzufügen</button>
-                </form>
-                {% if form_user.work_schedules %}<ul>{% for plan in form_user.work_schedules %}<li>{{ plan.valid_from|german_date }}: {{ plan.name }}</li>{% endfor %}</ul>{% endif %}
+            <section class="card compact-card work-schedule-launcher">
+                <h2>Arbeitszeitpläne</h2>
+                <p class="form-hint">Versionierte Wochenpläne getrennt vom Benutzerstamm verwalten.</p>
+                <button type="button" class="button ghost" id="work-schedules-open">Arbeitszeitpläne</button>
             </section>
             <section class="card compact-card">
                 <h2>Urlaubsanspruch buchen</h2>
@@ -211,13 +237,53 @@
         {% endif %}
       </div>
         {% if is_edit %}
-            <form method="post" action="/admin/users/{{ form_user.id }}/delete" class="danger-zone" onsubmit="return confirm('Benutzer wirklich deaktivieren? Arbeitszeitnachweise bleiben erhalten.');">
-                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                <label>Begründung <input name="reason" maxlength="500" required value="Administrativ deaktiviert"></label>
-                <p class="form-hint">Das Konto wird pseudonymisiert. Arbeitszeiten und gesetzliche Nachweisdaten bleiben vollständig erhalten.</p>
-                <button type="submit" class="button danger small">Benutzer deaktivieren</button>
-            </form>
+            <section class="danger-zone user-deactivation" aria-labelledby="deactivation-title">
+                <h2 id="deactivation-title">Benutzer deaktivieren</h2>
+                <form method="post" action="/admin/users/{{ form_user.id }}/delete" onsubmit="return confirm('Benutzer wirklich deaktivieren? Arbeitszeitnachweise bleiben erhalten.');">
+                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                    <label>Begründung<input name="reason" maxlength="500" required value="Administrativ deaktiviert"></label>
+                    <aside class="user-deactivation__consequences" aria-labelledby="deactivation-consequences">
+                        <h3 id="deactivation-consequences">Folgen der Deaktivierung</h3>
+                        <p>Das Konto wird pseudonymisiert. Arbeitszeiten und gesetzliche Nachweisdaten bleiben vollständig erhalten.</p>
+                    </aside>
+                    <div class="user-deactivation__action"><button type="submit" class="button danger">Benutzer deaktivieren</button></div>
+                </form>
+            </section>
         {% endif %}
     </div>
 </section>
+{% if is_edit %}
+<div class="modal work-schedules-modal" id="work-schedules-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="work-schedules-title">
+  <div class="modal__backdrop" data-work-schedules-close></div>
+  <div class="modal__dialog modal__dialog--scroll">
+    <header class="modal__head"><h2 id="work-schedules-title">Arbeitszeitpläne</h2><button type="button" class="modal__close" data-work-schedules-close aria-label="Schließen">&times;</button></header>
+    <div class="modal__body">
+      <h3>Vorhandene Pläne</h3>
+      {% if form_user.work_schedules %}<ul class="work-schedule-list">{% for plan in form_user.work_schedules %}<li><strong>{{ plan.valid_from|german_date }}</strong><span>{{ plan.name }}</span></li>{% endfor %}</ul>{% else %}<p class="form-hint">Noch keine Arbeitszeitpläne vorhanden.</p>{% endif %}
+      <h3>Neuen Plan anlegen</h3>
+      <form method="post" action="/admin/users/{{ form_user.id }}/work-schedules" class="form-grid" id="work-schedule-form">
+        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+        <label>Gültig ab<input type="date" name="valid_from" required></label>
+        <label>Bezeichnung<input name="name" value="Regelarbeitszeit" maxlength="255" required></label>
+        {% for key, label in [('monday','Mo'),('tuesday','Di'),('wednesday','Mi'),('thursday','Do'),('friday','Fr'),('saturday','Sa'),('sunday','So')] %}<label>{{ label }} (Std.)<input type="number" name="{{ key }}_hours" min="0" max="24" step="0.25" value="{{ 0 if key in ['saturday','sunday'] else (form_user.standard_weekly_hours / 5)|round(2) }}"></label>{% endfor %}
+        <div class="modal__foot full-width"><button type="button" class="button ghost" data-work-schedules-close>Schließen</button><button class="button primary" type="submit">Arbeitszeitplan hinzufügen</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const modal = document.getElementById('work-schedules-modal');
+  const trigger = document.getElementById('work-schedules-open');
+  const firstField = modal.querySelector('input[name="valid_from"]');
+  const setOpen = (open) => {
+    modal.classList.toggle('is-visible', open); modal.setAttribute('aria-hidden', open ? 'false' : 'true'); document.body.classList.toggle('modal-open', open);
+    if (open) firstField.focus(); else trigger.focus();
+  };
+  trigger.addEventListener('click', () => setOpen(true));
+  modal.querySelectorAll('[data-work-schedules-close]').forEach(el => el.addEventListener('click', () => setOpen(false)));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && modal.classList.contains('is-visible')) setOpen(false); });
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -4160,3 +4160,21 @@ tr.company-deleted td {
 .compliance-form input[type="text"] {
     min-width: 12rem;
 }
+
+/* Arbeitszeitplan-Dialog und klar gegliederte Benutzerdeaktivierung (0.20.6). */
+.work-schedules-modal .modal__dialog { width: min(52rem, 100%); max-width: 52rem; }
+.work-schedule-list { display: grid; gap: .5rem; padding: 0; list-style: none; }
+.work-schedule-list li { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); }
+.user-deactivation { display: grid; gap: 1rem; margin-top: 1.5rem; }
+.user-deactivation h2, .user-deactivation h3, .user-deactivation p { margin: 0; }
+.user-deactivation form { display: grid; gap: 1rem; }
+.user-deactivation form > label { display: grid; gap: .4rem; }
+.user-deactivation__consequences { display: grid; gap: .35rem; padding: 1rem; border-left: 4px solid var(--danger); background: var(--danger-soft); border-radius: var(--radius-sm); }
+.user-deactivation__action { padding-top: 1rem; border-top: 1px solid var(--border); }
+@media (max-width: 480px) {
+  .work-schedules-modal { padding: .5rem; }
+  .work-schedules-modal .modal__dialog { padding: 1rem; max-width: calc(100vw - 1rem); }
+  .work-schedules-modal .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .work-schedules-modal .modal__foot, .work-schedule-list li { align-items: stretch; flex-direction: column; }
+  .user-deactivation, .user-deactivation form { grid-template-columns: minmax(0, 1fr); }
+}

@@ -3101,7 +3101,10 @@ def personal_vacation_calendar(request: Request, scope: str = "self", view: str 
         selected, view = date(legacy_year, 1, 1), "list"
     if view == "week":
         try:
-            focus = date.fromisoformat(anchor) if anchor else today
+            # The month selector is the source of truth when no explicit week
+            # navigation anchor is present.  This also makes changing the
+            # selector useful while the weekly view is active.
+            focus = date.fromisoformat(anchor) if anchor else selected
         except (TypeError, ValueError):
             focus = today
         period_start = focus - timedelta(days=focus.weekday())
@@ -3114,7 +3117,7 @@ def personal_vacation_calendar(request: Request, scope: str = "self", view: str 
         period_end = date(selected.year, selected.month, monthrange(selected.year, selected.month)[1])
         previous_value = (selected - timedelta(days=1)).replace(day=1).strftime("%Y-%m")
         next_value = (period_end + timedelta(days=1)).strftime("%Y-%m")
-        title = selected.strftime("%B %Y")
+        title = f"{_month_name(selected)} {selected.year}"
         if legacy_year:
             period_end, title = date(legacy_year, 12, 31), str(legacy_year)
     query = db.query(models.VacationRequest).filter(

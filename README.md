@@ -2,13 +2,15 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.5`
+**Version:** `0.20.6`
 
+> Seit 0.20.6: **korrigierter Abwesenheitskalender und Benutzerverwaltung** – der Monatswechsel lädt sofort, die Wochenansicht folgt der Monatswahl und Arbeitszeitpläne werden in einem responsiven Dialog verwaltet.
+>
 > Seit 0.20.5: **grafischer Abwesenheitskalender** – persönliche Monats-,
 > Wochen- und Listenansicht, Feiertage und halbe Tage sowie ein eigener,
 > gruppenbezogen berechtigter Teamkalender. Sichere, widerrufbare iCalendar-
 > Feeds bleiben optional über den Lizenzbaustein `calendar_sync` verfügbar.
-> Details: [`docs/RELEASE_NOTES_0.20.5.md`](docs/RELEASE_NOTES_0.20.5.md).
+> Details: [`docs/RELEASE_NOTES_0.20.6.md`](docs/RELEASE_NOTES_0.20.6.md).
 
 > Seit 0.20.3: **Arbeitszeit- und Abwesenheitsplanung** – versionierte
 > Wochentags-Sollzeiten bilden Teilzeit, Vier-/Sechs-Tage-Woche und Samstagsarbeit
