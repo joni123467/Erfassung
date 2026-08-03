@@ -2,7 +2,13 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.3`
+**Version:** `0.20.5`
+
+> Seit 0.20.5: **grafischer Abwesenheitskalender** – persönliche Monats-,
+> Wochen- und Listenansicht, Feiertage und halbe Tage sowie ein eigener,
+> gruppenbezogen berechtigter Teamkalender. Sichere, widerrufbare iCalendar-
+> Feeds bleiben optional über den Lizenzbaustein `calendar_sync` verfügbar.
+> Details: [`docs/RELEASE_NOTES_0.20.5.md`](docs/RELEASE_NOTES_0.20.5.md).
 
 > Seit 0.20.3: **Arbeitszeit- und Abwesenheitsplanung** – versionierte
 > Wochentags-Sollzeiten bilden Teilzeit, Vier-/Sechs-Tage-Woche und Samstagsarbeit
@@ -1163,6 +1169,23 @@ Datenbankgrenzen hinweg.
 ## Urlaub
 
 ### Arbeitszeitpläne, Abwesenheitskalender und iCalendar (seit 0.20.3)
+
+Der normale Bereich **Urlaub** bietet ab 0.20.5 „Meine Anträge“, „Mein
+Kalender“ und – mit dem gesonderten Scope-Recht `Vacation.TeamCalendar` – den
+„Teamkalender“. Der Kalender ist ohne externe Bibliotheken umgesetzt und hat
+Monats-, Wochen- sowie Listenansicht. Genehmigungen, eigene offene Anträge,
+Feiertage und halbe Tage sind unterscheidbar; auf kleinen Bildschirmen bleibt
+das Raster bewusst scrollbar. Der Teamkalender zeigt nur Personen im erlaubten
+Scope. Offene Anträge werden dort ausschließlich Urlaubsverwaltern in deren
+`Vacation.Manage`-Scope gezeigt; vertrauliche Arten bleiben „Abwesend“ und
+Kommentare werden nie ausgegeben. Das Antragsformular prüft Überschneidungen
+datensparsam über einen geschützten JSON-Endpunkt und blockiert den Antrag nicht.
+
+Persönliche und Team-iCalendar-Feeds enthalten ausschließlich genehmigte
+Abwesenheiten. Teamfeeds benötigen auch nach ihrer Erstellung weiterhin das
+Teamkalenderrecht. Token werden zufällig erzeugt, nur einmal angezeigt, in der
+Datenbank ausschließlich als SHA-256-Hash gespeichert und können jederzeit
+widerrufen werden. `calendar_sync` setzt den Lizenzbaustein `vacation` voraus.
 
 Unter *Administration → Benutzer → Person* können Arbeitszeitpläne mit einem
 Gültigkeitsbeginn und eigenen Sollstunden für Montag bis Sonntag angelegt

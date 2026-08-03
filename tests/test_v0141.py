@@ -169,8 +169,8 @@ def _entry(*, work_date: date, start: time, end: time, user_id: int | None = Non
 
 
 def test_version_is_0141(client):
-    assert client.app.version == "0.20.3"
-    assert client.get("/health").json()["version"] == "0.20.3"
+    assert client.app.version == "0.20.5"
+    assert client.get("/health").json()["version"] == "0.20.5"
 
 
 # ── Einsatzort hängt nicht am Remote-Kennzeichen ──────────────────────────

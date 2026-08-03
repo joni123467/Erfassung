@@ -3060,6 +3060,7 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
             "vacations": vacations, "vacation_summary": vacation_summary,
             "pending_vacations": pending_vacations,
             "can_request_vacations": _can_request_vacations(user),
+            "can_team_calendar": permission_service.has(user, "Vacation.TeamCalendar"),
             "absence_types": db.query(models.AbsenceType).filter(models.AbsenceType.active.is_(True)).order_by(models.AbsenceType.label).all(),
         },
     )
@@ -3073,22 +3074,111 @@ def _calendar_rows(db: Session, vacations: Iterable[models.VacationRequest], *, 
         confidential = bool(kind and kind.confidential)
         rows.append({"id": item.id, "start": item.start_date, "end": item.end_date,
             "status": item.status, "person": item.user.full_name if getattr(item, "user", None) else "",
+            "half_day_start": item.half_day_start, "half_day_end": item.half_day_end,
             "label": (kind.label if kind else "Urlaub") if reveal and not confidential else "Abwesend"})
     return rows
 
 
 @app.get("/records/vacations/calendar", response_class=HTMLResponse)
-def personal_vacation_calendar(request: Request, year: int = Query(default_factory=lambda: date.today().year), db: Session = Depends(database.get_db)):
+def personal_vacation_calendar(request: Request, scope: str = "self", view: str = "month", month: Optional[str] = None,
+                               anchor: Optional[str] = None, year: Optional[int] = None,
+                               db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=303)
-    vacations = crud.get_vacations_in_range(db, date(year, 1, 1), date(year, 12, 31), user_id=user.id)
+    can_team = permission_service.has(user, "Vacation.TeamCalendar")
+    if scope == "team" and not can_team:
+        raise HTTPException(status_code=403, detail="Teamkalender nicht erlaubt")
+    scope = "team" if scope == "team" else "self"
+    view = view if view in {"month", "week", "list"} else "month"
+    today = date.today()
+    try:
+        selected = datetime.strptime(month or today.strftime("%Y-%m"), "%Y-%m").date().replace(day=1)
+    except (TypeError, ValueError):
+        selected = today.replace(day=1)
+    legacy_year = year if month is None and year is not None and 2000 <= year <= 2200 else None
+    if legacy_year:
+        selected, view = date(legacy_year, 1, 1), "list"
+    if view == "week":
+        try:
+            focus = date.fromisoformat(anchor) if anchor else today
+        except (TypeError, ValueError):
+            focus = today
+        period_start = focus - timedelta(days=focus.weekday())
+        period_end = period_start + timedelta(days=6)
+        previous_value = (period_start - timedelta(days=7)).isoformat()
+        next_value = (period_start + timedelta(days=7)).isoformat()
+        title = f"Woche {period_start.isocalendar()[1]} · {period_start:%d.%m.}–{period_end:%d.%m.%Y}"
+    else:
+        period_start = selected
+        period_end = date(selected.year, selected.month, monthrange(selected.year, selected.month)[1])
+        previous_value = (selected - timedelta(days=1)).replace(day=1).strftime("%Y-%m")
+        next_value = (period_end + timedelta(days=1)).strftime("%Y-%m")
+        title = selected.strftime("%B %Y")
+        if legacy_year:
+            period_end, title = date(legacy_year, 12, 31), str(legacy_year)
+    query = db.query(models.VacationRequest).filter(
+        models.VacationRequest.start_date <= period_end,
+        models.VacationRequest.end_date >= period_start,
+    )
+    if scope == "self":
+        query = query.filter(models.VacationRequest.user_id == user.id,
+                             models.VacationRequest.status.in_((models.VacationStatus.PENDING, models.VacationStatus.APPROVED)))
+    else:
+        allowed = permission_service.allowed_user_ids(db, user, "Vacation.TeamCalendar")
+        if allowed is not None:
+            query = query.filter(models.VacationRequest.user_id.in_(allowed or {-1}))
+        visible = [models.VacationStatus.APPROVED]
+        if permission_service.has(user, "Vacation.Manage"):
+            visible.append(models.VacationStatus.PENDING)
+        query = query.filter(models.VacationRequest.status.in_(visible))
+    items = query.order_by(models.VacationRequest.start_date).all()
+    if scope == "team" and permission_service.has(user, "Vacation.Manage"):
+        manage_ids = permission_service.allowed_user_ids(db, user, "Vacation.Manage")
+        items = [item for item in items if item.status == models.VacationStatus.APPROVED or manage_ids is None or item.user_id in manage_ids]
+    rows = _calendar_rows(db, items, reveal=scope == "self")
+    holidays = db.query(models.Holiday).filter(models.Holiday.date.between(period_start, period_end)).order_by(models.Holiday.date).all()
+    days = []
+    cursor = period_start if view == "week" else period_start - timedelta(days=period_start.weekday())
+    grid_end = period_end if view == "week" else period_end + timedelta(days=6-period_end.weekday())
+    holiday_map = {item.date: item.name for item in holidays}
+    while cursor <= grid_end:
+        day_events = [row for row in rows if row["start"] <= cursor <= row["end"]]
+        days.append({"date": cursor, "in_period": period_start <= cursor <= period_end,
+                     "is_today": cursor == today, "holiday": holiday_map.get(cursor), "events": day_events})
+        cursor += timedelta(days=1)
     return templates.TemplateResponse("records/vacation_calendar.html", {
-        "request": request, "user": user, "year": year, "calendar_rows": _calendar_rows(db, vacations),
+        "request": request, "user": user, "scope": scope, "view": view, "month": selected.strftime("%Y-%m"),
+        "title": title, "days": days, "calendar_rows": rows, "holidays": holidays,
+        "previous_value": previous_value, "next_value": next_value,
         "feed_url": request.query_params.get("feed_url"), "can_sync": licensing.has_feature("calendar_sync"),
-        "can_team_feed": permission_service.has(user, "Vacation.Overview"),
+        "can_team": can_team, "can_team_feed": can_team,
         "feeds": db.query(models.CalendarFeed).filter(models.CalendarFeed.user_id == user.id, models.CalendarFeed.active.is_(True)).order_by(models.CalendarFeed.created_at.desc()).all(),
     })
+
+
+@app.get("/api/vacations/team-overlaps")
+def vacation_team_overlaps(request: Request, start: str, end: str, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user or not permission_service.has(user, "Vacation.TeamCalendar"):
+        raise HTTPException(status_code=403)
+    try:
+        start_date, end_date = date.fromisoformat(start), date.fromisoformat(end)
+        if end_date < start_date or (end_date - start_date).days > 366:
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Ungültiger Zeitraum")
+    allowed = permission_service.allowed_user_ids(db, user, "Vacation.TeamCalendar")
+    query = db.query(models.VacationRequest).filter(
+        models.VacationRequest.status == models.VacationStatus.APPROVED,
+        models.VacationRequest.start_date <= end_date, models.VacationRequest.end_date >= start_date,
+        models.VacationRequest.user_id != user.id,
+    )
+    if allowed is not None:
+        query = query.filter(models.VacationRequest.user_id.in_(allowed or {-1}))
+    entries = query.order_by(models.VacationRequest.start_date).limit(50).all()
+    return {"count": len(entries), "entries": [{"name": item.user.full_name, "start": item.start_date.isoformat(),
+            "end": item.end_date.isoformat()} for item in entries]}
 
 
 @app.post("/records/vacations/calendar/feed")
@@ -3098,7 +3188,7 @@ def create_calendar_feed(request: Request, scope: str = Form("self"), db: Sessio
         return RedirectResponse(url="/login", status_code=303)
     if not licensing.has_feature("calendar_sync"):
         raise HTTPException(status_code=402, detail="Kalendersynchronisation ist nicht lizenziert")
-    if scope == "team" and not permission_service.has(user, "Vacation.Overview"):
+    if scope == "team" and not permission_service.has(user, "Vacation.TeamCalendar"):
         raise HTTPException(status_code=403)
     scope = "team" if scope == "team" else "self"
     token = secrets.token_urlsafe(32)
@@ -3129,18 +3219,7 @@ def team_vacation_calendar(request: Request, year: int = Query(default_factory=l
     actor = get_logged_in_user(request, db)
     if not actor:
         return RedirectResponse(url="/login", status_code=303)
-    if not permission_service.has(actor, "Vacation.Overview"):
-        raise HTTPException(status_code=403)
-    allowed = permission_service.allowed_user_ids(db, actor, "Vacation.Overview")
-    query = db.query(models.VacationRequest).filter(
-        models.VacationRequest.start_date <= date(year, 12, 31),
-        models.VacationRequest.end_date >= date(year, 1, 1),
-        models.VacationRequest.status.in_((models.VacationStatus.PENDING, models.VacationStatus.APPROVED)),
-    )
-    if allowed is not None:
-        query = query.filter(models.VacationRequest.user_id.in_(allowed or {-1}))
-    return _admin_template("admin/vacation_calendar.html", request, actor,
-        year=year, calendar_rows=_calendar_rows(db, query.order_by(models.VacationRequest.start_date).all(), reveal=False))
+    return RedirectResponse(url=f"/records/vacations/calendar?scope=team&month={year}-01", status_code=303)
 
 
 def _ics_escape(value: str) -> str:
@@ -3154,9 +3233,13 @@ def calendar_feed_ics(token: str, db: Session = Depends(database.get_db)):
     if not feed:
         raise HTTPException(status_code=404)
     owner = db.get(models.User, feed.user_id)
+    if not owner or not licensing.has_feature("calendar_sync"):
+        raise HTTPException(status_code=404)
     allowed_ids: Optional[set[int]] = {feed.user_id}
-    if feed.scope == "team" and owner:
-        allowed_ids = permission_service.allowed_user_ids(db, owner, "Vacation.Overview")
+    if feed.scope == "team":
+        if not permission_service.has(owner, "Vacation.TeamCalendar"):
+            raise HTTPException(status_code=404)
+        allowed_ids = permission_service.allowed_user_ids(db, owner, "Vacation.TeamCalendar")
     query = db.query(models.VacationRequest).filter(models.VacationRequest.status == models.VacationStatus.APPROVED)
     if allowed_ids is not None:
         query = query.filter(models.VacationRequest.user_id.in_(allowed_ids or {-1}))
@@ -3174,7 +3257,8 @@ def calendar_feed_ics(token: str, db: Session = Depends(database.get_db)):
             f"SUMMARY:{_ics_escape(label)}", "TRANSP:TRANSPARENT", "END:VEVENT"]
     lines.append("END:VCALENDAR")
     return Response("\r\n".join(lines) + "\r\n", media_type="text/calendar; charset=utf-8",
-                    headers={"Content-Disposition": "inline; filename=abwesenheiten.ics", "Cache-Control": "private, max-age=300"})
+                    headers={"Content-Disposition": "inline; filename=abwesenheiten.ics", "Cache-Control": "private, no-store",
+                             "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"})
 
 
 @app.get("/records/pdf")

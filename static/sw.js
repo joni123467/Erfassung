@@ -18,6 +18,7 @@ const CORE_ASSETS = [
   '/static/mobile.js',
   '/static/app.js',
   '/static/theme.js',
+  '/static/vacation-calendar.js',
   '/static/manifest.webmanifest',
   '/static/icons/icon.svg',
   '/static/icons/icon-192.png',

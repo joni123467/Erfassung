@@ -220,6 +220,15 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
                 ),
                 scoped=True,
             ),
+            Permission(
+                key="Vacation.TeamCalendar",
+                label="Teamkalender einsehen",
+                description=(
+                    "Genehmigte Abwesenheiten im eigenen Berechtigungsbereich "
+                    "für die gemeinsame Urlaubsplanung einsehen."
+                ),
+                scoped=True,
+            ),
         ),
     ),
     PermissionCategory(

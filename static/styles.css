@@ -4097,6 +4097,42 @@ tr.company-deleted td {
     font-weight: 700;
 }
 
+/* ── Persönlicher und berechtigungsgesteuerter Teamkalender ───────── */
+.vacation-tabs, .calendar-toolbar, .calendar-legend, .feed-management form, .feed-list li {
+    display: flex; flex-wrap: wrap; gap: .65rem; align-items: center;
+}
+.vacation-tabs { margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.vacation-tabs a { padding: .7rem .9rem; color: var(--text-muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.vacation-tabs a.is-active, .vacation-tabs a:focus-visible { color: var(--brand); border-color: var(--brand); }
+.calendar-toolbar { margin-bottom: 1rem; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.segmented a { padding: .55rem .75rem; color: var(--text); text-decoration: none; background: var(--surface); }
+.segmented a.is-active { color: var(--brand-contrast); background: var(--brand); }
+.calendar-legend { color: var(--text-muted); margin-bottom: .75rem; font-size: .9rem; }
+.calendar-legend i { display: inline-block; width: .75rem; height: .75rem; border-radius: var(--radius-xs); background: var(--success-soft); }
+.calendar-legend i.pending { background: var(--warning-soft); }
+.calendar-legend i.holiday { background: var(--info-soft); }
+.calendar-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(8rem, 1fr)); min-width: 56rem; }
+.calendar-weekday { padding: .55rem; text-align: center; font-weight: 700; background: var(--surface-muted); border-bottom: 1px solid var(--border); }
+.calendar-day { min-height: 8rem; padding: .45rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface); }
+.calendar-day.is-outside { opacity: .48; background: var(--surface-muted); }
+.calendar-day.is-today { box-shadow: inset 0 0 0 2px var(--brand); }
+.calendar-day time { display: block; margin-bottom: .35rem; font-weight: 700; }
+.calendar-event { display: block; margin: .2rem 0; padding: .25rem .35rem; overflow: hidden; text-overflow: ellipsis; border-radius: var(--radius-xs); background: var(--success-soft); color: var(--text); font-size: .78rem; white-space: nowrap; }
+.calendar-event.pending { background: var(--warning-soft); border-left: 3px dashed var(--warning); }
+.calendar-event.holiday { background: var(--info-soft); color: var(--text); }
+.calendar-list--alternative { margin-top: 1.2rem; }
+.feed-list { list-style: none; padding: 0; }
+.feed-list li { justify-content: space-between; padding: .6rem 0; border-bottom: 1px solid var(--border); }
+.vacation-overlap { padding: .65rem; border-left: 3px solid var(--info); background: var(--info-soft); }
+@media (max-width: 720px) {
+    .vacation-calendar { padding: .8rem; }
+    .calendar-toolbar > label { width: 100%; }
+    .calendar-grid { grid-template-columns: repeat(7, minmax(6.5rem, 1fr)); min-width: 45.5rem; }
+    .calendar-day { min-height: 6rem; }
+}
+
 /* ── Revisionshistorie und Regelverstöße ───────────────────────────── */
 
 .revision-changes {
