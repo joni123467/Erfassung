@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.20.6] – 2026-08-03
+
+### Hinzugefügt
+- Responsive, barrierearm bedienbare Modalverwaltung für versionierte Arbeitszeitpläne.
+
+### Geändert
+- Der Monatsselector lädt Monats-, Wochen- und Listenansicht unmittelbar; deutsche Monatsnamen sind unabhängig von der Server-Locale.
+- Die Benutzerdeaktivierung trennt Begründung, Folgenhinweis und Aktion übersichtlich.
+
+### Fehlerbehebungen
+- Im Abwesenheitskalender ist nur noch der tatsächlich gewählte persönliche oder Team-Reiter aktiv.
+- Die Wochenansicht richtet sich nach dem gewählten Monat und erhält diesen bei der Wochennavigation.
+
+### Datenbankänderungen
+- Keine. `app/models.py` und Migration 23 bleiben unverändert.
+
+### Migrationshinweise
+- Keine neue Migration erforderlich; Updates von allen unterstützten Vorversionen bleiben möglich.
+
 ## [0.20.5] – 2026-08-02
 
 ### Hinzugefügt

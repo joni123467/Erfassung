@@ -4,8 +4,8 @@
 {% set records_active = 'vacations' %}{% include "records/_nav.html" %}
 <nav class="vacation-tabs" aria-label="Urlaubsbereich">
   <a href="/records/vacations">Meine Anträge</a>
-  <a class="is-active" href="/records/vacations/calendar?scope=self">Mein Kalender</a>
-  {% if can_team %}<a class="{% if scope == 'team' %}is-active{% endif %}" href="/records/vacations/calendar?scope=team">Teamkalender</a>{% endif %}
+  <a class="{% if scope == 'self' %}is-active{% endif %}"{% if scope == 'self' %} aria-current="page"{% endif %} href="/records/vacations/calendar?scope=self">Mein Kalender</a>
+  {% if can_team %}<a class="{% if scope == 'team' %}is-active{% endif %}"{% if scope == 'team' %} aria-current="page"{% endif %} href="/records/vacations/calendar?scope=team">Teamkalender</a>{% endif %}
 </nav>
 <section class="card vacation-calendar">
   <div class="card-header"><div><p class="eyebrow">{% if scope == 'team' %}Teamkalender{% else %}Mein Kalender{% endif %}</p><h1>{{ title }}</h1></div></div>
@@ -14,11 +14,11 @@
     <div class="segmented" aria-label="Ansicht">
       {% for key, label in [('month','Monat'),('week','Woche'),('list','Liste')] %}<a class="{% if view == key %}is-active{% endif %}" href="?scope={{ scope }}&view={{ key }}&month={{ month }}">{{ label }}</a>{% endfor %}
     </div>
-    <label>Monat <input type="month" name="month" value="{{ month }}"></label>
-    <input type="hidden" name="view" value="{{ view }}"><button class="button">Anzeigen</button>
+    <label>Monat <input type="month" name="month" value="{{ month }}" aria-label="Kalendermonat"></label>
+    <input type="hidden" name="view" value="{{ view }}"><noscript><button class="button">Anzeigen</button></noscript>
     {% if view == 'week' %}
-      <a class="button ghost" aria-label="Vorherige Woche" href="?scope={{ scope }}&view=week&anchor={{ previous_value }}">‹</a>
-      <a class="button ghost" aria-label="Nächste Woche" href="?scope={{ scope }}&view=week&anchor={{ next_value }}">›</a>
+      <a class="button ghost" aria-label="Vorherige Woche" href="?scope={{ scope }}&view=week&month={{ month }}&anchor={{ previous_value }}">‹</a>
+      <a class="button ghost" aria-label="Nächste Woche" href="?scope={{ scope }}&view=week&month={{ month }}&anchor={{ next_value }}">›</a>
     {% else %}
       <a class="button ghost" aria-label="Vorheriger Monat" href="?scope={{ scope }}&view={{ view }}&month={{ previous_value }}">‹</a>
       <a class="button ghost" aria-label="Nächster Monat" href="?scope={{ scope }}&view={{ view }}&month={{ next_value }}">›</a>
@@ -47,6 +47,7 @@
     </tbody></table></div>
   </div>
 </section>
+<script>document.querySelector('.calendar-toolbar input[name="month"]').addEventListener('change', function () { this.form.submit(); });</script>
 {% if can_sync %}<section class="card feed-management"><h2>Kalender abonnieren</h2><p>Nur genehmigte Abwesenheiten werden exportiert. Die geheime Adresse wird nur einmal angezeigt und verlässt Erfassung nicht.</p>
 {% if feed_url %}<label>Neue Feed-Adresse<input readonly value="{{ feed_url }}" onclick="this.select()"></label>{% endif %}
 <form method="post" action="/records/vacations/calendar/feed"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><label>Umfang <select name="scope"><option value="self">Mein Kalender</option>{% if can_team_feed %}<option value="team">Mein Team</option>{% endif %}</select></label><button class="button primary">Feed-Adresse erzeugen</button></form>
