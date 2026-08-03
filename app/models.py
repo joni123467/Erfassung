@@ -644,11 +644,33 @@ class TimeEntry(Base):
 
     @property
     def overtime_minutes(self) -> int:
-        if self.user:
-            target = self.user.daily_target_minutes
-            if target:
-                return int(self.worked_minutes - target)
-        return 0
+        """Über- bzw. Unterstunden dieser Buchung gegen die Sollzeit **ihres Tages**.
+
+        Maßgeblich ist der am ``work_date`` gültige Arbeitszeitplan, nicht der
+        pauschale Tagesschnitt. Bis 0.20.6 stand hier
+        ``user.daily_target_minutes``; damit wies der Excel-Export für eine
+        Samstagsbuchung ein volles Tagessoll als Minus aus, und Teilzeitpläne
+        mit ungleichen Wochentagen stimmten an keinem Tag.
+
+        Ist überhaupt keine Sollzeit gepflegt (weder Wochenstunden noch Plan),
+        bleibt es bei 0 – sonst stünde bei diesen Konten jede gearbeitete
+        Minute als Überstunde. Ein planmäßig **freier** Tag ist davon zu
+        unterscheiden: Dort ist das Tagessoll 0, und die gearbeitete Zeit ist
+        tatsächlich in voller Höhe Mehrarbeit.
+
+        Der Import steht bewusst in der Funktion: ``services`` lädt ``models``
+        beim Import, ein Modulimport wäre also zirkulär.
+        """
+        if not self.user:
+            return 0
+        from . import services
+
+        has_target = bool(self.user.weekly_target_minutes) or bool(
+            getattr(self.user, "work_schedules", ()) or ()
+        )
+        if not has_target:
+            return 0
+        return int(self.worked_minutes - services.target_minutes_for_date(self.user, self.work_date))
 
     @property
     def _break_intervals(self) -> list["BreakInterval"]:

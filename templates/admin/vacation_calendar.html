@@ -1,7 +1,0 @@
-{% extends "base.html" %}{% block title %}Teamkalender – Erfassung{% endblock %}
-{% block content %}{% set admin_active = 'vacation_calendar' %}{% include "admin/_nav.html" %}
-<section class="card"><div class="card-header"><h1>Team-Abwesenheitskalender {{ year }}</h1></div>
-<form method="get" class="inline-form"><label>Jahr <input type="number" name="year" value="{{ year }}" min="2000" max="2200"></label><button class="button">Anzeigen</button></form>
-<div class="table-scroll"><table class="striped-table"><thead><tr><th>Person</th><th>Zeitraum</th><th>Anzeige</th><th>Status</th></tr></thead><tbody>
-{% for row in calendar_rows %}<tr><td>{{ row.person }}</td><td>{{ row.start|german_date }} – {{ row.end|german_date }}</td><td>Abwesend</td><td>{{ row.status }}</td></tr>{% else %}<tr><td colspan="4">Keine Abwesenheiten.</td></tr>{% endfor %}
-</tbody></table></div></section>{% endblock %}

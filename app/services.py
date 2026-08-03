@@ -308,7 +308,6 @@ def calculate_vacation_summary(
             planned_days=0.0,
             carryover_days=0.0,
         )
-    daily_minutes = int(round(user.daily_target_minutes or 0))
     base_days = float(user.annual_vacation_days or 0)
     today = date.today()
     base_days += sum(
@@ -317,7 +316,13 @@ def calculate_vacation_summary(
         if item.year == year and (item.expires_on is None or item.expires_on >= today)
     )
     carryover_days = float(user.vacation_carryover_days or 0) if user.vacation_carryover_enabled else 0.0
-    if daily_minutes <= 0:
+    # Ohne jede gepflegte Sollzeit gibt es keinen Arbeitstag, gegen den sich
+    # Urlaub verrechnen ließe. Der Arbeitszeitplan zählt dabei mit: Er kann
+    # Arbeitstage vorsehen, ohne dass Wochenstunden hinterlegt sind.
+    has_target = bool(user.weekly_target_minutes) or bool(
+        getattr(user, "work_schedules", ()) or ()
+    )
+    if not has_target:
         total_days = base_days + carryover_days
         return schemas.VacationSummary(
             total_days=total_days,
@@ -328,8 +333,8 @@ def calculate_vacation_summary(
         )
     period_start = date(year, 1, 1)
     period_end = date(year, 12, 31)
-    used_minutes = 0
-    planned_minutes = 0
+    used_days = 0.0
+    planned_days = 0.0
     for vacation in vacations:
         if getattr(vacation, "absence_type_key", "vacation") != "vacation":
             continue
@@ -344,15 +349,19 @@ def calculate_vacation_summary(
         overlap_end = min(period_end, vacation.end_date)
         if overlap_start > overlap_end:
             continue
-        minutes = vacation_minutes_in_range(
-            user, vacation, period_start, period_end, holidays
+        # Urlaubstage direkt zählen statt Minuten durch eine pauschale
+        # Tagessollzeit zu teilen. Bei ungleichen Wochentagen ging die Division
+        # nicht auf: Ein Plan über vier Tage zu je acht Stunden ergibt 32
+        # Wochenstunden, der Schnitt daraus 6:24 Std – eine Urlaubswoche zählte
+        # damit fünf statt vier Tage. ``vacation_days_in_range`` kennt den Plan,
+        # die halben Tage und die Feiertage.
+        days = vacation_days_in_range(
+            vacation, period_start, period_end, holidays, user
         )
         if vacation.status == models.VacationStatus.APPROVED:
-            used_minutes += minutes
+            used_days += days
         elif vacation.status == models.VacationStatus.PENDING:
-            planned_minutes += minutes
-    used_days = used_minutes / daily_minutes if daily_minutes else 0.0
-    planned_days = planned_minutes / daily_minutes if daily_minutes else 0.0
+            planned_days += days
     total_days = base_days + carryover_days
     remaining_days = max(total_days - used_days - planned_days, 0.0)
     return schemas.VacationSummary(

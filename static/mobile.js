@@ -1396,22 +1396,34 @@ async function renderOverview() {
   }
 
   const allEntries = snapshot.data.entries || [];
-  const dailyTarget = snapshot.data.user?.daily_target_minutes || 480;
-  const weeklyTarget = snapshot.data.user?.weekly_target_minutes || dailyTarget * 5;
+  const fallbackDaily = snapshot.data.user?.daily_target_minutes || 480;
+  // `daily_targets` gibt es seit 0.20.7: die Sollzeit je Kalendertag aus dem
+  // am jeweiligen Tag gültigen Arbeitszeitplan. Ohne diese Angabe – etwa in
+  // einer Momentaufnahme, die vor dem Update entstanden ist – gilt weiter die
+  // pauschale Rechnung „Tagessoll an Werktagen".
+  const dailyTargets = snapshot.data.daily_targets || null;
+  const targetFor = (dateStr, dateObj) => {
+    if (dailyTargets && Object.prototype.hasOwnProperty.call(dailyTargets, dateStr)) {
+      return dailyTargets[dateStr];
+    }
+    const weekday = dateObj.getDay();
+    return weekday >= 1 && weekday <= 5 ? fallbackDaily : 0;
+  };
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
   if (overviewMode === 'week') {
-    _renderWeekView(container, allEntries, weeklyTarget, today);
+    _renderWeekView(container, allEntries, targetFor, today);
   } else {
-    _renderDayView(container, allEntries, dailyTarget, today);
+    _renderDayView(container, allEntries, targetFor, today);
   }
 }
 
-function _renderDayView(container, allEntries, dailyTarget, today) {
+function _renderDayView(container, allEntries, targetFor, today) {
   const dateStr = isoDateStr(overviewDate);
   const isToday = dateStr === isoDateStr(today);
   const dayEntries = allEntries.filter((e) => e.work_date === dateStr);
   const totalWorked = dayEntries.reduce((s, e) => s + (e.worked_minutes || 0), 0);
+  const dailyTarget = targetFor(dateStr, overviewDate);
   const balance = totalWorked - dailyTarget;
 
   const prevDate = new Date(overviewDate); prevDate.setDate(prevDate.getDate() - 1);
@@ -1475,7 +1487,7 @@ function _renderDayView(container, allEntries, dailyTarget, today) {
   );
 }
 
-function _renderWeekView(container, allEntries, weeklyTarget, today) {
+function _renderWeekView(container, allEntries, targetFor, today) {
   const monday = getMondayOf(overviewDate);
   const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6);
   const weekNum = getISOWeekNumber(monday);
@@ -1484,9 +1496,13 @@ function _renderWeekView(container, allEntries, weeklyTarget, today) {
   const canNext = nextMonday <= today;
 
   const dayMap = {};
+  let weeklyTarget = 0;
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday); d.setDate(d.getDate() + i);
-    dayMap[isoDateStr(d)] = { date: d, minutes: 0 };
+    const ds = isoDateStr(d);
+    const target = targetFor(ds, d);
+    weeklyTarget += target;
+    dayMap[ds] = { date: d, minutes: 0, target };
   }
   let totalWorked = 0;
   for (const entry of allEntries) {
@@ -1522,13 +1538,14 @@ function _renderWeekView(container, allEntries, weeklyTarget, today) {
     <ul class="mobile-week-list mobile-week-list--grid">`;
 
   for (const ds of Object.keys(dayMap).sort()) {
-    const { date, minutes } = dayMap[ds];
+    const { date, minutes, target } = dayMap[ds];
     const isToday = ds === isoDateStr(today);
     const label = date.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
     html += `
       <li class="mobile-week-day${isToday ? ' is-today' : ''}">
         <span class="mobile-week-day__label">${escHtml(label)}</span>
         <span class="mobile-week-day__minutes">${fmtMins(minutes)} Std</span>
+        ${target > 0 ? `<span class="mobile-week-day__target">Soll ${fmtMins(target)} Std</span>` : '<span class="mobile-week-day__target">frei</span>'}
       </li>`;
   }
   html += '</ul>';

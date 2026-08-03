@@ -1284,6 +1284,18 @@ body.modal-open {
     }
 }
 
+/* Seitenspalte des Benutzerformulars: QR-Code oben, darunter Arbeitszeitpläne
+   und Urlaubsanspruch. Der Klebeeffekt sitzt an der Spalte, nicht mehr am
+   QR-Panel – dort blieb er ohne Wirkung, sobald andere Karten darüber
+   standen (0.20.7). */
+.user-form-aside {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    position: sticky;
+    top: calc(var(--header-h) + 1rem);
+}
+
 .user-qr {
     display: flex;
     flex-direction: column;
@@ -1293,8 +1305,6 @@ body.modal-open {
     border-radius: var(--radius);
     background: var(--surface-muted);
     text-align: center;
-    position: sticky;
-    top: calc(var(--header-h) + 1rem);
 }
 
 .user-qr__title {
@@ -1338,7 +1348,7 @@ body.modal-open {
 }
 
 @media (max-width: 991px) {
-    .user-qr { position: static; }
+    .user-form-aside { position: static; }
 }
 
 /* Systemeinstellungen – einheitliche Sektionen/Kartenlayout (§0.9.6 #6). */
@@ -3174,8 +3184,10 @@ tr.company-deleted td {
 
 .mobile-week-day {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
+    gap: 0.15rem 0.5rem;
     padding: 0.6rem 0.75rem;
     border-radius: var(--radius);
     background: var(--hover);
@@ -3193,6 +3205,14 @@ tr.company-deleted td {
 .mobile-week-day__minutes {
     font-weight: 600;
     color: var(--text);
+}
+
+/* Tagessoll aus dem Arbeitszeitplan – zeigt auch planmäßig freie Tage an,
+   damit ein leerer Tag nicht wie eine Lücke aussieht (0.20.7). */
+.mobile-week-day__target {
+    flex-basis: 100%;
+    font-size: 0.78rem;
+    color: var(--text-muted);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -4108,6 +4128,10 @@ tr.company-deleted td {
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
 .segmented a { padding: .55rem .75rem; color: var(--text); text-decoration: none; background: var(--surface); }
 .segmented a.is-active { color: var(--brand-contrast); background: var(--brand); }
+/* Umfang des Teamkalenders: welche Gruppen sind enthalten (0.20.7). */
+.calendar-scope { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: 0 0 .9rem; color: var(--text-muted); font-size: .9rem; }
+.calendar-scope__label { font-weight: 700; color: var(--text); }
+.calendar-scope__group { padding: .15rem .5rem; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface-muted); color: var(--text); }
 .calendar-legend { color: var(--text-muted); margin-bottom: .75rem; font-size: .9rem; }
 .calendar-legend i { display: inline-block; width: .75rem; height: .75rem; border-radius: var(--radius-xs); background: var(--success-soft); }
 .calendar-legend i.pending { background: var(--warning-soft); }

@@ -2,7 +2,19 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.6`
+**Version:** `0.20.7`
+
+> Seit 0.20.7: **Sollzeiten folgen überall dem Arbeitszeitplan, und der
+> Urlaubsbereich lässt sich in beide Richtungen bedienen.** „Woche im Blick"
+> war die letzte Anzeige, die noch Wochensoll aus dem Stammsatz und Tagessoll
+> pauschal an Montag bis Freitag verteilte; dieselbe Ursache steckte in der
+> Tagesansicht, in der Überstundenspalte des Excel-Exports, im Urlaubskonto und
+> in der Offline-Shell. Außerdem: Die Reiter „Meine Anträge · Mein Kalender ·
+> Teamkalender" stehen auf jeder Seite des Bereichs, der Teamkalender nennt
+> seinen Umfang und zeigt offene Anträge (die Art der Abwesenheit bleibt
+> verdeckt), und im Benutzerformular steht der QR-Code oben rechts, die
+> Arbeitszeitpläne darunter. Kein Schemawechsel. Details in
+> [`docs/RELEASE_NOTES_0.20.7.md`](docs/RELEASE_NOTES_0.20.7.md).
 
 > Seit 0.20.6: **korrigierter Abwesenheitskalender und Benutzerverwaltung** – der Monatswechsel lädt sofort, die Wochenansicht folgt der Monatswahl und Arbeitszeitpläne werden in einem responsiven Dialog verwaltet.
 >
@@ -1174,14 +1186,25 @@ Datenbankgrenzen hinweg.
 
 Der normale Bereich **Urlaub** bietet ab 0.20.5 „Meine Anträge“, „Mein
 Kalender“ und – mit dem gesonderten Scope-Recht `Vacation.TeamCalendar` – den
-„Teamkalender“. Der Kalender ist ohne externe Bibliotheken umgesetzt und hat
-Monats-, Wochen- sowie Listenansicht. Genehmigungen, eigene offene Anträge,
-Feiertage und halbe Tage sind unterscheidbar; auf kleinen Bildschirmen bleibt
-das Raster bewusst scrollbar. Der Teamkalender zeigt nur Personen im erlaubten
-Scope. Offene Anträge werden dort ausschließlich Urlaubsverwaltern in deren
-`Vacation.Manage`-Scope gezeigt; vertrauliche Arten bleiben „Abwesend“ und
-Kommentare werden nie ausgegeben. Das Antragsformular prüft Überschneidungen
-datensparsam über einen geschützten JSON-Endpunkt und blockiert den Antrag nicht.
+„Teamkalender“. Seit 0.20.7 stehen diese drei Reiter auf **jeder** Seite des
+Bereichs; bis 0.20.6 gab es sie nur im Kalender, und von „Meine Anträge“ führte
+lediglich eine Schaltfläche hinaus. Der Kalender ist ohne externe Bibliotheken
+umgesetzt und hat Monats-, Wochen- sowie Listenansicht. Genehmigungen, offene
+Anträge, Feiertage und halbe Tage sind unterscheidbar; auf kleinen Bildschirmen
+bleibt das Raster bewusst scrollbar.
+
+Der Teamkalender zeigt nur Personen im erlaubten Scope und nennt seit 0.20.7
+über der Ansicht, welche Gruppen das sind – ohne diese Angabe war eine Lücke im
+Kalender nicht von einer Lücke in der Berechtigung zu unterscheiden. **Offene
+Anträge erscheinen dort seit 0.20.7 für alle, die den Teamkalender sehen
+dürfen**; bis 0.20.6 brauchte es dafür zusätzlich `Vacation.Manage`, und ohne
+sie ließ sich nicht planen, weil erst die Freigabe einen belegten Zeitraum
+sichtbar machte. Datensparsam bleibt es trotzdem: Teamweit steht dort nur
+„Abwesend“, vertrauliche Arten geben ihre Bezeichnung nicht preis, und
+Kommentare werden nie ausgegeben. Ein Antrag mit angefragter Rücknahme belegt
+den Zeitraum weiterhin und wird als solcher gekennzeichnet. Das Antragsformular
+prüft Überschneidungen datensparsam über einen geschützten JSON-Endpunkt und
+blockiert den Antrag nicht.
 
 Persönliche und Team-iCalendar-Feeds enthalten ausschließlich genehmigte
 Abwesenheiten. Teamfeeds benötigen auch nach ihrer Erstellung weiterhin das
@@ -1193,6 +1216,24 @@ Unter *Administration → Benutzer → Person* können Arbeitszeitpläne mit ein
 Gültigkeitsbeginn und eigenen Sollstunden für Montag bis Sonntag angelegt
 werden. Der vorherige offene Plan endet automatisch am Vortag. Ohne Plan gilt
 für Bestandsdaten weiterhin die bisherige Mo–Fr-Berechnung.
+
+Maßgeblich ist an **jeder** Stelle `services.target_minutes_for_date` – die
+Sollzeit des jeweiligen Tages nach dem an diesem Tag gültigen Plan. Bis 0.20.6
+fragten fünf Anzeigen diese Funktion nicht und rechneten stattdessen mit der
+pauschalen Tagessollzeit mal „Montag bis Freitag": „Woche im Blick" auf dem
+Dashboard, die Tagesansicht im Reiter *Übersicht*, die Überstundenspalte des
+Excel-Exports (`TimeEntry.overtime_minutes`), das Urlaubskonto und die
+Offline-Shell. Bei einer Vier-Tage-Woche mit 4 × 8 Stunden zeigte „Woche im
+Blick" 40:00 statt 32:00 Wochensoll, und eine Urlaubswoche verbrauchte fünf
+statt vier Urlaubstage. Seit 0.20.7 folgen alle dem Plan.
+
+Die App bekommt die Sollzeit je Kalendertag als `daily_targets` in der
+Momentaufnahme (`/mobile/sync-data`). Eine Momentaufnahme, die vor 0.20.7
+entstanden ist, kennt das Feld nicht und rechnet weiter wie bisher.
+
+Liegt für eine Person ein Plan vor, weist das Benutzerformular unter
+„Wochenarbeitszeit" aus, welcher Plan gilt und mit wie vielen Wochenstunden –
+der Wert im Feld gilt dann nur noch für Zeiträume ohne Plan.
 
 Der persönliche Kalender liegt unter `/records/vacations/calendar`, der
 datensparsame Teamkalender unter `/admin/vacations/calendar`. Vertrauliche
