@@ -5,7 +5,10 @@
 {% include "records/_nav.html" %}
 <section class="card records-hero">
     <div class="card-header">
-        <h1>Arbeitszeitübersicht – {{ selected_month.strftime('%m/%Y') }}</h1>
+        {# Ausgeschriebener Monat wie im Kalender und in der Regelübersicht.
+           Bis 0.20.7 stand hier „06/2026"; die deutschen Monatsnamen aus
+           0.20.1 hatten diese beiden Überschriften nicht erreicht. #}
+        <h1>Arbeitszeitübersicht – {{ selected_month|month_name }} {{ selected_month.year }}</h1>
         <div class="card-header__actions">
             <a class="button ghost" href="/records/pdf?month={{ month_value }}">PDF-Export</a>
             <a class="button" href="/api/users/{{ user.id }}/excel">Excel-Export</a>

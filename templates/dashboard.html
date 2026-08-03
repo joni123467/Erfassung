@@ -320,7 +320,7 @@
             <div class="dashboard-metrics-card__section dashboard-metrics-card__section--hours">
                 <header class="dashboard-summary-card__header">
                     <h2>Meine Soll-/Ist-Stunden</h2>
-                    <p class="dashboard-summary__month">Übersicht für {{ metrics_month.strftime('%m/%Y') }}</p>
+                    <p class="dashboard-summary__month">Übersicht für {{ metrics_month|month_name }} {{ metrics_month.year }}</p>
                 </header>
                 <div class="dashboard-summary-card__body">
                     <dl class="dashboard-summary-list">

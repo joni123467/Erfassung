@@ -13,7 +13,11 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 > Teamkalender" stehen auf jeder Seite des Bereichs, der Teamkalender nennt
 > seinen Umfang und zeigt offene Anträge (die Art der Abwesenheit bleibt
 > verdeckt), und im Benutzerformular steht der QR-Code oben rechts, die
-> Arbeitszeitpläne darunter. Kein Schemawechsel. Details in
+> Arbeitszeitpläne darunter. Ein Anwenderdurchlauf durch die gesamte Anwendung
+> (239 Einzelprüfungen) hat außerdem zutage gebracht, dass sich
+> **Rücknahmeanfragen gar nicht entscheiden ließen**: Ihr Formular trug als
+> einziges der Freigabenseite kein CSRF-Token, jeder Klick endete auf
+> „403 – Ungültige Sitzung". Kein Schemawechsel. Details in
 > [`docs/RELEASE_NOTES_0.20.7.md`](docs/RELEASE_NOTES_0.20.7.md).
 
 > Seit 0.20.6: **korrigierter Abwesenheitskalender und Benutzerverwaltung** – der Monatswechsel lädt sofort, die Wochenansicht folgt der Monatswahl und Arbeitszeitpläne werden in einem responsiven Dialog verwaltet.
@@ -1342,7 +1346,7 @@ Eine Lizenz schaltet Bereiche frei. **Immer enthalten** und nie gesperrt:
 - Sicherung und Wiederherstellung
 - Systemeinstellungen, Logs, Datenbankverwaltung
 
-Zubuchbar sind vier Bausteine:
+Zubuchbar sind fünf Bausteine:
 
 | Baustein | Schaltet frei |
 |---|---|
@@ -1351,6 +1355,18 @@ Zubuchbar sind vier Bausteine:
 | `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
 | `terminals` | RFID-Terminals und Geräte-Synchronisation |
 | `calendar_sync` | widerrufbare persönliche und Team-iCalendar-Feeds |
+
+`calendar_sync` setzt `vacation` voraus: Ohne den Urlaubsbaustein gibt es
+nichts zu synchronisieren, und der Baustein bleibt wirkungslos, selbst wenn er
+im Lizenzdokument steht.
+
+> **Serverseitig zu ergänzen.** Die Anwendung kennt `calendar_sync` seit
+> 0.20.3 und setzt ihn vollständig durch. Freigeschaltet wird er aber nur,
+> wenn der **Lizenzserver** ihn in der Liste `features` des signierten
+> Lizenzdokuments ausliefert. Solange das nicht geschieht, ist die Karte
+> „Kalender abonnieren" für alle Installationen unsichtbar und der
+> ICS-Endpunkt gesperrt – ohne Fehlermeldung, wie es sich für einen nicht
+> gebuchten Baustein gehört.
 
 Eine Lizenz ohne jeden Baustein ist damit eine reine **Stempel-Lizenz** – und
 genau so viel kann eine Installation ohne Lizenz auch.
