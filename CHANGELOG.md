@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.20.7] – 2026-08-03
+
+Behebt fünf gemeldete Fehler im Urlaubsbereich und in der Benutzerverwaltung.
+Der letzte davon hat eine Durchsicht aller Anzeigen ausgelöst, bei der derselbe
+Fehler an vier weiteren Stellen zum Vorschein kam. Einzelheiten in
+[`docs/RELEASE_NOTES_0.20.7.md`](docs/RELEASE_NOTES_0.20.7.md).
+
+### Hinzugefügt
+- Der Teamkalender nennt über der Ansicht seinen Umfang: „Alle Gruppen",
+  „Eigene Gruppen" oder „Nur die eigenen Abwesenheiten", jeweils mit den Namen
+  der enthaltenen Gruppen. Bislang entschied der Geltungsbereich von
+  `Vacation.TeamCalendar` darüber, ohne dass es irgendwo stand.
+- Die Momentaufnahme für die App (`/mobile/sync-data`) enthält unter
+  `daily_targets` die Sollzeit je Kalendertag aus dem gültigen
+  Arbeitszeitplan.
+- Das Benutzerformular weist unter „Wochenarbeitszeit" den aktuell gültigen
+  Arbeitszeitplan samt seiner Wochenstunden aus.
+
+### Geändert
+- Die Reiter „Meine Anträge · Mein Kalender · Teamkalender" stehen auf **jeder**
+  Seite des Urlaubsbereichs, nicht mehr nur im Kalender. Die frühere
+  Schaltfläche **Mein Kalender** im Kartenkopf ist entfallen – der Reiter
+  ersetzt sie.
+- Offene Urlaubsanträge erscheinen im Teamkalender für alle, die ihn sehen
+  dürfen; bisher brauchte es dafür zusätzlich `Vacation.Manage`, und ohne sie
+  ließ sich nicht planen. Die Art der Abwesenheit bleibt teamweit verdeckt
+  („Abwesend"), vertrauliche Arten geben ihre Bezeichnung nicht preis.
+- Im Benutzerformular steht der QR-Code der mobilen Anmeldung oben in der
+  Seitenspalte, darunter die Arbeitszeitpläne, darunter der Urlaubsanspruch.
+
+### Fehlerbehebungen
+- **„Woche im Blick" rechnete nicht mit den hinterlegten Tagesarbeitszeiten.**
+  Die Wochenansicht war die letzte Stelle, die noch Wochensoll aus dem
+  Stammsatz und Tagessoll pauschal an Montag bis Freitag verteilte. Bei einer
+  Vier-Tage-Woche zeigte sie 40:00 statt 32:00 Wochensoll und wies dem freien
+  Freitag ein volles Tagessoll zu.
+- Dieselbe Ursache an vier weiteren Stellen behoben: die **Tagesansicht** zeigte
+  den pauschalen Tagesschnitt unabhängig vom dargestellten Tag;
+  **`TimeEntry.overtime_minutes`** (Spalte „Überstunden" im Excel-Export) maß
+  gegen denselben Schnitt statt gegen die Sollzeit des Buchungstages; das
+  **Urlaubskonto** teilte Minuten durch den Schnitt, sodass eine Urlaubswoche im
+  Vier-Tage-Plan fünf statt vier Tage verbrauchte; die **Offline-Shell** rechnete
+  mit Tages- und Wochensoll pauschal.
+- Ein Antrag mit angefragter Rücknahme fiel aus beiden Kalendern heraus,
+  obwohl die Abwesenheit bis zur Freigabe der Rücknahme gilt. Er erscheint
+  jetzt als „Rücknahme angefragt".
+- Eine zweite, vollständige Kopie des Arbeitszeitplan-Dialogs samt Skript stand
+  im `{% block title %}` des Benutzerformulars. Sie hat nie etwas angezeigt,
+  hätte aber bei anderer Auswertungsreihenfolge doppelte Element-IDs erzeugt.
+- Die Fußnote der Benutzerauswertung beschrieb noch die Rechnung
+  „Arbeitstage (Mo–Fr) × Tagessoll"; gerechnet wird seit 0.20.3 über den
+  Arbeitszeitplan.
+
+### Datenbankänderungen
+Keine. Die Schemaversion bleibt bei 23.
+
+### Migrationshinweise
+Keine Migration nötig. Zahlen in Auswertungen und im Urlaubskonto können sich
+ändern – aber nur für Personen mit hinterlegtem Arbeitszeitplan, und nur, weil
+sie vorher nicht zum Plan passten. Gespeicherte Buchungen und Anträge bleiben
+unberührt. Ohne Plan bleibt die Rechnung unverändert.
+
 ## [0.20.6] – 2026-08-03
 
 ### Hinzugefügt

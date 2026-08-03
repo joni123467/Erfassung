@@ -97,7 +97,10 @@
             {% endif %}
         </table>
     </div>
-    <p class="form-hint">Soll = Arbeitstage (Mo–Fr) × Tagessoll · Urlaub = angerechnete genehmigte Urlaubsstunden · Über-/Minusstunden = Arbeitszeit + Urlaub − Soll.</p>
+    {# Der Text beschrieb bis 0.20.6 noch die Rechnung „Arbeitstage (Mo–Fr) ×
+       Tagessoll". Gerechnet wird längst über den am jeweiligen Tag gültigen
+       Arbeitszeitplan (services.calculate_target_minutes_in_range). #}
+    <p class="form-hint">Soll = Summe der Tagessollzeiten aus dem gültigen Arbeitszeitplan; ohne Plan Montag bis Freitag mal Tagessoll · Urlaub = angerechnete genehmigte Urlaubsstunden · Über-/Minusstunden = Arbeitszeit + Urlaub − Soll.</p>
     <p class="form-hint">Mit der Option „Stempelzeiten“ enthält der PDF-Export zusätzlich alle einzelnen Buchungen je Benutzer (Datum, Firma, Start, Ende, Arbeitszeit, Status, Kommentar).</p>
 </section>
 {% endblock %}

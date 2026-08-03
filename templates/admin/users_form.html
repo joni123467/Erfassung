@@ -1,39 +1,11 @@
 {% extends "base.html" %}
-{% block title %}{% if form_user %}Benutzer bearbeiten{% else %}Benutzer anlegen{% endif %} – Erfassung{% if is_edit %}
-<div class="modal work-schedules-modal" id="work-schedules-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="work-schedules-title">
-  <div class="modal__backdrop" data-work-schedules-close></div>
-  <div class="modal__dialog modal__dialog--scroll">
-    <header class="modal__head"><h2 id="work-schedules-title">Arbeitszeitpläne</h2><button type="button" class="modal__close" data-work-schedules-close aria-label="Schließen">&times;</button></header>
-    <div class="modal__body">
-      <h3>Vorhandene Pläne</h3>
-      {% if form_user.work_schedules %}<ul class="work-schedule-list">{% for plan in form_user.work_schedules %}<li><strong>{{ plan.valid_from|german_date }}</strong><span>{{ plan.name }}</span></li>{% endfor %}</ul>{% else %}<p class="form-hint">Noch keine Arbeitszeitpläne vorhanden.</p>{% endif %}
-      <h3>Neuen Plan anlegen</h3>
-      <form method="post" action="/admin/users/{{ form_user.id }}/work-schedules" class="form-grid" id="work-schedule-form">
-        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-        <label>Gültig ab<input type="date" name="valid_from" required></label>
-        <label>Bezeichnung<input name="name" value="Regelarbeitszeit" maxlength="255" required></label>
-        {% for key, label in [('monday','Mo'),('tuesday','Di'),('wednesday','Mi'),('thursday','Do'),('friday','Fr'),('saturday','Sa'),('sunday','So')] %}<label>{{ label }} (Std.)<input type="number" name="{{ key }}_hours" min="0" max="24" step="0.25" value="{{ 0 if key in ['saturday','sunday'] else (form_user.standard_weekly_hours / 5)|round(2) }}"></label>{% endfor %}
-        <div class="modal__foot full-width"><button type="button" class="button ghost" data-work-schedules-close>Schließen</button><button class="button primary" type="submit">Arbeitszeitplan hinzufügen</button></div>
-      </form>
-    </div>
-  </div>
-</div>
-<script>
-(function () {
-  const modal = document.getElementById('work-schedules-modal');
-  const trigger = document.getElementById('work-schedules-open');
-  const firstField = modal.querySelector('input[name="valid_from"]');
-  const setOpen = (open) => {
-    modal.classList.toggle('is-visible', open); modal.setAttribute('aria-hidden', open ? 'false' : 'true'); document.body.classList.toggle('modal-open', open);
-    if (open) firstField.focus(); else trigger.focus();
-  };
-  trigger.addEventListener('click', () => setOpen(true));
-  modal.querySelectorAll('[data-work-schedules-close]').forEach(el => el.addEventListener('click', () => setOpen(false)));
-  document.addEventListener('keydown', event => { if (event.key === 'Escape' && modal.classList.contains('is-visible')) setOpen(false); });
-})();
-</script>
-{% endif %}
-{% endblock %}
+{# Der Titelblock enthält nur den Titel. Bis 0.20.6 stand hier eine zweite,
+   vollständige Kopie des Arbeitszeitplan-Dialogs samt Skript – innerhalb von
+   <title>. Sie hat nie etwas angezeigt, weil ``is_edit`` erst im Inhaltsblock
+   gesetzt wird und die Bedingung im Titel deshalb immer falsch war; wäre sie
+   je wahr geworden, hätte die Seite doppelte Element-IDs bekommen. Der
+   wirksame Dialog steht am Ende des Inhaltsblocks. #}
+{% block title %}{% if form_user %}Benutzer bearbeiten{% else %}Benutzer anlegen{% endif %} – Erfassung{% endblock %}
 {% block content %}
 {% set admin_active = 'users' %}
 {% set admin_nav_collapse = true %}
@@ -144,6 +116,14 @@
                         <label>
                             Wochenarbeitszeit (Stunden)
                             <input type="number" name="standard_weekly_hours" value="{{ form_user.standard_weekly_hours if is_edit else 40 }}" min="0" step="0.25" required>
+                            {# Liegt ein Arbeitszeitplan vor, rechnet die Anwendung mit
+                               dessen Wochentagen. Dieses Feld dient dann nur noch als
+                               Rückfallebene für Tage ohne Plan – ohne den Hinweis stünde
+                               hier eine Zahl, die nirgends mehr verwendet wird. #}
+                            {% if active_schedule %}
+                                {% set plan_minutes = active_schedule.monday_minutes + active_schedule.tuesday_minutes + active_schedule.wednesday_minutes + active_schedule.thursday_minutes + active_schedule.friday_minutes + active_schedule.saturday_minutes + active_schedule.sunday_minutes %}
+                                <span class="form-hint">Aktuell gilt der Arbeitszeitplan „{{ active_schedule.name }}" (ab {{ active_schedule.valid_from|german_date }}) mit <strong>{{ plan_minutes|format_minutes }} Std</strong> pro Woche. Sollzeiten, Urlaubs- und Feiertagsgutschrift folgen diesem Plan; dieser Wert gilt nur für Zeiträume ohne Plan.</span>
+                            {% endif %}
                         </label>
                         <label>
                             Überstundenlimit (Std/Monat)
@@ -200,40 +180,47 @@
             </div>
         </form>
         {% if is_edit %}
-            <section class="card compact-card work-schedule-launcher">
-                <h2>Arbeitszeitpläne</h2>
-                <p class="form-hint">Versionierte Wochenpläne getrennt vom Benutzerstamm verwalten.</p>
-                <button type="button" class="button ghost" id="work-schedules-open">Arbeitszeitpläne</button>
-            </section>
-            <section class="card compact-card">
-                <h2>Urlaubsanspruch buchen</h2>
-                <form method="post" action="/admin/users/{{ form_user.id }}/vacation-entitlements" class="form-grid">
-                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
-                    <label>Jahr<input type="number" name="year" min="2000" max="2200" value="{{ now_year }}" required></label>
-                    <label>Tage (+/−)<input type="number" name="days" step="0.5" required></label>
-                    <label>Art<select name="kind"><option value="adjustment">Korrektur</option><option value="carryover">Übertrag</option><option value="contractual">Zusatzurlaub</option></select></label>
-                    <label>Verfällt am<input type="date" name="expires_on"></label>
-                    <label class="full-width">Begründung<input name="reason" maxlength="500" required></label>
-                    <button class="button primary" type="submit">Anspruch buchen</button>
-                </form>
-            </section>
-            <aside class="user-qr" aria-label="Mobile Anmeldung">
-                <h2 class="user-qr__title">Mobile Anmeldung</h2>
-                <p class="user-qr__hint">QR-Code mit der Kamera oder der Erfassung-App scannen, um {{ form_user.full_name }} direkt auf dem Mobilgerät anzumelden.</p>
-                <div class="user-qr__code">
-                    <img id="user-qr-img"
-                         src="/admin/users/{{ form_user.id }}/mobile-qr.png?size=200"
-                         alt="QR-Code für die mobile Anmeldung von {{ form_user.full_name }}"
-                         width="200" height="200" loading="lazy">
-                </div>
-                <div class="user-qr__actions">
-                    <a class="button ghost small"
-                       href="/admin/users/{{ form_user.id }}/mobile-qr.png?size=400&amp;download=1"
-                       download="erfassung-login-{{ form_user.username }}.png">Download</a>
-                    <a class="button ghost small" href="/admin/users/{{ form_user.id }}">Neu generieren</a>
-                </div>
-                <p class="user-qr__note muted">Der Code ist 30 Tage gültig und wird beim Neu-Generieren erneuert.</p>
-            </aside>
+            {# Seitenspalte in fester Reihenfolge: die mobile Anmeldung ganz
+               oben, direkt darunter die Arbeitszeitpläne, zuletzt der
+               Urlaubsanspruch. Bis 0.20.6 waren die drei Abschnitte
+               unmittelbare Rasterkinder – sie ordneten sich automatisch an,
+               und der QR-Code landete unten. #}
+            <div class="user-form-aside">
+                <aside class="user-qr" aria-label="Mobile Anmeldung">
+                    <h2 class="user-qr__title">Mobile Anmeldung</h2>
+                    <p class="user-qr__hint">QR-Code mit der Kamera oder der Erfassung-App scannen, um {{ form_user.full_name }} direkt auf dem Mobilgerät anzumelden.</p>
+                    <div class="user-qr__code">
+                        <img id="user-qr-img"
+                             src="/admin/users/{{ form_user.id }}/mobile-qr.png?size=200"
+                             alt="QR-Code für die mobile Anmeldung von {{ form_user.full_name }}"
+                             width="200" height="200" loading="lazy">
+                    </div>
+                    <div class="user-qr__actions">
+                        <a class="button ghost small"
+                           href="/admin/users/{{ form_user.id }}/mobile-qr.png?size=400&amp;download=1"
+                           download="erfassung-login-{{ form_user.username }}.png">Download</a>
+                        <a class="button ghost small" href="/admin/users/{{ form_user.id }}">Neu generieren</a>
+                    </div>
+                    <p class="user-qr__note muted">Der Code ist 30 Tage gültig und wird beim Neu-Generieren erneuert.</p>
+                </aside>
+                <section class="card compact-card work-schedule-launcher">
+                    <h2>Arbeitszeitpläne</h2>
+                    <p class="form-hint">Versionierte Wochenpläne getrennt vom Benutzerstamm verwalten.</p>
+                    <button type="button" class="button ghost" id="work-schedules-open">Arbeitszeitpläne</button>
+                </section>
+                <section class="card compact-card">
+                    <h2>Urlaubsanspruch buchen</h2>
+                    <form method="post" action="/admin/users/{{ form_user.id }}/vacation-entitlements" class="form-grid">
+                        <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                        <label>Jahr<input type="number" name="year" min="2000" max="2200" value="{{ now_year }}" required></label>
+                        <label>Tage (+/−)<input type="number" name="days" step="0.5" required></label>
+                        <label>Art<select name="kind"><option value="adjustment">Korrektur</option><option value="carryover">Übertrag</option><option value="contractual">Zusatzurlaub</option></select></label>
+                        <label>Verfällt am<input type="date" name="expires_on"></label>
+                        <label class="full-width">Begründung<input name="reason" maxlength="500" required></label>
+                        <button class="button primary" type="submit">Anspruch buchen</button>
+                    </form>
+                </section>
+            </div>
         {% endif %}
       </div>
         {% if is_edit %}

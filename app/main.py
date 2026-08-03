@@ -1891,8 +1891,20 @@ def _build_weekly_overview(
         + weekly_vacation_minutes
         + weekly_holiday_minutes
     )
-    weekly_target_minutes = int(round(user.weekly_target_minutes or 0)) if user else 0
-    daily_target_minutes = int(round(user.daily_target_minutes or 0)) if user else 0
+    # Sollzeiten kommen ausschließlich aus dem am jeweiligen Tag gültigen
+    # Arbeitszeitplan. Bis 0.20.6 rechnete diese Wochenansicht als einzige noch
+    # mit der pauschalen Tagessollzeit mal „Montag bis Freitag" – wer einen Plan
+    # mit abweichenden Tagen hinterlegt hatte (Teilzeit, freier Freitag,
+    # Samstagsdienst), sah hier andere Zahlen als in Monatsübersicht, Urlaubs-
+    # und Feiertagsgutschrift. ``services.target_minutes_for_date`` ist die
+    # einzige Quelle; ohne Plan liefert sie unverändert das Mo–Fr-Verhalten.
+    target_by_day = {
+        week_start + timedelta(days=offset): services.target_minutes_for_date(
+            user, week_start + timedelta(days=offset)
+        )
+        for offset in range(7)
+    }
+    weekly_target_minutes = sum(target_by_day.values())
 
     if week_end < reference_today:
         expected_minutes_to_date = weekly_target_minutes
@@ -1900,12 +1912,10 @@ def _build_weekly_overview(
         expected_minutes_to_date = 0
     else:
         days_delta = (min(reference_today, week_end) - week_start).days + 1
-        elapsed_workdays = sum(
-            1
+        expected_minutes_to_date = sum(
+            target_by_day[week_start + timedelta(days=offset)]
             for offset in range(days_delta)
-            if (week_start + timedelta(days=offset)).weekday() < 5
         )
-        expected_minutes_to_date = elapsed_workdays * daily_target_minutes
 
     remaining_week_minutes = max(weekly_target_minutes - weekly_total_minutes, 0)
     progress_percent = (
@@ -1928,7 +1938,7 @@ def _build_weekly_overview(
         vacation_minutes = vacation_minutes_by_day.get(current_day, 0)
         holiday_minutes = holiday_minutes_by_day.get(current_day, 0)
         day_minutes = work_minutes + vacation_minutes + holiday_minutes
-        target_for_day = daily_target_minutes if current_day.weekday() < 5 else 0
+        target_for_day = target_by_day[current_day]
         week_days.append(
             {
                 "date": current_day,
@@ -2096,7 +2106,10 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
         overview_context["overview_week"] = week_overview
     else:
         day_overview = _build_daily_overview(db, user.id, reference_date)
-        target_minutes = int(context.get("daily_target_minutes", 0))
+        # Sollzeit des **angezeigten** Tages, nicht der pauschale Tagesschnitt:
+        # An einem Samstag oder einem planmäßig freien Tag ist sie 0, und bei
+        # hinterlegtem Arbeitszeitplan folgt sie dessen Wochentagswerten.
+        target_minutes = services.target_minutes_for_date(user, reference_date)
         day_overview.update(
             {
                 "prev": day_overview["date"] - timedelta(days=1),
@@ -2330,6 +2343,17 @@ def mobile_sync_data(
             "group": ", ".join(user.group_names),
             "daily_target_minutes": int(round(user.daily_target_minutes or 0)),
             "weekly_target_minutes": int(round(user.weekly_target_minutes or 0)),
+        },
+        # Sollzeit je Tag des Synchronisationszeitraums. Die Offline-Shell hat
+        # bis 0.20.6 mit der pauschalen Tages- und Wochensollzeit gerechnet und
+        # wich damit von der Weboberfläche ab, sobald ein Arbeitszeitplan
+        # ungleiche Wochentage vorsah. Die beiden Pauschalwerte bleiben als
+        # Rückfallebene für Momentaufnahmen älterer Stände erhalten.
+        "daily_targets": {
+            (since_date + timedelta(days=offset)).isoformat(): services.target_minutes_for_date(
+                user, since_date + timedelta(days=offset)
+            )
+            for offset in range((until_date - since_date).days + 1)
         },
         # Ohne den Baustein „orders" bekommt die Offline-Shell keine Firmen –
         # damit bietet sie den Auftragsstart gar nicht erst an.
@@ -3066,17 +3090,53 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
     )
 
 
+#: Beschriftung und CSS-Klasse je Antragsstatus im Kalender. Die Klasse trägt
+#: die Farbe; „withdraw_requested" teilt sie sich mit „approved", weil die
+#: Abwesenheit bis zur Freigabe der Rücknahme unverändert gilt.
+_CALENDAR_STATUS_DISPLAY = {
+    models.VacationStatus.APPROVED: ("Genehmigt", "approved"),
+    models.VacationStatus.PENDING: ("Offen", "pending"),
+    models.VacationStatus.WITHDRAW_REQUESTED: ("Rücknahme angefragt", "approved"),
+}
+
+
 def _calendar_rows(db: Session, vacations: Iterable[models.VacationRequest], *, reveal: bool = True) -> list[dict]:
     labels = {item.key: item for item in db.query(models.AbsenceType).all()}
     rows = []
     for item in vacations:
         kind = labels.get(getattr(item, "absence_type_key", "vacation"))
         confidential = bool(kind and kind.confidential)
+        status_label, status_class = _CALENDAR_STATUS_DISPLAY.get(item.status, ("Offen", "pending"))
         rows.append({"id": item.id, "start": item.start_date, "end": item.end_date,
-            "status": item.status, "person": item.user.full_name if getattr(item, "user", None) else "",
+            "status": item.status, "status_label": status_label, "status_class": status_class,
+            "person": item.user.full_name if getattr(item, "user", None) else "",
             "half_day_start": item.half_day_start, "half_day_end": item.half_day_end,
             "label": (kind.label if kind else "Urlaub") if reveal and not confidential else "Abwesend"})
     return rows
+
+
+def _team_calendar_scope(db: Session, user: models.User) -> tuple[str, list[str]]:
+    """Welche Gruppen zeigt der Teamkalender diesem Benutzer?
+
+    Der Geltungsbereich von ``Vacation.TeamCalendar`` entscheidet darüber, wird
+    aber nirgends angezeigt – wer den Kalender liest, konnte deshalb nicht
+    erkennen, ob er das ganze Haus oder nur die eigene Abteilung sieht, und
+    eine Lücke im Kalender nicht von einer Lücke in der Berechtigung
+    unterscheiden.
+
+    Geliefert wird ein kurzer Text für die Überschrift und – bei
+    gruppenweitem Umfang – die Namen der tatsächlich enthaltenen Gruppen.
+    """
+    granted = permission_service.scope(user, "Vacation.TeamCalendar")
+    if granted == permission_service.SCOPE_ALL:
+        names = [name for (name,) in db.query(models.Group.name).order_by(models.Group.name).all()]
+        return "Alle Gruppen", names
+    if granted == permission_service.SCOPE_SELF:
+        return "Nur die eigenen Abwesenheiten", []
+    names = sorted(group.name for group in user.groups)
+    if not names:
+        return "Nur die eigenen Abwesenheiten – keine Gruppe zugeordnet", []
+    return "Eigene Gruppen", names
 
 
 @app.get("/records/vacations/calendar", response_class=HTMLResponse)
@@ -3124,21 +3184,30 @@ def personal_vacation_calendar(request: Request, scope: str = "self", view: str 
         models.VacationRequest.start_date <= period_end,
         models.VacationRequest.end_date >= period_start,
     )
+    # Ein Antrag mit angefragter Rücknahme ist weiterhin genehmigt – die
+    # Abwesenheit gilt, bis die Rücknahme freigegeben wurde. Bis 0.20.6 fiel
+    # er aus beiden Kalendern heraus und die Zeit sah frei aus.
+    visible_statuses = (
+        models.VacationStatus.PENDING,
+        models.VacationStatus.APPROVED,
+        models.VacationStatus.WITHDRAW_REQUESTED,
+    )
+    team_scope_label, team_group_names = None, []
     if scope == "self":
         query = query.filter(models.VacationRequest.user_id == user.id,
-                             models.VacationRequest.status.in_((models.VacationStatus.PENDING, models.VacationStatus.APPROVED)))
+                             models.VacationRequest.status.in_(visible_statuses))
     else:
         allowed = permission_service.allowed_user_ids(db, user, "Vacation.TeamCalendar")
         if allowed is not None:
             query = query.filter(models.VacationRequest.user_id.in_(allowed or {-1}))
-        visible = [models.VacationStatus.APPROVED]
-        if permission_service.has(user, "Vacation.Manage"):
-            visible.append(models.VacationStatus.PENDING)
-        query = query.filter(models.VacationRequest.status.in_(visible))
+        # Offene Anträge gehören in den Teamkalender: Ohne sie lässt sich
+        # nichts planen, weil erst die Freigabe sichtbar machte, dass jemand
+        # denselben Zeitraum bereits beantragt hat. Bis 0.20.6 sah sie nur, wer
+        # zusätzlich „Vacation.Manage" hatte. Die Art der Abwesenheit bleibt
+        # dabei verdeckt – ``reveal=False`` zeigt teamweit nur „Abwesend".
+        query = query.filter(models.VacationRequest.status.in_(visible_statuses))
+        team_scope_label, team_group_names = _team_calendar_scope(db, user)
     items = query.order_by(models.VacationRequest.start_date).all()
-    if scope == "team" and permission_service.has(user, "Vacation.Manage"):
-        manage_ids = permission_service.allowed_user_ids(db, user, "Vacation.Manage")
-        items = [item for item in items if item.status == models.VacationStatus.APPROVED or manage_ids is None or item.user_id in manage_ids]
     rows = _calendar_rows(db, items, reveal=scope == "self")
     holidays = db.query(models.Holiday).filter(models.Holiday.date.between(period_start, period_end)).order_by(models.Holiday.date).all()
     days = []
@@ -3156,6 +3225,7 @@ def personal_vacation_calendar(request: Request, scope: str = "self", view: str 
         "previous_value": previous_value, "next_value": next_value,
         "feed_url": request.query_params.get("feed_url"), "can_sync": licensing.has_feature("calendar_sync"),
         "can_team": can_team, "can_team_feed": can_team,
+        "team_scope_label": team_scope_label, "team_group_names": team_group_names,
         "feeds": db.query(models.CalendarFeed).filter(models.CalendarFeed.user_id == user.id, models.CalendarFeed.active.is_(True)).order_by(models.CalendarFeed.created_at.desc()).all(),
     })
 
@@ -3996,6 +4066,25 @@ def admin_users_list(request: Request, db: Session = Depends(database.get_db)):
     )
 
 
+def _active_work_schedule(target: Optional[models.User]) -> Optional[models.WorkSchedule]:
+    """Der heute gültige Arbeitszeitplan einer Person – oder ``None``.
+
+    Dieselbe Auswahlregel wie in :func:`services.target_minutes_for_date`:
+    gültig ab in der Vergangenheit, gültig bis offen oder noch nicht
+    erreicht, und bei mehreren Treffern der jüngste Beginn.
+    """
+    if not target:
+        return None
+    today = date.today()
+    applicable = [
+        plan for plan in (getattr(target, "work_schedules", ()) or ())
+        if plan.valid_from <= today and (plan.valid_until is None or plan.valid_until >= today)
+    ]
+    if not applicable:
+        return None
+    return max(applicable, key=lambda plan: plan.valid_from)
+
+
 @app.get("/admin/users/new", response_class=HTMLResponse)
 def admin_users_new(request: Request, db: Session = Depends(database.get_db)):
     user = get_logged_in_user(request, db)
@@ -4052,6 +4141,11 @@ def admin_users_edit(request: Request, user_id: int, db: Session = Depends(datab
         form_user=target,
         mobile_quick_login_url=quick_login_url,
         now_year=date.today().year,
+        # Der heute wirksame Plan. Ohne ihn zeigte die Seite nur die
+        # Wochenarbeitszeit aus dem Stammsatz an – während die Anwendung
+        # längst mit dem Plan rechnete. Zwei Zahlen, eine sichtbar, und die
+        # sichtbare war die falsche.
+        active_schedule=_active_work_schedule(target),
     )
 
 

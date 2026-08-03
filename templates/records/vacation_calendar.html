@@ -2,13 +2,21 @@
 {% block title %}Abwesenheitskalender – Erfassung{% endblock %}
 {% block content %}
 {% set records_active = 'vacations' %}{% include "records/_nav.html" %}
-<nav class="vacation-tabs" aria-label="Urlaubsbereich">
-  <a href="/records/vacations">Meine Anträge</a>
-  <a class="{% if scope == 'self' %}is-active{% endif %}"{% if scope == 'self' %} aria-current="page"{% endif %} href="/records/vacations/calendar?scope=self">Mein Kalender</a>
-  {% if can_team %}<a class="{% if scope == 'team' %}is-active{% endif %}"{% if scope == 'team' %} aria-current="page"{% endif %} href="/records/vacations/calendar?scope=team">Teamkalender</a>{% endif %}
-</nav>
+{% set vacation_tab = scope %}{% set can_team_calendar = can_team %}{% include "records/_vacation_tabs.html" %}
 <section class="card vacation-calendar">
   <div class="card-header"><div><p class="eyebrow">{% if scope == 'team' %}Teamkalender{% else %}Mein Kalender{% endif %}</p><h1>{{ title }}</h1></div></div>
+  {% if scope == 'team' %}
+    {# Wer den Teamkalender liest, muss wissen, wessen Abwesenheiten darin
+       stehen – sonst ist eine Lücke im Kalender nicht von einer Lücke in der
+       Berechtigung zu unterscheiden. #}
+    <p class="calendar-scope" data-team-scope>
+      <span class="calendar-scope__label">Angezeigt:</span>
+      <span>{{ team_scope_label }}</span>
+      {% if team_group_names %}
+        {% for name in team_group_names %}<span class="calendar-scope__group">{{ name }}</span>{% endfor %}
+      {% endif %}
+    </p>
+  {% endif %}
   <form method="get" class="calendar-toolbar" aria-label="Kalender steuern">
     <input type="hidden" name="scope" value="{{ scope }}">
     <div class="segmented" aria-label="Ansicht">
@@ -24,7 +32,7 @@
       <a class="button ghost" aria-label="Nächster Monat" href="?scope={{ scope }}&view={{ view }}&month={{ next_value }}">›</a>
     {% endif %}
   </form>
-  <div class="calendar-legend"><span><i class="approved"></i> Genehmigt</span>{% if scope == 'self' %}<span><i class="pending"></i> Offen</span>{% endif %}<span><i class="holiday"></i> Feiertag</span><span>½ Halber Tag</span></div>
+  <div class="calendar-legend"><span><i class="approved"></i> Genehmigt</span><span><i class="pending"></i> Offen</span><span><i class="holiday"></i> Feiertag</span><span>½ Halber Tag</span></div>
   {% if view != 'list' %}
   <div class="calendar-scroll" tabindex="0" aria-label="Grafischer Kalender, horizontal scrollbar">
     <div class="calendar-grid" role="grid">
@@ -32,7 +40,7 @@
       {% for day in days %}<div class="calendar-day {% if not day.in_period %}is-outside{% endif %} {% if day.is_today %}is-today{% endif %}" role="gridcell" aria-label="{{ day.date|german_date }}">
         <time datetime="{{ day.date.isoformat() }}">{{ day.date.day }}</time>
         {% if day.holiday %}<span class="calendar-event holiday" title="{{ day.holiday }}">{{ day.holiday }}</span>{% endif %}
-        {% for event in day.events %}<span class="calendar-event {{ event.status }}" title="{{ event.person if scope == 'team' else event.label }}">
+        {% for event in day.events %}<span class="calendar-event {{ event.status_class }}" title="{{ (event.person ~ ' · ' if scope == 'team' else '') ~ event.label ~ ' · ' ~ event.status_label }}">
           {% if scope == 'team' %}{{ event.person }} · {% endif %}{{ event.label }}{% if (day.date == event.start and event.half_day_start) or (day.date == event.end and event.half_day_end) %} · ½{% endif %}
         </span>{% endfor %}
       </div>{% endfor %}
@@ -42,7 +50,7 @@
   <div class="calendar-list {% if view != 'list' %}calendar-list--alternative{% endif %}">
     <h2>{% if view != 'list' %}<span class="visually-hidden">Barrierearme </span>Listenansicht{% else %}Abwesenheiten{% endif %}</h2>
     <div class="table-scroll"><table class="striped-table"><thead><tr>{% if scope == 'team' %}<th>Person</th>{% endif %}<th>Zeitraum</th><th>Art</th><th>Status</th></tr></thead><tbody>
-    {% for row in calendar_rows %}<tr>{% if scope == 'team' %}<td>{{ row.person }}</td>{% endif %}<td>{{ row.start|german_date }}{% if row.half_day_start %} (½){% endif %} – {{ row.end|german_date }}{% if row.half_day_end %} (½){% endif %}</td><td>{{ row.label }}</td><td>{{ 'Genehmigt' if row.status == 'approved' else 'Offen' }}</td></tr>{% else %}<tr><td colspan="{{ 4 if scope == 'team' else 3 }}">Keine Abwesenheiten.</td></tr>{% endfor %}
+    {% for row in calendar_rows %}<tr>{% if scope == 'team' %}<td>{{ row.person }}</td>{% endif %}<td>{{ row.start|german_date }}{% if row.half_day_start %} (½){% endif %} – {{ row.end|german_date }}{% if row.half_day_end %} (½){% endif %}</td><td>{{ row.label }}</td><td>{{ row.status_label }}</td></tr>{% else %}<tr><td colspan="{{ 4 if scope == 'team' else 3 }}">Keine Abwesenheiten.</td></tr>{% endfor %}
     {% for holiday in holidays %}<tr>{% if scope == 'team' %}<td>–</td>{% endif %}<td>{{ holiday.date|german_date }}</td><td>{{ holiday.name }}</td><td>Feiertag</td></tr>{% endfor %}
     </tbody></table></div>
   </div>

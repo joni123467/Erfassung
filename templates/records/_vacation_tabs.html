@@ -1,0 +1,14 @@
+{# Reiter des Urlaubsbereichs.
+
+   Bis 0.20.6 stand diese Leiste nur auf der Kalenderseite; von „Meine
+   Anträge" führte lediglich eine Schaltfläche „Mein Kalender" im Kartenkopf
+   dorthin, und ein Rückweg fehlte. Die Reiter gehören auf **jede** Seite des
+   Bereichs, damit der Wechsel in beide Richtungen funktioniert.
+
+   ``vacation_tab`` benennt die aktive Seite: ``requests`` für die Anträge,
+   ``self`` bzw. ``team`` für die beiden Kalender. #}
+<nav class="vacation-tabs" aria-label="Urlaubsbereich">
+  <a class="{% if vacation_tab == 'requests' %}is-active{% endif %}"{% if vacation_tab == 'requests' %} aria-current="page"{% endif %} href="/records/vacations">Meine Anträge</a>
+  <a class="{% if vacation_tab == 'self' %}is-active{% endif %}"{% if vacation_tab == 'self' %} aria-current="page"{% endif %} href="/records/vacations/calendar?scope=self">Mein Kalender</a>
+  {% if can_team_calendar %}<a class="{% if vacation_tab == 'team' %}is-active{% endif %}"{% if vacation_tab == 'team' %} aria-current="page"{% endif %} href="/records/vacations/calendar?scope=team">Teamkalender</a>{% endif %}
+</nav>

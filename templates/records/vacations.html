@@ -3,9 +3,10 @@
 {% block content %}
 {% set records_active = 'vacations' %}
 {% include "records/_nav.html" %}
+{% set vacation_tab = 'requests' %}{% include "records/_vacation_tabs.html" %}
 <section class="card records-hero">
     <div class="card-header">
-        <h1>Urlaubsübersicht</h1><a class="button ghost" href="/records/vacations/calendar?scope=self">Mein Kalender</a>
+        <h1>Urlaubsübersicht</h1>
     </div>
     <dl class="dashboard-summary-list records-summary">
         <div class="dashboard-summary-list__item">

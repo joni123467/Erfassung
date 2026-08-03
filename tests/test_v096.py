@@ -70,8 +70,8 @@ def login(client):
 # --- version ---------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.20.6"
-    assert client.get("/health").json()["version"] == "0.20.6"
+    assert client.main.APP_VERSION == "0.20.7"
+    assert client.get("/health").json()["version"] == "0.20.7"
 
 
 # --- navigation: reiter design + single open behaviour ---------------------
@@ -160,7 +160,7 @@ def test_settings_has_sections(client):
         assert f"<legend>{section}</legend>" in html
     assert "settings-section" in html
     # Allgemein shows the running version and database backend.
-    assert "0.20.6" in html
+    assert "0.20.7" in html
     assert "SQLite" in html
 
 
