@@ -5,7 +5,7 @@
 {% include "records/_nav.html" %}
 <section class="card records-hero">
     <div class="card-header">
-        <h1>Urlaubsübersicht</h1><a class="button ghost" href="/records/vacations/calendar">Kalender</a>
+        <h1>Urlaubsübersicht</h1><a class="button ghost" href="/records/vacations/calendar?scope=self">Mein Kalender</a>
     </div>
     <dl class="dashboard-summary-list records-summary">
         <div class="dashboard-summary-list__item">
@@ -45,7 +45,7 @@
     <div class="card-header">
         <h2>Urlaubsantrag stellen</h2>
     </div>
-    <form method="post" action="/vacations" class="form-grid">
+    <form method="post" action="/vacations" class="form-grid" data-vacation-request data-team-calendar="{{ 'true' if can_team_calendar else 'false' }}">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <label>
             Abwesenheitsart
@@ -75,6 +75,7 @@
             Halbe Tage zählen mit 0,5 Urlaubstagen und der halben Tagessollzeit.
             Bei einem eintägigen Antrag genügt eines der beiden Häkchen.
         </p>
+        {% if can_team_calendar %}<div class="form-hint full-width vacation-overlap" data-vacation-overlap role="status" aria-live="polite">Zeitraum wählen, um Teamüberschneidungen zu prüfen.</div>{% endif %}
         <label class="full-width">
             Kommentar
             <textarea name="comment" rows="2" placeholder="Optionaler Hinweis"></textarea>
@@ -162,3 +163,4 @@
     </div>
 </section>
 {% endblock %}
+{% block scripts %}<script src="/static/vacation-calendar.js?v={{ app_version }}" defer></script>{% endblock %}

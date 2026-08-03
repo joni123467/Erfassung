@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.20.5] – 2026-08-02
+
+### Hinzugefügt
+- Grafischer persönlicher Urlaubs-/Abwesenheitskalender mit Monats-, Wochen-
+  und barrierearmer Listenansicht, Feiertagen, halben Tagen und responsiver
+  Navigation.
+- Eigenes gruppenbezogenes Recht `Vacation.TeamCalendar`, datensparsamer
+  Überschneidungshinweis im Antragsformular und normaler Teamkalender.
+
+### Geändert
+- Der frühere Admin-Teamkalender leitet auf den normalen Urlaubsbereich um;
+  widerrufbare persönliche und Team-iCalendar-Feeds prüfen Rechte und Lizenz
+  fortlaufend und senden restriktive Cache-/Sicherheitsheader.
+
+### Fehlerbehebungen
+- Offene Fremdanträge, vertrauliche Abwesenheitsarten und Kommentare können
+  nicht mehr über Teamansichten oder Teamfeeds offengelegt werden.
+
+### Datenbankänderungen
+- Keine. Die bereits mit Migration 23 eingeführte Tabelle `calendar_feeds`
+  speichert weiterhin ausschließlich Token-Hashes; keine Migration notwendig.
+
+### Migrationshinweise
+- Direktes Update von allen unterstützten Vorversionen möglich. Migration 23
+  bleibt unverändert, idempotent und legt fehlende Feedtabellen automatisch an.
+
 Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokumentiert.
 
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
