@@ -98,7 +98,33 @@ Momentaufnahme (`/mobile/sync-data`). Die beiden Pauschalwerte bleiben im
 Baustein `user` erhalten; eine Momentaufnahme, die vor dem Update entstanden
 ist, rechnet damit weiter wie bisher.
 
-## 6. Weitere Befunde aus der Durchsicht der Anzeigen
+## 6. Rücknahmeanfragen ließen sich nicht entscheiden
+
+Unter Administration → **Freigaben** gibt es den Abschnitt
+*Rücknahmeanfragen*. Seine beiden Schaltflächen – **Rücknahme bestätigen** und
+**Ablehnen** – saßen in einem Formular **ohne CSRF-Token**, als einzigem der
+Seite. Die CSRF-Prüfung läuft für jede zustandsändernde Anfrage; jeder Klick
+endete deshalb auf „403 – Ungültige Sitzung", und der Antrag behielt seinen
+Status.
+
+Praktisch hieß das: Zieht jemand einen bereits genehmigten Urlaub zurück,
+blieb der Antrag dauerhaft in *Rücknahme angefragt* hängen. Er zählte in
+diesem Zustand nicht mehr als verbrauchter Urlaub – die Tage waren also
+zurückgegeben –, während die Abwesenheit im Kalender weiter stand. Über die
+Oberfläche ließ sich das nicht auflösen.
+
+Behoben durch das fehlende Feld. Zwei Tests sichern das ab: einer prüft **jedes**
+POST-Formular aller Vorlagen auf ein Token, ein zweiter spielt den ganzen
+Vorgang durch. Ein dritter stellt sicher, dass ein Aufruf **ohne** Token
+weiterhin mit 403 abgewiesen wird – die Reparatur darf die Prüfung nicht
+aufweichen.
+
+Der zweite Fund derselben Suche war ein Fehlalarm: Im Standortformular
+(`templates/admin/company_form.html`) steht das Token außerhalb der
+`<form>`-Marken und wird über das HTML-Attribut `form="…"` zugeordnet. Der
+Test kennt dieses Muster.
+
+## 7. Weitere Befunde aus der Durchsicht der Anzeigen
 
 - **Benutzerformular, Feld „Wochenarbeitszeit".** Es zeigte 40 Stunden,
   während die Anwendung mit einem Plan über 32 Stunden rechnete – zwei Zahlen,
@@ -106,10 +132,59 @@ ist, rechnet damit weiter wie bisher.
   darunter, welcher gilt und mit wie vielen Wochenstunden.
 - **Auswertung „Benutzerauswertung", Fußnote.** Sie beschrieb noch die Rechnung
   „Arbeitstage (Mo–Fr) × Tagessoll"; gerechnet wird seit 0.20.3 über den Plan.
+- **Monatsüberschriften auf Deutsch.** Über der Buchungsseite und in der
+  Monatszusammenfassung des Dashboards stand noch „06/2026"; die deutschen
+  Monatsnamen aus 0.20.1 hatten diese beiden Stellen nicht erreicht. Jetzt
+  „Juni 2026", wie im Kalender und in der Regelübersicht.
 - **Alle Template-Variablen geprüft.** Ein Durchlauf über sämtliche Vorlagen
   hat keine Variable gefunden, die keine Route liefert – Jinja rendert
   Unbekanntes stillschweigend als leer, genau so entsteht eine Anzeige ohne
   Wert.
+
+---
+
+## Anwenderdurchlauf durch die gesamte Anwendung
+
+Zusätzlich zur Testsuite wurde die Anwendung über HTTP wie von Hand bedient –
+fünf Abschnitte, 239 Einzelprüfungen. Jede angezeigte Zahl wurde dabei
+**unabhängig nachgerechnet**, nicht mit den Funktionen der Anwendung selbst.
+
+| Abschnitt | Umfang | Ergebnis |
+| --- | --- | --- |
+| Stempeln, Pausen, Dauern | Anmeldung, Kennwortzwang, Start/Pause/Ende, Einsatzort, §-4-Grenzen, Zeitumstellung, Storno | 26 von 26 |
+| Übersichten und Berechnungen | Tages-, Wochen- und Monatswerte, Urlaubskonto, Feiertagsgutschrift, Arbeitszeitplan | 44 von 44 |
+| Urlaub, Freigaben, Kalender | Antrag, halber Tag, Genehmigung, Ablehnung, Rücknahme, alle Kalenderansichten, iCalendar-Feed | 41 von 41 |
+| Administration und Auswertungen | 32 Verwaltungsseiten, Stammdatenpflege, Buchung bearbeiten, Historie, PDF- und Excel-Export | 68 von 68 |
+| Rechte, System, App | 22 gesperrte Seiten für ein Konto ohne Rechte, API, CSRF, Sicherung, Offline-Shell | 60 von 60 |
+
+Einzelne Ergebnisse, die dabei bestätigt wurden:
+
+- **§ 4 ArbZG an den Grenzen.** Glatt sechs Stunden verlangen keine Pause,
+  6:01 verlangt 30 Minuten; glatt neun Stunden 30, 9:01 dann 45. Eine nicht
+  genommene Pause wird gekennzeichnet, aber nicht abgezogen – die
+  Arbeitszeit bleibt so, wie sie war.
+- **Unterbrechungen unter 15 Minuten** werden von der Arbeitszeit abgezogen,
+  erfüllen die Pausenpflicht aber nicht.
+- **Zeitumstellung.** Eine Schicht von 00:00 bis 06:00 am 29. März 2026 dauert
+  fünf Stunden, nicht sechs.
+- **Stornierte Buchungen** behalten ihre Zeiten und zählen null Minuten.
+- **Der iCalendar-Feed** enthält keine Kommentare, ein falsches Token liefert
+  404, und nach dem Widerruf liefert der Feed nichts mehr.
+- **Geltungsbereiche.** Ein Konto ohne Verwaltungsrechte kommt an keine der
+  22 geprüften Verwaltungsseiten, an kein fremdes Konto, an keine fremde
+  Buchung und an keinen Auskunftsexport.
+
+### Zum Lizenzbaustein Kalendersynchronisation
+
+Die Durchsetzung von `calendar_sync` wurde in vier Lizenzzuständen geprüft
+(ohne Urlaubsbaustein; mit Urlaub ohne `calendar_sync`; mit beiden; sowie
+`calendar_sync` ohne Urlaub). In **jedem** unlizenzierten Fall wurde kein
+Feed angelegt, und der ICS-Endpunkt bleibt gesperrt. `calendar_sync` setzt
+`vacation` voraus; ohne den Urlaubsbaustein bleibt er wirkungslos.
+
+Die Anwendung ist damit vollständig vorbereitet. Was noch fehlt, liegt
+**außerhalb dieses Repositorys**: Der Lizenzserver muss `calendar_sync` in der
+Liste `features` des signierten Lizenzdokuments ausliefern.
 
 ---
 

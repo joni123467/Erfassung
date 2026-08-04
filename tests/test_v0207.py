@@ -603,3 +603,110 @@ def test_monthly_and_weekly_targets_agree(main):
     # Vier volle Wochen ab dem 1. Juni decken den 1.–28. Juni ab; der 29. und
     # 30. Juni sind Montag und Dienstag und tragen je 480 Minuten bei.
     assert monthly == weekly + 2 * 480
+
+
+# ── 8. Befunde aus dem Anwenderdurchlauf ──────────────────────────────────
+
+
+def test_every_post_form_carries_a_csrf_token():
+    """Die CSRF-Prüfung greift für jede zustandsändernde Anfrage.
+
+    Ein Formular ohne Token ist deshalb eine Schaltfläche, die nichts tut
+    außer „403 – Ungültige Sitzung" anzuzeigen. Bis 0.20.7 fehlte das Feld im
+    Abschnitt „Rücknahmeanfragen" – eine Rücknahme ließ sich überhaupt nicht
+    entscheiden.
+
+    Felder dürfen dem Formular auch über das HTML-Attribut ``form="…"`` von
+    außerhalb zugeordnet sein; dann steht das Token nicht zwischen den Tags.
+    """
+    form_open = re.compile(r"<form\b[^>]*>", re.IGNORECASE)
+    offenders = []
+    for path in sorted((ROOT / "templates").rglob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        for match in form_open.finditer(text):
+            tag = match.group(0)
+            if 'method="post"' not in tag.lower():
+                continue
+            end = text.find("</form>", match.end())
+            body = text[match.end():end if end != -1 else len(text)]
+            if "csrf_token" in body:
+                continue
+            form_id = re.search(r'id="([^"]+)"', tag)
+            if form_id and f'form="{form_id.group(1)}"' in text:
+                continue  # Felder hängen über das form-Attribut daran
+            line = text[: match.start()].count("\n") + 1
+            offenders.append(f"{path.relative_to(ROOT)}:{line}")
+    assert not offenders, "POST-Formulare ohne CSRF-Token: " + ", ".join(offenders)
+
+
+def test_withdrawal_can_actually_be_decided(client):
+    """Der ganze Vorgang: beantragen, zurückziehen, Rücknahme freigeben."""
+    from app import models
+
+    _login(client)
+    admin_id = _admin_id()
+    start = date(2026, 10, 5)
+    with _db() as db:
+        row = models.VacationRequest(
+            user_id=admin_id, start_date=start, end_date=start + timedelta(days=4),
+            status=models.VacationStatus.WITHDRAW_REQUESTED,
+            previous_status="approved", absence_type_key="vacation",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        vacation_id = row.id
+
+    page = client.get("/admin/approvals").text
+    section = page.split("Rücknahmeanfragen", 1)[1]
+    form = section[section.index("<form"):section.index("</form>")]
+    assert "csrf_token" in form, "Das Formular der Rücknahmeanfragen braucht ein Token"
+
+    response = client.post(
+        f"/admin/vacations/{vacation_id}/status",
+        data={"action": "approve_withdraw", "csrf_token": _csrf(client, "/dashboard")},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    with _db() as db:
+        after = db.query(models.VacationRequest).filter(
+            models.VacationRequest.id == vacation_id
+        ).first().status
+    assert after == models.VacationStatus.CANCELLED
+
+
+def test_a_withdrawal_without_a_token_is_still_rejected(client):
+    """Die Reparatur darf die Prüfung nicht aufweichen."""
+    from app import models
+
+    _login(client)
+    start = date(2026, 11, 2)
+    with _db() as db:
+        row = models.VacationRequest(
+            user_id=_admin_id(), start_date=start, end_date=start,
+            status=models.VacationStatus.WITHDRAW_REQUESTED,
+            previous_status="approved", absence_type_key="vacation",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        vacation_id = row.id
+    response = client.post(
+        f"/admin/vacations/{vacation_id}/status",
+        data={"action": "approve_withdraw"}, follow_redirects=False,
+    )
+    assert response.status_code == 403
+
+
+def test_month_headings_are_german(client):
+    """Bis 0.20.6 stand über der Buchungsseite „06/2026"."""
+    _login(client)
+    body = client.get("/records?month=2026-06").text
+    assert "Juni 2026" in body
+    assert "06/2026" not in body
+
+
+def test_no_numeric_month_format_remains():
+    for name in ("records/bookings.html", "dashboard.html"):
+        source = (ROOT / "templates" / name).read_text(encoding="utf-8")
+        assert "'%m/%Y'" not in source, name

@@ -52,6 +52,17 @@ Fehler an vier weiteren Stellen zum Vorschein kam. Einzelheiten in
 - Die Fußnote der Benutzerauswertung beschrieb noch die Rechnung
   „Arbeitstage (Mo–Fr) × Tagessoll"; gerechnet wird seit 0.20.3 über den
   Arbeitszeitplan.
+- **Rücknahmeanfragen ließen sich nicht entscheiden.** Die Schaltflächen
+  „Rücknahme bestätigen" und „Ablehnen" unter Administration → Freigaben saßen
+  als einzige der Seite in einem Formular **ohne CSRF-Token**. Da die Prüfung
+  für jede zustandsändernde Anfrage greift, endete jeder Klick auf
+  „403 – Ungültige Sitzung", und ein zurückgezogener Urlaub blieb dauerhaft in
+  „Rücknahme angefragt" hängen – die Tage waren zurückgegeben, die Abwesenheit
+  stand weiter im Kalender. Ein Test prüft jetzt **jedes** POST-Formular aller
+  Vorlagen auf ein Token.
+- Über der Buchungsseite und in der Monatszusammenfassung des Dashboards stand
+  noch „06/2026" statt „Juni 2026"; die deutschen Monatsnamen aus 0.20.1 hatten
+  diese beiden Überschriften nicht erreicht.
 
 ### Datenbankänderungen
 Keine. Die Schemaversion bleibt bei 23.

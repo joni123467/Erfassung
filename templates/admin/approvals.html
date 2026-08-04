@@ -127,7 +127,13 @@
                         <td>{% if vacation.use_overtime %}{{ vacation.overtime_minutes|format_minutes }} Std{% else %}–{% endif %}</td>
                         <td>{{ vacation.comment or '-' }}</td>
                         <td class="actions">
+                            {# Ohne dieses Feld beantwortet die CSRF-Prüfung jeden Klick
+                               mit „403 – Ungültige Sitzung": Sie greift für jede
+                               zustandsändernde Anfrage. Bis 0.20.7 fehlte es hier als
+                               einzigem Formular der Seite, womit sich eine
+                               Rücknahmeanfrage überhaupt nicht entscheiden ließ. #}
                             <form method="post" action="/admin/vacations/{{ vacation.id }}/status" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                                 <button type="submit" name="action" value="approve_withdraw" class="button small">Rücknahme bestätigen</button>
                                 <button type="submit" name="action" value="deny_withdraw" class="button danger small">Ablehnen</button>
                             </form>
