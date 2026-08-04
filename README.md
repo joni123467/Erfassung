@@ -2,7 +2,21 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.7`
+**Version:** `0.20.8`
+
+> Seit 0.20.8: **Tätigkeitsbeschreibungen lassen sich nachtragen.** Unter
+> *Buchungen* trägt jede eigene Buchung ein Kommentarfeld, unter *Urlaub* jeder
+> eigene Antrag – auch ein bereits genehmigter. Bisher ging das nur an der
+> zuletzt beendeten Buchung des laufenden Tages; am Monatsende oder bei einer
+> Buchung vom Terminal half nur die Administration. Geändert wird
+> ausschließlich der Kommentar; Zeiten, Firma, Status und Zeitraum bleiben
+> unberührt, abgerechnete Perioden gesperrt, und jede Änderung steht in der
+> Revisionshistorie bzw. im Auditlog. Kein neues Recht – `Own.Comment.Edit`
+> steuert jetzt beide Wege. **Nebenbefund aus dem Testlauf:** Eine Buchung über
+> null Minuten (Start gleich Ende) belegte in der Überschneidungsprüfung
+> **24 Stunden** und sperrte damit den Rest des Tages – wer „Auftrag beenden"
+> drückte, dessen Arbeitszeit lief dann nicht weiter. Behoben. Details in
+> [`docs/RELEASE_NOTES_0.20.8.md`](docs/RELEASE_NOTES_0.20.8.md).
 
 > Seit 0.20.7: **Sollzeiten folgen überall dem Arbeitszeitplan, und der
 > Urlaubsbereich lässt sich in beide Richtungen bedienen.** „Woche im Blick"
@@ -889,9 +903,34 @@ Begründung**. Für Änderung, Ablehnung und Stornierung ist die Begründung
 **Pflicht** – ohne sie lehnt der Server ab; das Formular unter *Freigaben* hat
 dafür ein eigenes Feld. Historisiert werden auch das **Beenden** einer
 laufenden Buchung („Beendet" – kein Korrekturvorgang, deshalb ohne
-Begründung) und der **Kommentar-Nachtrag** aus der Stempelansicht. Die
-Historie einer Buchung steht unter Administration → Auswertungen →
-*Historie*.
+Begründung) und der **Kommentar-Nachtrag** – aus der Stempelansicht wie aus
+der Buchungsübersicht. Die Historie einer Buchung steht unter Administration →
+Auswertungen → *Historie*.
+
+### Tätigkeitsbeschreibungen nachtragen (seit 0.20.8)
+
+Unter **Buchungen** trägt die Spalte *Kommentar* ein Eingabefeld: Jede eigene
+Buchung des gewählten Monats lässt sich damit nachträglich beschreiben, in
+jedem Status. Unter **Urlaub** gilt dasselbe für die eigenen Anträge, auch für
+bereits genehmigte – der Kommentar beschreibt, er entscheidet nicht.
+
+Bis 0.20.7 ging das nur an der zuletzt beendeten Buchung des **laufenden
+Tages** (Dashboard und App). Wer am Monatsende den Nachweis zusammenstellte
+oder eine Buchung vom Terminal beschreiben wollte, brauchte die
+Administration.
+
+Geändert wird ausschließlich der Kommentar:
+
+| | |
+|---|---|
+| Zeiten, Firma, Einsatzort, Status einer Buchung | unberührt – dafür gibt es `Time.Edit` und den Freigabeweg |
+| Zeitraum, Art, Status eines Antrags | unberührt – wer den Zeitraum ändern will, zieht zurück und stellt neu |
+| Fremde Buchungen und Anträge | abgewiesen, auch bei direkt geratener ID |
+| Abgerechnete (gesperrte) Perioden | kein Feld, sondern der Hinweis „Zeitraum abgerechnet" |
+
+Maßgeblich ist das vorhandene Recht `Own.Comment.Edit`; ein neues kommt nicht
+hinzu. Buchungen landen in der Revisionshistorie, Anträge (die keine
+Revisionstabelle haben) mit altem und neuem Text im Auditlog.
 
 ### Wo stornierte Buchungen stehen
 

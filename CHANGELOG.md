@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.20.8] – 2026-08-03
+
+Tätigkeitsbeschreibungen lassen sich nachtragen. Einzelheiten in
+[`docs/RELEASE_NOTES_0.20.8.md`](docs/RELEASE_NOTES_0.20.8.md).
+
+### Hinzugefügt
+- **Kommentar einer eigenen Buchung nachträglich bearbeiten** – unter
+  *Buchungen* an jeder eigenen Buchung des gewählten Monats, in jedem Status.
+  Bisher ging das nur an der zuletzt beendeten Buchung des **laufenden Tages**
+  (Dashboard und App); wer die Tätigkeit später beschreiben wollte – am
+  Monatsende für den Nachweis oder bei einer Buchung vom Terminal –, brauchte
+  dafür die Administration.
+- **Kommentar eines eigenen Abwesenheitsantrags nachträglich bearbeiten** –
+  unter *Urlaub*, auch bei bereits genehmigten Anträgen. Der Kommentar
+  beschreibt, er entscheidet nicht.
+- Zwei neue Endpunkte: `POST /records/entries/{entry_id}/note` und
+  `POST /vacations/{vacation_id}/comment`.
+
+### Geändert
+- Das seit Langem vorhandene Recht `Own.Comment.Edit` steuert jetzt beide
+  Wege, nicht mehr nur den über das Dashboard. Ein neues Recht kommt nicht
+  hinzu; wer es hat, bekommt die Felder ohne Zutun.
+
+### Sicherheit und Nachvollziehbarkeit
+- Geändert wird ausschließlich der Kommentar. Zeiten, Firma, Einsatzort,
+  Status, Zeitraum und Abwesenheitsart bleiben unberührt.
+- Fremde Buchungen und Anträge werden abgewiesen, auch bei direkt geratener ID.
+- In einer abgerechneten (gesperrten) Periode erscheint gar kein Feld, sondern
+  der Hinweis „Zeitraum abgerechnet"; der Schreibpfad weist zusätzlich ab.
+- Buchungen landen über `crud.update_time_entry_notes` in der
+  Revisionshistorie (Vorher/Nachher). Anträge haben keine Revisionstabelle –
+  ihre Änderung geht mit altem und neuem Text ins Auditlog.
+
+### Fehlerbehebungen
+- **Eine Buchung über null Minuten sperrte 24 Stunden.**
+  `crud._entry_bounds` behandelte ein Ende **gleich** dem Beginn wie eine
+  Schicht über Mitternacht (`end_dt <= start_dt` → plus ein Tag). Eine Buchung
+  von 15:42 bis 15:42 belegte damit den Zeitraum bis 15:42 des Folgetags.
+
+  Wer einen Auftrag startete und ihn in derselben Minute wieder beendete –
+  Fehlklick oder schnelle Korrektur –, konnte danach den ganzen Tag und den
+  folgenden Vormittag nichts mehr buchen. Vor allem: „Auftrag beenden" startet
+  unmittelbar die normale Arbeitszeit weiter, und genau dieser Anschluss
+  scheiterte an der eben geschlossenen Buchung – die **Arbeitszeit lief nicht
+  weiter**, sichtbar nur als Überschneidungsmeldung.
+
+  Jetzt gilt der strikte Vergleich (`end_dt < start_dt`): Ein Ende **vor** dem
+  Beginn bleibt eine Schicht über Mitternacht, ein Ende **gleich** dem Beginn
+  sind null Minuten. `worktime.entry_bounds` – die Quelle aller Dauern –
+  rechnete an derselben Stelle schon immer so; beide stimmen wieder überein.
+
+  Gefunden wurde der Fehler durch einen sporadisch fehlschlagenden Test des
+  Lizenzverhaltens; er hing an der Uhrzeit, nicht am Lizenzcode.
+
+### Datenbankänderungen
+Keine. Die Schemaversion bleibt bei 23.
+
+### Migrationshinweise
+Keine Migration nötig. Es ändern sich keine gespeicherten Daten. Bereits
+gespeicherte Nullminuten-Buchungen blockieren ab sofort nichts mehr; sie
+bleiben unverändert stehen und zählen wie bisher null Minuten.
+
 ## [0.20.7] – 2026-08-03
 
 Behebt fünf gemeldete Fehler im Urlaubsbereich und in der Benutzerverwaltung.

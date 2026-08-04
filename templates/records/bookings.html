@@ -150,7 +150,34 @@
                         {% endif %}
                     </td>
                     <td>{{ 'Manuell' if entry.is_manual else 'Automatisch' }}</td>
-                    <td>{{ entry.notes or '-' }}</td>
+                    {# Tätigkeitsbeschreibung nachtragen (ab 0.20.8). Das Formular
+                       steht leer im Raster und traegt seine Felder ueber das
+                       Attribut ``form`` – so bleibt die Tabellenzeile gueltiges
+                       HTML. Ohne das Recht oder in einer abgerechneten Periode
+                       bleibt es beim reinen Text. #}
+                    <td class="entry-note">
+                        {% if can_edit_own_notes and entry.work_date not in locked_dates %}
+                            <form method="post" id="note-{{ entry.id }}"
+                                  action="/records/entries/{{ entry.id }}/note"></form>
+                            <input type="hidden" name="csrf_token" form="note-{{ entry.id }}"
+                                   value="{{ get_csrf_token(request) }}">
+                            <input type="hidden" name="month" form="note-{{ entry.id }}"
+                                   value="{{ month_value }}">
+                            <div class="entry-note__row">
+                                <input type="text" name="notes" form="note-{{ entry.id }}"
+                                       value="{{ entry.notes or '' }}" maxlength="255"
+                                       placeholder="Tätigkeit beschreiben …"
+                                       aria-label="Kommentar zur Buchung vom {{ entry.work_date|german_date }}">
+                                <button type="submit" form="note-{{ entry.id }}"
+                                        class="button ghost small">Speichern</button>
+                            </div>
+                        {% else %}
+                            {{ entry.notes or '-' }}
+                            {% if can_edit_own_notes %}
+                                <span class="status-note">Zeitraum abgerechnet</span>
+                            {% endif %}
+                        {% endif %}
+                    </td>
                 </tr>
             {% else %}
                 <tr><td colspan="9">Keine Buchungen im ausgewählten Zeitraum gefunden.</td></tr>
