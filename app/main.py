@@ -2930,6 +2930,56 @@ def submit_vacation(
     return _sync_result(request, target=vac_target, message="Urlaubsantrag erstellt")
 
 
+@app.post("/vacations/{vacation_id}/comment")
+def update_own_vacation_comment(
+    request: Request,
+    vacation_id: int,
+    comment: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    """Kommentar eines **eigenen** Abwesenheitsantrags nachtragen.
+
+    Derselbe Gedanke wie bei den Buchungen: Wer die Abwesenheit beantragt hat,
+    darf sie auch nachträglich beschreiben – etwa den Grund einer Sonderabwesenheit
+    ergänzen, den man beim Stellen des Antrags noch nicht kannte.
+
+    Geändert wird ausschließlich der Kommentar. Zeitraum, Art und Status
+    bleiben unberührt; wer den Zeitraum ändern will, zieht den Antrag zurück
+    und stellt ihn neu. Der Vorgang wird auditiert – ein Antrag ist ein
+    Nachweis, und eine stille Änderung daran wäre keiner.
+    """
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_edit_own_notes(user):
+        return RedirectResponse(
+            url=_build_redirect(
+                "/records/vacations",
+                error="Du darfst Kommentare nicht nachträglich bearbeiten.",
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    vacation = crud.get_vacation_request(db, vacation_id)
+    if not vacation or vacation.user_id != user.id:
+        return RedirectResponse(
+            url=_build_redirect("/records/vacations", error="Antrag nicht gefunden."),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    previous = vacation.comment or ""
+    vacation.comment = (comment or "").strip()[:255]
+    db.commit()
+    if previous != vacation.comment:
+        logging_setup.log_audit(
+            "Kommentar am Abwesenheitsantrag geändert",
+            user=user,
+            detail=f"antrag={vacation_id}; vorher={previous!r}; nachher={vacation.comment!r}",
+        )
+    return RedirectResponse(
+        url=_build_redirect("/records/vacations", msg="Kommentar gespeichert."),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @app.post("/vacations/{vacation_id}/withdraw")
 def withdraw_vacation_request(
     request: Request,
@@ -3057,8 +3107,62 @@ def records_bookings_page(request: Request, db: Session = Depends(database.get_d
             "month_value": month_value,
             "company_filter_id": company_filter_id,
             "company_filter_none": company_filter_none,
+            "can_edit_own_notes": _can_edit_own_notes(user),
+            # Abgerechnete Zeiträume bleiben unangetastet. Die Sperre steht
+            # ohnehin im Schreibpfad (``crud.ensure_period_open``); hier wird
+            # sie nur vorweggenommen, damit gar kein Feld erscheint, das beim
+            # Absenden abgewiesen würde.
+            "locked_dates": {
+                entry.work_date
+                for entry in entries
+                if crud.locking_period(db, entry.work_date) is not None
+            },
         },
     )
+
+
+@app.post("/records/entries/{entry_id}/note")
+def update_own_entry_note(
+    request: Request,
+    entry_id: int,
+    notes: str = Form(""),
+    month: str = Form(""),
+    db: Session = Depends(database.get_db),
+):
+    """Tätigkeitsbeschreibung einer **eigenen** Buchung nachtragen.
+
+    Bis 0.20.7 ging das nur für die zuletzt beendete Buchung des laufenden
+    Tages – wer den Kommentar später ergänzen wollte, brauchte die
+    Administration. Beschrieben wird die eigene Arbeit; wer sie geleistet hat,
+    kann sie auch benennen.
+
+    Bewusst eng gefasst: nur die eigenen Buchungen, nur der Kommentar. Zeiten,
+    Firma und Status bleiben unberührt – dafür gibt es ``Time.Edit`` und den
+    Freigabeweg. Die Änderung wird wie jede andere historisiert
+    (``crud.update_time_entry_notes``), abgerechnete Zeiträume bleiben
+    gesperrt.
+    """
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    def back(**params: str) -> RedirectResponse:
+        # Der gewählte Monat gehört in jede Rückkehr, sonst landet man nach dem
+        # Speichern im laufenden Monat statt bei der bearbeiteten Buchung.
+        return RedirectResponse(
+            url=_build_redirect("/records", month=month, **params),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    if not _can_edit_own_notes(user):
+        return back(error="Du darfst Kommentare nicht nachträglich bearbeiten.")
+    entry = crud.get_time_entry(db, entry_id)
+    if not entry or entry.user_id != user.id:
+        return back(error="Buchung nicht gefunden.")
+    try:
+        crud.update_time_entry_notes(db, entry, notes.strip(), actor=user)
+    except crud.PeriodLocked as exc:
+        return back(error=str(exc))
+    return back(msg="Kommentar gespeichert.")
 
 
 @app.get("/records/vacations", response_class=HTMLResponse)
@@ -3084,6 +3188,7 @@ def records_vacations_page(request: Request, db: Session = Depends(database.get_
             "vacations": vacations, "vacation_summary": vacation_summary,
             "pending_vacations": pending_vacations,
             "can_request_vacations": _can_request_vacations(user),
+            "can_edit_own_notes": _can_edit_own_notes(user),
             "can_team_calendar": permission_service.has(user, "Vacation.TeamCalendar"),
             "absence_types": db.query(models.AbsenceType).filter(models.AbsenceType.active.is_(True)).order_by(models.AbsenceType.label).all(),
         },

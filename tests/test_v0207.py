@@ -157,8 +157,8 @@ def _entry(day: date, start: time, end: time, *, user_id: int | None = None):
 
 
 def test_version_is_0207(client):
-    assert client.app.version == "0.20.7"
-    assert client.get("/health").json()["version"] == "0.20.7"
+    assert client.app.version == "0.20.8"
+    assert client.get("/health").json()["version"] == "0.20.8"
 
 
 # ── 1. Reiter des Urlaubsbereichs auf jeder Seite ─────────────────────────

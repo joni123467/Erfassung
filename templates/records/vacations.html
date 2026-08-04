@@ -142,7 +142,26 @@
                             –
                         {% endif %}
                     </td>
-                    <td>{{ vacation.comment or '-' }}</td>
+                    {# Kommentar nachtragen (ab 0.20.8) – wie bei den Buchungen.
+                       Zeitraum, Art und Status bleiben unberührt. #}
+                    <td class="entry-note">
+                        {% if can_edit_own_notes %}
+                            <form method="post" id="vacation-note-{{ vacation.id }}"
+                                  action="/vacations/{{ vacation.id }}/comment"></form>
+                            <input type="hidden" name="csrf_token" form="vacation-note-{{ vacation.id }}"
+                                   value="{{ get_csrf_token(request) }}">
+                            <div class="entry-note__row">
+                                <input type="text" name="comment" form="vacation-note-{{ vacation.id }}"
+                                       value="{{ vacation.comment or '' }}" maxlength="255"
+                                       placeholder="Anlass beschreiben …"
+                                       aria-label="Kommentar zum Antrag ab {{ vacation.start_date|german_date }}">
+                                <button type="submit" form="vacation-note-{{ vacation.id }}"
+                                        class="button ghost small">Speichern</button>
+                            </div>
+                        {% else %}
+                            {{ vacation.comment or '-' }}
+                        {% endif %}
+                    </td>
                     <td class="actions">
                         {% if vacation.status in ['pending', 'approved'] %}
                             <form method="post" action="/vacations/{{ vacation.id }}/withdraw" class="inline-form">
