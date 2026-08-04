@@ -74,7 +74,7 @@ Ein Nachtrag ist eine Änderung und wird als solche festgehalten:
 
 ## Tests
 
-`tests/test_v0208.py` (28 Tests):
+`tests/test_v0208.py` (34 Tests, davon sechs zum Nebenbefund weiter unten):
 
 - Das Feld erscheint, trägt den aktuellen Text und hat ein CSRF-Token.
 - Nachtragen, Ersetzen und Leeren wirken; die Monatsauswahl überlebt.
