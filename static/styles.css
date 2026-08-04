@@ -4100,6 +4100,39 @@ tr.company-deleted td {
     align-items: flex-start;
 }
 
+/* Taetigkeitsbeschreibung nachtragen – Buchungen und Abwesenheiten (0.20.8).
+   Eingabefeld und Schaltflaeche stehen nebeneinander in der Kommentarspalte;
+   auf schmalen Bildschirmen untereinander. */
+.entry-note {
+    min-width: 16rem;
+}
+
+.entry-note__row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.entry-note__row input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 8rem;
+}
+
+.entry-note__row .button {
+    flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+    .entry-note {
+        min-width: 12rem;
+    }
+
+    .entry-note__row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
 @media (max-width: 720px) {
     .location-table__city {
         grid-template-columns: 1fr;

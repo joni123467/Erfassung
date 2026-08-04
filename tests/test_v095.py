@@ -113,8 +113,8 @@ def _wait_terminal(timeout=60.0):
 # --- version ---------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.20.7"
-    assert client.get("/health").json()["version"] == "0.20.7"
+    assert client.main.APP_VERSION == "0.20.8"
+    assert client.get("/health").json()["version"] == "0.20.8"
 
 
 # --- async restore: no 500, runs in background -----------------------------

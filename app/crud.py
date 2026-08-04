@@ -393,12 +393,28 @@ def get_time_entry_by_external_reference(
 
 
 def _entry_bounds(work_date: date, start_time: time, end_time: time, is_open: bool) -> tuple[datetime, datetime]:
+    """Zeitraum einer Buchung für die Überschneidungsprüfung.
+
+    Ein Ende **vor** dem Beginn heißt: die Schicht läuft über Mitternacht, das
+    Ende liegt am Folgetag. Ein Ende **gleich** dem Beginn heißt dagegen genau
+    das, was dasteht – eine Buchung über null Minuten.
+
+    Bis 0.20.7 stand hier ``<=``, und eine Buchung mit gleicher Start- und
+    Endzeit belegte damit **24 Stunden**. Wer einen Auftrag versehentlich in
+    derselben Minute startete und beendete, konnte danach den ganzen Tag und
+    den folgenden Vormittag nichts mehr buchen: „Zeitraum überschneidet sich
+    mit einer vorhandenen Buchung." Beim automatischen Weiterlaufen der
+    Arbeitszeit nach „Auftrag beenden" traf es sogar unmittelbar.
+
+    ``worktime.entry_bounds`` – die Quelle für alle Dauern – rechnete an
+    derselben Stelle schon immer mit ``<``. Jetzt stimmen beide überein.
+    """
     start_dt = datetime.combine(work_date, start_time)
     if is_open:
         current_end = max(datetime.now(), start_dt + timedelta(seconds=1))
         return start_dt, current_end
     end_dt = datetime.combine(work_date, end_time)
-    if end_dt <= start_dt:
+    if end_dt < start_dt:
         end_dt += timedelta(days=1)
     return start_dt, end_dt
 
