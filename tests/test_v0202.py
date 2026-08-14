@@ -450,11 +450,22 @@ def test_server_refuses_a_reversed_period_in_the_form(client):
 
 
 def test_migration_23_is_the_last_entry(main):
+    """Migration 23 bleibt, wo sie ist – und die Liste wächst nur am Ende.
+
+    Bis 0.20.8 war 23 zugleich die letzte Migration. Seit 0.20.9 folgt 24
+    (Angleichung der UTC-Stempel an die Ortszeiten). Geprüft wird deshalb
+    beides: dass 23 unverändert an ihrer Stelle steht – eine veröffentlichte
+    Migration wird nie umnummeriert – und dass am Ende die jeweils neueste
+    steht, damit ein zusätzlicher Eintrag nicht unbemerkt hineinrutscht.
+    """
     from app import db_migrations
 
+    by_version = dict(db_migrations.MIGRATIONS)
+    assert by_version[23] is db_migrations._add_planning_and_calendar
+
     version, function = db_migrations.MIGRATIONS[-1]
-    assert version == 23
-    assert function is db_migrations._add_planning_and_calendar
+    assert version == 24
+    assert function is db_migrations._repair_time_entry_utc_stamps
 
 
 def test_columns_exist_after_startup(main):
