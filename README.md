@@ -2,7 +2,20 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.8`
+**Version:** `0.20.9`
+
+> Seit 0.20.9: **Ein überschreibender Nachtrag wird nicht mehr doppelt
+> gezählt.** Wurde eine Buchung durch einen Nachtrag geteilt oder gekürzt,
+> setzte die Anwendung bis 0.20.8 nur die **Ortszeiten** um, nicht die
+> UTC-Stempel `started_at_utc`/`ended_at_utc`. Da die zentrale
+> Dauerberechnung (`app/worktime.py`) diese Stempel bevorzugt, zählte der
+> gekürzte Rest weiter seine ursprüngliche Länge: Aus einer Buchung von
+> 08:00 bis 15:42 wurden in „Woche im Blick" 10:46 Std statt 7:42. Betroffen
+> waren auch Tages- und Monatssumme, Saldo, PDF- und Excel-Export. Die
+> Stempel hängen jetzt über ein Mapper-Ereignis an den Ortszeiten und können
+> nicht mehr auseinanderlaufen – auch nicht in künftigem Code. Migration 24
+> gleicht bereits gespeicherte Buchungen an. Details in
+> [`docs/RELEASE_NOTES_0.20.9.md`](docs/RELEASE_NOTES_0.20.9.md).
 
 > Seit 0.20.8: **Tätigkeitsbeschreibungen lassen sich nachtragen.** Unter
 > *Buchungen* trägt jede eigene Buchung ein Kommentarfeld, unter *Urlaub* jeder
@@ -1213,6 +1226,22 @@ Sie gilt für das ganze Unternehmen; ein Kundenstandort ändert sie nicht. Eine
 `tz_name` mit sich und werden nicht umgeschrieben, sonst verschöben sich
 vergangene Zeiten rückwirkend. Jede Änderung wird auditiert; eine unbekannte
 Zone wird abgelehnt und die bisherige bleibt bestehen.
+
+**Ortszeit und UTC-Stempel bleiben gekoppelt (seit 0.20.9).** Weil
+`app/worktime.py` die UTC-Stempel **bevorzugt** und nur ohne sie aus
+`work_date`/`start_time`/`end_time` rechnet, dürfen die beiden Darstellungen
+nie auseinanderlaufen. Bis 0.20.8 taten sie das: Wurde eine Buchung durch einen
+Nachtrag geteilt (`crud._split_closed_entry`), beim überschreibenden Bearbeiten
+gekürzt oder geteilt (`crud._apply_overwrite`) oder die laufende Buchung
+aufgetrennt, wurden nur die Ortszeiten umgesetzt. Der gekürzte Rest zählte
+weiter seine ursprüngliche Länge – aus 08:00–15:42 wurden in „Woche im Blick"
+10:46 Std statt 7:42. Seit 0.20.9 hängt ein Mapper-Ereignis in `app/models.py`
+(`before_insert`/`before_update`) die Stempel an die Ortszeiten. Kein Aufrufer
+muss daran denken, und künftiger Code erbt die Zusicherung. Ein ausdrücklich
+mitgegebener Stempel behält Vorrang: Beim Ein- und Ausstempeln kennt die
+Anwendung den Zeitpunkt sekundengenau. Migration 24 gleicht bereits
+gespeicherte Buchungen an – nur solche mit hinterlegtem `tz_name`, denn ohne
+die damals gültige Zone wäre jede Umrechnung geraten.
 
 ### Bestand bleibt
 

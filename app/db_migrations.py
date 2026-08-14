@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -35,6 +35,47 @@ MigrationFn = Callable[[Engine], None]
 
 def _baseline(_engine: Engine) -> None:
     """Ausgangspunkt der Zählung; hält den Platz für spätere Schritte frei."""
+    return None
+
+
+#: Rohwerte aus ``text()``-Abfragen sind je nach Treiber schon Datums-/
+#: Zeitobjekte (PostgreSQL, MySQL) oder noch Zeichenketten (SQLite). Die drei
+#: Helfer machen daraus einheitlich Python-Objekte, damit eine Migration nicht
+#: pro Dialekt anders rechnen muss.
+def _as_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _as_time(value: object) -> time | None:
+    if isinstance(value, datetime):
+        return value.time()
+    if isinstance(value, time):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return time.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _as_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value).replace(tzinfo=None)
+        except ValueError:
+            return None
     return None
 
 
@@ -902,6 +943,73 @@ def _add_planning_and_calendar(engine: Engine) -> None:
                         overtime=row[4], credit=row[5], confidential=row[6]))
 
 
+def _repair_time_entry_utc_stamps(engine: Engine) -> None:
+    """Stehengebliebene UTC-Stempel an die Ortszeiten angleichen (0.20.9).
+
+    Bis 0.20.8 setzten das Überschreiben und das Teilen einer Buchung nur
+    ``work_date``/``start_time``/``end_time`` um, nicht aber ``started_at_utc``
+    und ``ended_at_utc``. Da ``app.worktime.entry_bounds`` die UTC-Stempel
+    **bevorzugt**, zählte der gekürzte Rest weiter seine ursprüngliche Länge:
+    Tages-, Wochen- und Monatssummen wiesen die ersetzte Zeit ein zweites Mal
+    aus. Neue Änderungen hält ab 0.20.9 ein Mapper-Ereignis in ``app.models``
+    zusammen – die bereits gespeicherten Buchungen repariert dieser Schritt.
+
+    Angefasst werden ausschließlich Buchungen mit hinterlegter Zeitzone
+    (``tz_name``), deren Stempel von den Ortszeiten abweichen. Ortszeit ist
+    dabei die Wahrheit: Sie steht in jeder Ansicht, im Export und im Nachweis.
+    Buchungen ohne ``tz_name`` bleiben unberührt – für sie ließe sich die
+    damals gültige Zone nicht rekonstruieren, und Raten wäre schlechter als
+    Nichtstun. Der Schritt ist datenerhaltend (er ändert nur zwei abgeleitete
+    Spalten) und beliebig oft wiederholbar: Beim zweiten Lauf stimmen die
+    Werte bereits und es wird nichts geschrieben.
+    """
+    if not db_schema.has_table(engine, "time_entries"):
+        return
+    for column in ("started_at_utc", "ended_at_utc", "tz_name"):
+        if not db_schema.has_column(engine, "time_entries", column):
+            return
+
+    from . import worktime
+
+    with engine.begin() as connection:
+        rows = connection.execute(text(
+            "SELECT id, work_date, start_time, end_time, is_open, tz_name, "
+            "started_at_utc, ended_at_utc FROM time_entries WHERE tz_name IS NOT NULL"
+        )).mappings().all()
+        repaired = 0
+        for row in rows:
+            work_date = _as_date(row["work_date"])
+            start_time = _as_time(row["start_time"])
+            if work_date is None or start_time is None:
+                continue
+            end_time = _as_time(row["end_time"])
+            is_open = bool(row["is_open"])
+            tz = worktime.zone(row["tz_name"])
+            start_local = datetime.combine(work_date, start_time)
+            started = worktime.from_local(start_local, tz)
+            started = started.replace(tzinfo=None) if started else None
+            ended = None
+            if not is_open and end_time is not None:
+                end_local = datetime.combine(work_date, end_time)
+                if end_local < start_local:
+                    end_local += timedelta(days=1)
+                converted = worktime.from_local(end_local, tz)
+                ended = converted.replace(tzinfo=None) if converted else None
+            if (_as_datetime(row["started_at_utc"]) == started
+                    and _as_datetime(row["ended_at_utc"]) == ended):
+                continue
+            connection.execute(
+                text(
+                    "UPDATE time_entries SET started_at_utc = :started, "
+                    "ended_at_utc = :ended WHERE id = :id"
+                ),
+                {"started": started, "ended": ended, "id": row["id"]},
+            )
+            repaired += 1
+    if repaired:
+        LOGGER.info("UTC-Stempel von %s Buchungen an die Ortszeiten angeglichen", repaired)
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -926,6 +1034,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (21, _add_user_deactivation),
     (22, _add_employment_period),
     (23, _add_planning_and_calendar),
+    (24, _repair_time_entry_utc_stamps),
 ]
 
 

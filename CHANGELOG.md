@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.20.9] – 2026-08-14
+
+Ein überschreibender Nachtrag wird nicht mehr doppelt gezählt. Einzelheiten in
+[`docs/RELEASE_NOTES_0.20.9.md`](docs/RELEASE_NOTES_0.20.9.md).
+
+### Fehlerbehebungen
+- **„Woche im Blick" (und jede andere Summe) zählte eine ersetzte Zeit ein
+  zweites Mal.** Gemeldet wurde eine Buchung von 08:00 bis 15:42, für die
+  **10:46 Std** ausgewiesen wurden; richtig sind 7:42. Die Ursache lag nicht in
+  der Wochenansicht: `app/worktime.py` – die einzige Dauerberechnung der
+  Anwendung – liest **bevorzugt** die Spalten `started_at_utc`/`ended_at_utc`
+  und rechnet nur ohne diese Stempel aus `work_date`/`start_time`/`end_time`.
+  Drei Stellen setzten beim Kürzen und Teilen einer Buchung aber ausschließlich
+  die Ortszeiten um:
+  - `crud._split_closed_entry` – Nachtrag innerhalb einer abgeschlossenen
+    Buchung,
+  - `crud._apply_overwrite` – kürzen, teilen und verdrängen beim
+    überschreibenden Bearbeiten (Verwaltung),
+  - der Zweig für die laufende Buchung in `crud.create_manual_time_entry`.
+
+  Der gekürzte Rest zählte damit weiter seine ursprüngliche Länge. Betroffen
+  waren Tages-, Wochen- und Monatssumme, der Saldo, die Über-/Minusstunden,
+  die Regelprüfung sowie PDF- und Excel-Export – überall dieselbe Zahl, weil
+  überall dieselbe Quelle.
+
+### Geändert
+- **Ortszeit und UTC-Stempel sind jetzt gekoppelt.** Ein Mapper-Ereignis in
+  `app/models.py` (`before_insert`/`before_update` auf `TimeEntry`) setzt
+  `started_at_utc`/`ended_at_utc` bei **jeder** Änderung von `work_date`,
+  `start_time`, `end_time` oder `is_open` neu aus den Ortszeiten. Damit kann
+  der Fehler auch in künftigem Code nicht wieder entstehen; kein Aufrufer muss
+  an die Stempel denken.
+- Ein **ausdrücklich** mitgegebener Stempel behält Vorrang – beim Ein- und
+  Ausstempeln kennt `crud` den Zeitpunkt sekundengenau, und diese genauere
+  Angabe darf nicht durch eine gröbere ersetzt werden.
+- Eine **laufende** Buchung hat kein Ende: Wird sie wieder geöffnet, wird
+  `ended_at_utc` geleert.
+- Eine **neu** angelegte Buchung ohne eigene Zeitzone bekommt die aktuelle
+  Betriebszeitzone als `tz_name` und vollständige Stempel. Bestandsbuchungen
+  bekommen bewusst nichts nachgetragen.
+
+### Datenbankänderungen
+- **Keine Schemaänderung.** Es kommen keine Tabellen, Spalten, Typen,
+  Beziehungen oder Indizes hinzu; `ensure_schema()` bleibt unverändert.
+
+### Migrationshinweise
+- **Migration 24** (`_repair_time_entry_utc_stamps`) gleicht bereits
+  gespeicherte Buchungen an: Wo die UTC-Stempel von den Ortszeiten abweichen,
+  werden sie aus den Ortszeiten neu gesetzt. Ortszeit ist dabei die Wahrheit –
+  sie steht in jeder Ansicht, im Export und im Nachweis.
+- Angefasst werden **ausschließlich** Buchungen mit hinterlegtem `tz_name`.
+  Ohne die damals gültige Zone ließe sich nichts rekonstruieren, und ein
+  geratener Wert wäre in einem Arbeitszeitnachweis schlechter als eine
+  unveränderte Zeile.
+- Portabel (SQLite, MySQL/MariaDB, PostgreSQL), datenerhaltend – geändert
+  werden nur zwei abgeleitete Spalten – und beliebig oft wiederholbar: Beim
+  zweiten Lauf stimmen die Werte bereits und es wird nichts geschrieben.
+- Die Zahl der angeglichenen Buchungen steht im Anwendungslog.
+
+### Tests
+- Neu: `tests/test_v0209.py` mit 20 Tests. Sie decken den gemeldeten Fall
+  minutengenau (08:00–15:42 plus Nachtrag ab 12:38 → 7:42 statt 10:46), die
+  Wochenansicht, das überschreibende Kürzen und Teilen, den Nachtrag in die
+  laufende Buchung, Nachtarbeit über Mitternacht, die Migration (auch
+  Wiederholbarkeit und Buchungen ohne Zeitzone) sowie den Weg über das
+  Formular. 11 davon schlagen gegen den Stand von 0.20.8 fehl.
+- Eine dieser Prüfungen ist bewusst allgemein gehalten: Für **jede**
+  abgeschlossene Buchung in der Datenbank muss die gerechnete Dauer der aus den
+  Ortszeiten abgeleiteten entsprechen.
+
 ## [0.20.8] – 2026-08-03
 
 Tätigkeitsbeschreibungen lassen sich nachtragen. Einzelheiten in

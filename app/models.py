@@ -17,6 +17,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     Index,
+    event,
 )
 from sqlalchemy.orm import relationship
 
@@ -760,6 +761,97 @@ class TimeEntry(Base):
         if self.location_id is None or self.location is None:
             return ""
         return self.location.address_line
+
+
+#: Ortszeitfelder einer Buchung. Ändert sich eines davon, müssen die
+#: UTC-Stempel mitwandern – siehe :func:`_sync_time_entry_stamps`.
+_LOCAL_TIME_FIELDS = ("work_date", "start_time", "end_time", "is_open")
+
+
+def _local_stamps(entry: "TimeEntry") -> tuple[Optional[datetime], Optional[datetime]]:
+    """Beginn und Ende einer Buchung als **naive UTC-Werte** aus ihren Ortszeiten.
+
+    Dieselbe Rechnung wie die Rückfallebene in :func:`app.worktime.entry_bounds`
+    – inklusive Mitternachtsübergang (Ende vor Beginn ⇒ Folgetag). Eine laufende
+    Buchung hat kein Ende; ihr Stempel bleibt ``NULL``.
+    """
+    if entry.work_date is None or entry.start_time is None:
+        return None, None
+    tz = worktime.zone(entry.tz_name)
+    start_local = datetime.combine(entry.work_date, entry.start_time)
+    started = worktime.from_local(start_local, tz)
+    if entry.is_open or entry.end_time is None:
+        return (started.replace(tzinfo=None) if started else None), None
+    end_local = datetime.combine(entry.work_date, entry.end_time)
+    if end_local < start_local:
+        end_local += timedelta(days=1)
+    ended = worktime.from_local(end_local, tz)
+    return (
+        started.replace(tzinfo=None) if started else None,
+        ended.replace(tzinfo=None) if ended else None,
+    )
+
+
+def _sync_time_entry_stamps(mapper, connection, target: "TimeEntry") -> None:
+    """UTC-Stempel einer Buchung an ihre Ortszeiten binden (ab 0.20.9).
+
+    ``worktime.entry_bounds`` liest **bevorzugt** ``started_at_utc`` und
+    ``ended_at_utc``; nur ohne diese Stempel wird aus ``work_date`` und den
+    Uhrzeiten gerechnet. Wer also eine Buchung kürzt oder teilt und dabei nur
+    ``start_time``/``end_time`` umsetzt, ändert die Anzeige – nicht aber die
+    gerechnete Dauer. Genau das passierte beim Überschreiben durch einen
+    Nachtrag (``crud._split_closed_entry``, ``crud._apply_overwrite``, Teilen
+    der laufenden Buchung): Der gekürzte Rest zählte weiter seine volle
+    ursprüngliche Länge, und die Tages-, Wochen- und Monatssummen wiesen die
+    ersetzte Zeit ein zweites Mal aus (aus 08:00–15:42 wurden 10:46 Std).
+
+    Die Korrektur gehört an genau diese Stelle und nicht in die einzelnen
+    Aufrufer: Als Mapper-Ereignis greift sie **vor jedem** INSERT und UPDATE –
+    also auch für jeden Code, der erst noch geschrieben wird. Ortszeit und
+    UTC-Stempel können damit nicht mehr auseinanderlaufen.
+
+    Ein ausdrücklich mitgesetzter Stempel behält Vorrang: Beim Ein- und
+    Ausstempeln kennt ``crud`` den Zeitpunkt sekundengenau, das ist die
+    genauere Angabe. Überschrieben wird nur, was sonst veraltet zurückbliebe.
+    """
+    from sqlalchemy import inspect as _inspect
+
+    state = _inspect(target)
+    is_insert = state.key is None
+
+    def _explicitly_set(field: str) -> bool:
+        # Beim INSERT gilt jeder gesetzte Wert als ausdrücklich gewünscht.
+        if is_insert:
+            return getattr(target, field, None) is not None
+        return bool(state.attrs[field].history.has_changes())
+
+    local_changed = is_insert or any(
+        state.attrs[field].history.has_changes() for field in _LOCAL_TIME_FIELDS
+    )
+    if not local_changed:
+        return
+
+    if is_insert and not target.tz_name:
+        # Eine **neu** entstehende Buchung entsteht in der aktuellen
+        # Betriebszeitzone; ohne diesen Vermerk ließe sich ihr UTC-Stempel nach
+        # einer Zonenumstellung nicht mehr in die Ortszeit zurückrechnen.
+        # Bestandsbuchungen bekommen hier bewusst nichts nachgetragen – die
+        # damals gültige Zone ist nicht rekonstruierbar.
+        target.tz_name = worktime.timezone_name()
+
+    started, ended = _local_stamps(target)
+    if not _explicitly_set("started_at_utc"):
+        target.started_at_utc = started
+    if not _explicitly_set("ended_at_utc"):
+        target.ended_at_utc = ended
+    elif target.is_open:
+        # Eine laufende Buchung hat kein Ende – ein stehengebliebener Stempel
+        # würde sie sonst rückwirkend als beendet rechnen.
+        target.ended_at_utc = None
+
+
+event.listen(TimeEntry, "before_insert", _sync_time_entry_stamps)
+event.listen(TimeEntry, "before_update", _sync_time_entry_stamps)
 
 
 class BreakInterval(Base):
