@@ -567,6 +567,11 @@ def _split_closed_entry(
     die Attribute (Firma, Kommentar, Status, Quelle) bleiben erhalten. Die
     erfassten Pausenminuten bleiben beim ersten Abschnitt (oder – falls es
     keinen gibt – beim zweiten). So entstehen keine doppelt gezählten Zeiten.
+
+    Gesetzt werden hier nur die **Ortszeiten**. Die UTC-Stempel
+    (``started_at_utc``/``ended_at_utc``) zieht seit 0.20.9 das Mapper-Ereignis
+    ``models._sync_time_entry_stamps`` nach – bis 0.20.8 blieben sie stehen,
+    und der gekürzte Abschnitt zählte weiter seine ursprüngliche Länge.
     """
     _ensure_no_time_overlap(db, payload, exclude_id=existing.id)
 
@@ -708,6 +713,8 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
 
             # Laufende Buchung ab dem Ende des Nachtrags weiterlaufen lassen
             # (offene Einträge führen end_time als Platzhalter == start_time).
+            # Ihr ``started_at_utc`` wandert seit 0.20.9 automatisch mit –
+            # siehe ``models._sync_time_entry_stamps``.
             open_entry.work_date = new_end.date()
             open_entry.start_time = new_end.time()
             open_entry.end_time = new_end.time()
@@ -1234,6 +1241,9 @@ def _apply_overwrite(
     Seit 0.14.0 wird auch hier **nichts gelöscht**: Eine verdrängte Buchung
     wird storniert und bleibt mit ihrer Historie erhalten. Jede Kürzung und
     Teilung landet ebenfalls in der Historie.
+
+    Gesetzt werden hier nur die **Ortszeiten**; die UTC-Stempel zieht seit
+    0.20.9 ``models._sync_time_entry_stamps`` nach (siehe dort).
     """
     note = (reason or "").strip() or "Durch eine überschreibende Korrektur angepasst."
     for item in plan:

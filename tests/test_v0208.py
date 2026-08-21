@@ -190,8 +190,8 @@ def _second_person() -> int:
 
 
 def test_version_is_0208(client):
-    assert client.app.version == "0.20.8"
-    assert client.get("/health").json()["version"] == "0.20.8"
+    assert client.app.version == "0.20.9"
+    assert client.get("/health").json()["version"] == "0.20.9"
 
 
 # ── 1. Buchungen: das Feld ist da ─────────────────────────────────────────
