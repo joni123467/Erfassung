@@ -1397,6 +1397,12 @@ class Terminal(Base):
     # Driver key, e.g. "timemoto" (see app.integrations.terminals registry).
     type = Column(String(64), default="timemoto", nullable=False)
     active = Column(Boolean, default=True)
+    manufacturer = Column(String(128), default="")
+    model = Column(String(128), default="")
+    serial_number = Column(String(191), nullable=True, unique=True)
+    location = Column(String(255), default="")
+    firmware_version = Column(String(255), default="")
+    enrollment_status = Column(String(20), default="approved", nullable=False)
 
     host = Column(String(255), default="")
     port = Column(Integer, default=80)
@@ -1424,6 +1430,78 @@ class Terminal(Base):
     runs = relationship(
         "TerminalSyncRun", back_populates="terminal", cascade="all, delete-orphan"
     )
+    events = relationship("TerminalEvent", back_populates="terminal", cascade="all, delete-orphan")
+    identities = relationship(
+        "TerminalIdentity", back_populates="terminal", cascade="all, delete-orphan"
+    )
+
+
+class TerminalIdentity(Base):
+    """Zuordnung eines Mitarbeiters zur gerätespezifischen Benutzerkennung."""
+
+    __tablename__ = "terminal_identities"
+    __table_args__ = (
+        UniqueConstraint("terminal_id", "external_user_id", name="uq_terminal_external_user"),
+        UniqueConstraint("terminal_id", "user_id", name="uq_terminal_user"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    terminal_id = Column(Integer, ForeignKey("terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_user_id = Column(String(191), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    terminal = relationship("Terminal", back_populates="identities")
+    user = relationship("User")
+    cards = relationship("TerminalCard", back_populates="identity", cascade="all, delete-orphan")
+
+
+class TerminalCard(Base):
+    """Eine RFID-Karte; mehrere Karten je Terminalidentität sind möglich."""
+
+    __tablename__ = "terminal_cards"
+    __table_args__ = (
+        UniqueConstraint("terminal_id", "card_identifier", name="uq_terminal_card"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    terminal_id = Column(Integer, ForeignKey("terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    identity_id = Column(Integer, ForeignKey("terminal_identities.id", ondelete="CASCADE"), nullable=False, index=True)
+    card_identifier = Column(String(191), nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    identity = relationship("TerminalIdentity", back_populates="cards")
+
+
+class TerminalEvent(Base):
+    """Unveränderter Eingangsnachweis eines Push-Ereignisses."""
+
+    __tablename__ = "terminal_events"
+    __table_args__ = (
+        UniqueConstraint("terminal_id", "fingerprint", name="uq_terminal_event_fingerprint"),
+        Index("ix_terminal_events_status_received", "processing_status", "received_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    terminal_id = Column(Integer, ForeignKey("terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_event_id = Column(String(191), nullable=True)
+    fingerprint = Column(String(64), nullable=False)
+    user_identifier = Column(String(191), nullable=True)
+    card_identifier = Column(String(191), nullable=True)
+    event_timestamp = Column(DateTime, nullable=False, index=True)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    event_type = Column(String(32), default="toggle", nullable=False)
+    verify_mode = Column(String(64), nullable=True)
+    work_code = Column(String(64), nullable=True)
+    raw_payload = Column(Text, nullable=True)
+    processing_status = Column(String(32), default="received", nullable=False)
+    time_entry_id = Column(Integer, ForeignKey("time_entries.id", ondelete="SET NULL"), nullable=True)
+    error = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    terminal = relationship("Terminal", back_populates="events")
+    time_entry = relationship("TimeEntry")
 
 
 class TerminalSyncRun(Base):

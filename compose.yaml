@@ -1,6 +1,6 @@
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.20.6
+    image: ghcr.io/OWNER/erfassung:0.21.0
     container_name: erfassung
     ports:
       - "8000:8000"
@@ -10,6 +10,7 @@ services:
       DB_TYPE: sqlite
       DB_PATH: /app/data/erfassung.db
       # SESSION_SECRET_KEY: change-me-in-production
+      # TERMINAL_SUPPORT: "true"  # optional: ZKTeco-SC800-Push
       # HTTPS_ONLY_SESSION: "true"   # Setze auf true wenn hinter HTTPS-Proxy (z.B. Traefik)
     volumes:
       - ./data:/app/data

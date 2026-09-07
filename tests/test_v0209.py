@@ -1,4 +1,4 @@
-"""Tests für 0.20.9 – doppelt gezählte Zeit nach einem überschreibenden Nachtrag.
+"""Tests für 0.21.0 – doppelt gezählte Zeit nach einem überschreibenden Nachtrag.
 
 Gemeldet wurde eine Tageszeile in „Woche im Blick", die zu einer Buchung von
 08:00 bis 15:42 **10:46 Std** auswies. 7:42 wären richtig gewesen.
@@ -547,7 +547,7 @@ def test_migration_ist_versioniert(main):
 
     assert (24, db_migrations._repair_time_entry_utc_stamps) in db_migrations.MIGRATIONS
     # Bestehende Nummern bleiben, wo sie sind.
-    assert [number for number, _ in db_migrations.MIGRATIONS] == list(range(1, 25))
+    assert [number for number, _ in db_migrations.MIGRATIONS] == list(range(1, 26))
 
 
 # ---------------------------------------------------------------------------
@@ -610,17 +610,17 @@ def test_buchungsliste_und_summe_stimmen_ueberein(client):
 
 
 def test_version_ist_gepflegt(main):
-    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.20.9"
-    assert main.APP_VERSION == "0.20.9"
+    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.21.0"
+    assert main.APP_VERSION == "0.21.0"
 
 
 def test_changelog_und_release_notes(main):
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [0.20.9]" in changelog
-    notes = ROOT / "docs" / "RELEASE_NOTES_0.20.9.md"
+    assert "## [0.21.0]" in changelog
+    notes = ROOT / "docs" / "RELEASE_NOTES_0.21.0.md"
     assert notes.exists()
     text_content = notes.read_text(encoding="utf-8")
-    assert "0.20.9" in text_content
+    assert "0.21.0" in text_content
     # Keine Zusicherung, die die Anwendung nicht halten kann: Die Release Notes
     # sagen ausdrücklich, dass sie weder vollständige Rechtskonformität noch
     # eine Zertifizierung behaupten.
@@ -632,4 +632,4 @@ def test_changelog_und_release_notes(main):
 
 def test_readme_nennt_die_version(main):
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "0.20.9" in readme
+    assert "0.21.0" in readme
