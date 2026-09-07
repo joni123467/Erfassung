@@ -2,7 +2,14 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.9`
+**Version:** `0.21.0`
+
+> Seit 0.21.0: **optionale ZKTeco-SC800-PUSH-Anbindung.** Geräte registrieren sich
+> zunächst gesperrt, ATTLOG-Ereignisse werden dedupliziert und über dieselben
+> Stempelprimitive wie Webbuchungen verarbeitet. Aktivierung, Netzwerkbetrieb und
+> bewusst noch nicht freigegebene Gerätekommandos beschreibt
+> [`docs/ZKTECO_SC800.md`](docs/ZKTECO_SC800.md); der belastbare Nachweisstand steht im
+> [`Kompatibilitätsbericht`](docs/ZKTECO_SC800_COMPATIBILITY.md).
 
 > Seit 0.20.9: **Ein überschreibender Nachtrag wird nicht mehr doppelt
 > gezählt.** Wurde eine Buchung durch einen Nachtrag geteilt oder gekürzt,

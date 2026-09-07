@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.21.0] – 2026-09-07
+
+### Hinzugefügt
+- Optionale ZKTeco-SC800-PUSH-Endpunkte, gesichertes Geräte-Enrollment, Terminalidentitäten/RFID-Karten, Ereignishistorie und ATTLOG-Emulator.
+- Dokumentierte Kompatibilitätsmatrix mit klarer Trennung von verifiziert, noch am Gerät zu testen und nicht dokumentiert.
+
+### Geändert
+- Terminalstempelungen verwenden dieselben Start-/Ende-Primitive und Zeitregeln wie die Weboberfläche.
+
+### Behoben
+- Wiederholte und offline nachgelieferte Geräteereignisse werden pro Terminal datenbankseitig dedupliziert und chronologisch verarbeitet.
+
+### Datenbankänderungen
+- Migration 25 ergänzt Terminalmetadaten und legt `terminal_identities`, `terminal_cards` und `terminal_events` idempotent und datenerhaltend an. Upgrade von jedem älteren Stand erfolgt automatisch; kein Downgrade.
+
+
 ## [0.20.9] – 2026-08-14
 
 Ein überschreibender Nachtrag wird nicht mehr doppelt gezählt. Einzelheiten in

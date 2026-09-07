@@ -18,6 +18,7 @@ from .base import (
     TerminalTestResult,
 )
 from .timemoto_driver import TimeMotoDriver
+from .zkteco_sc800 import ZkTecoSc800Terminal
 
 # Driver key -> driver instance.
 REGISTRY: dict[str, TerminalDriver] = {}
@@ -49,6 +50,7 @@ def is_known_type(key: str) -> bool:
 #   register(ZKTecoDriver())
 #   register(SupremaDriver())
 register(TimeMotoDriver())
+register(ZkTecoSc800Terminal())
 
 
 __all__ = [

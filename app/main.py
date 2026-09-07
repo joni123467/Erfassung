@@ -55,6 +55,7 @@ from . import (
     security,
     services,
     system_info,
+    terminal_service,
     worktime,
 )
 from .integrations import timemoto, terminals
@@ -131,6 +132,11 @@ class CSRFMiddleware:
 
         request = Request(scope, receive)
         if request.method in self._SAFE_METHODS:
+            await self.app(scope, receive, send)
+            return
+        # ZKTeco PUSH devices have no browser session/CSRF token.  These
+        # isolated endpoints perform device enrollment/authentication instead.
+        if scope.get("path", "").startswith("/iclock/"):
             await self.app(scope, receive, send)
             return
 
@@ -559,6 +565,25 @@ def ensure_schema() -> None:
                         text(f"ALTER TABLE users ADD COLUMN {_column} DATE")
                     )
             connection.execute(text("UPDATE users SET is_active = 1 WHERE is_active IS NULL"))
+        if "terminals" in table_names:
+            terminal_columns = {column["name"] for column in inspector.get_columns("terminals")}
+            for column_name, ddl in (
+                ("manufacturer", "VARCHAR(128) DEFAULT ''"),
+                ("model", "VARCHAR(128) DEFAULT ''"),
+                ("serial_number", "VARCHAR(191)"),
+                ("location", "VARCHAR(255) DEFAULT ''"),
+                ("firmware_version", "VARCHAR(255) DEFAULT ''"),
+                ("enrollment_status", "VARCHAR(20) DEFAULT 'approved'"),
+            ):
+                if column_name not in terminal_columns:
+                    connection.execute(text(f"ALTER TABLE terminals ADD COLUMN {column_name} {ddl}"))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_terminals_serial_number "
+                "ON terminals(serial_number)"
+            ))
+            for table in (models.TerminalIdentity.__table__, models.TerminalCard.__table__,
+                          models.TerminalEvent.__table__):
+                table.create(bind=connection, checkfirst=True)
         if "vacation_requests" in table_names:
             columns = {column["name"] for column in inspector.get_columns("vacation_requests")}
             if "absence_type_key" not in columns:
@@ -6735,6 +6760,10 @@ def _terminal_fields_from_form(form, *, keep_password_from=None) -> dict:
         "name": (form.get("name") or "Terminal").strip(),
         "type": term_type,
         "active": _parse_checkbox(form.get("active")),
+        "manufacturer": (form.get("manufacturer") or "").strip(),
+        "model": (form.get("model") or "").strip(),
+        "serial_number": (form.get("serial_number") or "").strip() or None,
+        "location": (form.get("location") or "").strip(),
         "host": (form.get("host") or "").strip(),
         "port": _safe_int(form.get("port"), 80),
         "username": (form.get("username") or "").strip(),
@@ -6823,6 +6852,12 @@ def admin_terminals(request: Request, db: Session = Depends(database.get_db)):
         admin_active="terminals",
         terminals=crud.get_terminals(db),
         terminal_types=terminals.available_types(),
+        terminal_support_enabled=_terminal_support_enabled(),
+        terminal_events=(db.query(models.TerminalEvent)
+            .order_by(models.TerminalEvent.received_at.desc()).limit(50).all()),
+        terminal_identities=(db.query(models.TerminalIdentity)
+            .order_by(models.TerminalIdentity.terminal_id, models.TerminalIdentity.external_user_id).all()),
+        users=crud.get_users(db),
         status_labels=TERMINAL_STATUS_LABELS,
     )
 
@@ -6968,6 +7003,138 @@ def api_terminal_sync(
     if outcome.status == "error":
         raise HTTPException(status_code=502, detail=outcome.message)
     return outcome.to_dict()
+
+
+def _terminal_support_enabled() -> bool:
+    return os.environ.get("TERMINAL_SUPPORT", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sc800_terminal(db: Session, serial: str, request: Request) -> models.Terminal:
+    serial = serial.strip()[:191]
+    if not serial or not re.fullmatch(r"[A-Za-z0-9._-]+", serial):
+        raise HTTPException(status_code=400, detail="Ungültige Seriennummer.")
+    terminal = db.query(models.Terminal).filter(models.Terminal.serial_number == serial).first()
+    if terminal is None:
+        terminal = models.Terminal(
+            name=f"Nicht registriertes Terminal ({serial})", type="zkteco_sc800",
+            manufacturer="ZKTeco", model="SC800", serial_number=serial,
+            host=(request.client.host if request.client else "")[:255], active=False,
+            enrollment_status="pending", status="unknown",
+        )
+        db.add(terminal)
+        db.commit()
+        db.refresh(terminal)
+        logging_setup.log_terminal(f"terminal.connection.enrollment_pending terminal_id={terminal.id}")
+    return terminal
+
+
+def _verify_terminal_key(request: Request, terminal: models.Terminal) -> None:
+    """Verify an optional pre-provisioned key hash without persisting the secret."""
+    import json as _json
+    try:
+        expected = str(_json.loads(terminal.config_json or "{}").get("communication_key_sha256", ""))
+    except (TypeError, ValueError):
+        expected = ""
+    if expected:
+        supplied = request.headers.get("x-terminal-key", "")
+        actual = hashlib.sha256(supplied.encode()).hexdigest()
+        if not supplied or not hmac.compare_digest(expected, actual):
+            raise HTTPException(status_code=401, detail="Geräteauthentifizierung fehlgeschlagen.")
+
+
+@app.get("/iclock/cdata", response_class=Response, include_in_schema=False)
+def zkteco_push_connect(request: Request, SN: str = Query(...), db: Session = Depends(database.get_db)):
+    """Enrollment/initial contact for the ZKTeco PUSH endpoint family."""
+    if not _terminal_support_enabled():
+        raise HTTPException(status_code=404)
+    terminal = _sc800_terminal(db, SN, request)
+    _verify_terminal_key(request, terminal)
+    terminal.last_connection_at = datetime.utcnow()
+    terminal.status = "online" if terminal.active and terminal.enrollment_status == "approved" else "unknown"
+    db.commit()
+    return Response("OK", media_type="text/plain")
+
+
+@app.post("/iclock/cdata", response_class=Response, include_in_schema=False)
+async def zkteco_push_data(request: Request, SN: str = Query(...), table: str = Query("ATTLOG"), db: Session = Depends(database.get_db)):
+    """Receive a bounded batch of ATTLOG events and acknowledge every stored row."""
+    if not _terminal_support_enabled():
+        raise HTTPException(status_code=404)
+    body = await request.body()
+    if len(body) > 256 * 1024:
+        raise HTTPException(status_code=413, detail="Terminaldaten überschreiten 256 KiB.")
+    terminal = _sc800_terminal(db, SN, request)
+    _verify_terminal_key(request, terminal)
+    terminal.last_connection_at = datetime.utcnow()
+    db.commit()
+    if table.upper() != "ATTLOG":
+        raise HTTPException(status_code=422, detail="Nur ATTLOG ist implementiert.")
+    from .integrations.terminals.zkteco_sc800 import parse_attlog
+    try:
+        events = sorted(parse_attlog(body), key=lambda item: item.timestamp)
+    except ValueError as exc:
+        logging_setup.log_terminal(f"terminal.event.failed terminal_id={terminal.id} parse_error")
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    for event in events:
+        terminal_service.ingest(db, terminal, event)
+    terminal.last_connection_at = datetime.utcnow()
+    terminal.status = "online" if terminal.active and terminal.enrollment_status == "approved" else "unknown"
+    db.commit()
+    return Response(f"OK: {len(events)}", media_type="text/plain")
+
+
+@app.get("/iclock/getrequest", response_class=Response, include_in_schema=False)
+def zkteco_push_commands(request: Request, SN: str = Query(...), db: Session = Depends(database.get_db)):
+    """Heartbeat/command poll; no undocumented commands are generated."""
+    if not _terminal_support_enabled():
+        raise HTTPException(status_code=404)
+    terminal = _sc800_terminal(db, SN, request)
+    _verify_terminal_key(request, terminal)
+    terminal.last_connection_at = datetime.utcnow()
+    db.commit()
+    return Response("OK", media_type="text/plain")
+
+
+@app.post("/admin/terminals/{terminal_id}/approve")
+def admin_terminal_approve(request: Request, terminal_id: int, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    terminal = crud.get_terminal(db, terminal_id)
+    if terminal:
+        terminal.enrollment_status = "approved"
+        terminal.active = True
+        db.commit()
+        logging_setup.log_audit("Terminal freigegeben", user=user, detail=terminal.name)
+        logging_setup.log_terminal(f"terminal.connection.approved terminal_id={terminal.id}", user=user)
+    return RedirectResponse(url="/admin/terminals", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/terminals/{terminal_id}/identities")
+async def admin_terminal_identity(request: Request, terminal_id: int, db: Session = Depends(database.get_db)):
+    user, redirect = _require_system_admin(request, db)
+    if redirect:
+        return redirect
+    form = await request.form()
+    employee_id = _safe_int(form.get("user_id"), 0)
+    external_user_id = str(form.get("external_user_id") or "").strip()[:191]
+    card_identifier = str(form.get("card_identifier") or "").strip()[:191]
+    if not crud.get_terminal(db, terminal_id) or not crud.get_user(db, employee_id) or not external_user_id:
+        return RedirectResponse(url=_build_redirect("/admin/terminals", error="Ungültige Zuordnung"), status_code=303)
+    identity = models.TerminalIdentity(terminal_id=terminal_id, user_id=employee_id,
+                                       external_user_id=external_user_id)
+    db.add(identity)
+    try:
+        db.flush()
+        if card_identifier:
+            db.add(models.TerminalCard(terminal_id=terminal_id, identity_id=identity.id,
+                                       card_identifier=card_identifier))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return RedirectResponse(url=_build_redirect("/admin/terminals", error="Benutzer-ID oder Karte bereits zugeordnet"), status_code=303)
+    logging_setup.log_audit("Terminal-Benutzer zugeordnet", user=user, detail=f"terminal_id={terminal_id}")
+    return RedirectResponse(url=_build_redirect("/admin/terminals", msg="Zuordnung gespeichert"), status_code=303)
 
 
 @app.get("/admin/integrations/timemoto", include_in_schema=False)

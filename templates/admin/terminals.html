@@ -9,6 +9,7 @@
         <div>
             <h1>Terminals</h1>
             <p class="card-header__hint">Zeiterfassungsterminals verwalten – verbinden, testen und Buchungen synchronisieren. Protokoll: <a href="/admin/system/logs?channel=terminal">terminal.log</a>.</p>
+            {% if not terminal_support_enabled %}<p class="card-header__hint">SC800-Push ist deaktiviert. Zum Aktivieren <code>TERMINAL_SUPPORT=true</code> setzen.</p>{% endif %}
         </div>
         <div class="card-header__actions">
             <button type="button" class="button primary" id="terminal-new">Neues Terminal</button>
@@ -41,9 +42,17 @@
                             {% else %}–{% endif %}
                         </td>
                         <td class="backup-actions">
+                            {% if terminal.enrollment_status == 'pending' %}
+                            <form method="post" action="/admin/terminals/{{ terminal.id }}/approve" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                                <button type="submit" class="button primary small">Freigeben</button>
+                            </form>
+                            {% endif %}
                             <button type="button" class="button ghost small terminal-edit"
                                 data-id="{{ terminal.id }}"
                                 data-name="{{ terminal.name }}"
+                                data-serial="{{ terminal.serial_number or '' }}"
+                                data-location="{{ terminal.location or '' }}"
                                 data-type="{{ terminal.type }}"
                                 data-active="{{ '1' if terminal.active else '0' }}"
                                 data-host="{{ terminal.host }}"
@@ -93,6 +102,10 @@
                     </select>
                 </label>
                 <label>Name<input type="text" name="name" id="t-name" required></label>
+                <label>Seriennummer<input type="text" name="serial_number" id="t-serial"></label>
+                <label>Standort<input type="text" name="location" id="t-location"></label>
+                <input type="hidden" name="manufacturer" value="">
+                <input type="hidden" name="model" value="">
                 <label>Host/IP-Adresse<input type="text" name="host" id="t-host" placeholder="192.168.1.50"></label>
                 <label>Port<input type="number" name="port" id="t-port" min="1" max="65535" value="80"></label>
                 <label>Benutzer<input type="text" name="username" id="t-username" autocomplete="off"></label>
@@ -143,6 +156,8 @@
             document.getElementById('t-id').value = d.id;
             document.getElementById('t-type').value = d.type;
             document.getElementById('t-name').value = d.name;
+            document.getElementById('t-serial').value = d.serial || '';
+            document.getElementById('t-location').value = d.location || '';
             document.getElementById('t-host').value = d.host || '';
             document.getElementById('t-port').value = d.port || '80';
             document.getElementById('t-username').value = d.username || '';
@@ -178,4 +193,25 @@
     });
 })();
 </script>
+
+<section class="card">
+  <div class="card-header"><div><h2>Mitarbeiter-Zuordnung</h2><p class="card-header__hint">SC800-Benutzer-ID und optionale RFID-Karte eindeutig zuordnen.</p></div></div>
+  {% for terminal in terminals if terminal.type == 'zkteco_sc800' %}
+  <form method="post" action="/admin/terminals/{{ terminal.id }}/identities" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+    <label>Terminal<input value="{{ terminal.name }}" disabled></label>
+    <label>Mitarbeiter<select name="user_id" required>{% for employee in users if employee.is_active %}<option value="{{ employee.id }}">{{ employee.full_name }}</option>{% endfor %}</select></label>
+    <label>Terminal User ID<input name="external_user_id" required></label>
+    <label>RFID-Karte (optional)<input name="card_identifier"></label>
+    <div><button class="button" type="submit">Zuordnen</button></div>
+  </form>
+  {% endfor %}
+</section>
+
+<section class="card">
+  <div class="card-header"><div><h2>Letzte Terminalereignisse</h2></div></div>
+  <div class="table-scroll"><table class="striped-table"><thead><tr><th>Empfangen</th><th>Terminal</th><th>User ID</th><th>Ereigniszeit</th><th>Status</th></tr></thead><tbody>
+  {% for event in terminal_events %}<tr><td>{{ event.received_at.strftime('%d.%m.%Y %H:%M:%S') }}</td><td>{{ event.terminal.name }}</td><td>{{ event.user_identifier or '–' }}</td><td>{{ event.event_timestamp.strftime('%d.%m.%Y %H:%M:%S') }}</td><td>{{ event.processing_status }}</td></tr>{% else %}<tr><td colspan="5">Noch keine Ereignisse.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
 {% endblock %}

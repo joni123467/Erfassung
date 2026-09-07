@@ -179,6 +179,32 @@ def _add_terminal_tables(engine: Engine) -> None:
     _migrate_legacy_timemoto_config(engine)
 
 
+def _add_sc800_push_support(engine: Engine) -> None:
+    """SC800 enrollment metadata, identities/cards and idempotent event inbox."""
+    for name, ddl, default in (
+        ("manufacturer", "VARCHAR(128)", "''"),
+        ("model", "VARCHAR(128)", "''"),
+        ("serial_number", "VARCHAR(191)", None),
+        ("location", "VARCHAR(255)", "''"),
+        ("firmware_version", "VARCHAR(255)", "''"),
+        ("enrollment_status", "VARCHAR(20)", "'approved'"),
+    ):
+        db_schema.add_column(engine, "terminals", name, ddl, default=default,
+                             backfill_null_to=default)
+    models.Base.metadata.create_all(bind=engine, tables=[
+        models.TerminalIdentity.__table__, models.TerminalCard.__table__,
+        models.TerminalEvent.__table__,
+    ])
+    from sqlalchemy import inspect
+    if "ux_terminals_serial_number" not in {
+        index["name"] for index in inspect(engine).get_indexes("terminals")
+    }:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX ux_terminals_serial_number ON terminals(serial_number)"
+            ))
+
+
 def _migrate_legacy_timemoto_config(engine: Engine) -> None:
     """Eine ``timemoto.json`` aus der Zeit vor 0.9.8 in die Terminaltabelle holen.
 
@@ -1035,6 +1061,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (22, _add_employment_period),
     (23, _add_planning_and_calendar),
     (24, _repair_time_entry_utc_stamps),
+    (25, _add_sc800_push_support),
 ]
 
 
