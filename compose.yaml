@@ -1,6 +1,6 @@
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.20.6
+    image: ghcr.io/OWNER/erfassung:0.21.0
     container_name: erfassung
     ports:
       - "8000:8000"
@@ -16,7 +16,7 @@ services:
       - ./logs:/app/logs
       - ./config:/app/config
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/login', timeout=5)"]
+      test: ["CMD", "python", "-c", "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5))['status']=='ok'"]
       interval: 30s
       timeout: 5s
       retries: 5
