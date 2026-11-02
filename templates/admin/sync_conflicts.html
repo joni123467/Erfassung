@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Synchronisationskonflikte – Erfassung{% endblock %}
+{% block content %}
+{% set admin_active = 'sync_conflicts' %}
+{% include "admin/_nav.html" %}
+<section class="card">
+  <h1>Synchronisationskonflikte</h1>
+  <p>Diese Offline-Buchungen sind sicher eingegangen, konnten aber nicht automatisch verbucht werden.
+     Nachfolgende Buchungen bleiben auf dem Gerät gespeichert. Prüfe den ursprünglichen Zeitpunkt und die bestehende Zeiterfassung.</p>
+  {% for row in rows %}
+  {% set payload = payloads[row.id] %}
+  <article class="sync-conflict">
+    <h2>{{ row.user.full_name }} · Vorgang {{ row.id }}</h2>
+    <p><strong>{{ row.message }}</strong></p>
+    <dl class="sync-conflict__data">
+      <dt>Aktion</dt><dd>{{ payload.get('action', 'Urlaubsantrag') }}</dd>
+      <dt>Ursprünglicher Zeitpunkt</dt><dd>{{ payload.get('event_time', payload.get('start_date', '–')) }}</dd>
+      <dt>Kommentar</dt><dd>{{ payload.get('notes', payload.get('comment', '–')) }}</dd>
+      <dt>Auftrag</dt><dd>{{ payload.get('company_name', payload.get('company_id', '–')) }}</dd>
+      <dt>Eindeutige Kennung</dt><dd>{{ row.client_action_id }}</dd>
+    </dl>
+    <form action="/admin/sync-conflicts/{{ row.id }}" method="post" class="sync-conflict__form">
+      <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+      {% if row.kind == 'punch' %}
+      <label>Korrigierter Zeitpunkt (optional, deutsche Ortszeit)
+        <input type="datetime-local" name="event_time" step="1">
+      </label>
+      {% endif %}
+      <label>Begründung der Entscheidung
+        <textarea name="reason" required maxlength="2000" rows="2"></textarea>
+      </label>
+      <div class="sync-status__actions">
+        <button class="button" name="decision" value="retry">Prüfen und verbuchen</button>
+        <button class="button ghost" name="decision" value="reject">Begründet ablehnen</button>
+      </div>
+      <p class="muted">Die ursprüngliche Buchung bleibt erhalten. Bestehende Zeiten werden nicht automatisch überschrieben.</p>
+    </form>
+  </article>
+  {% else %}<p>Keine offenen Konflikte in deinem Zuständigkeitsbereich.</p>{% endfor %}
+</section>
+<section class="card">
+  <h2>Letzte Entscheidungen</h2>
+  <div class="table-scroll"><table class="striped-table">
+    <thead><tr><th>Vorgang</th><th>Benutzer</th><th>Ergebnis</th><th>Begründung</th><th>Entschieden von</th></tr></thead>
+    <tbody>{% for row in history %}<tr>
+      <td>{{ row.id }}</td><td>{{ row.user.full_name }}</td><td>{{ row.message }}</td>
+      <td>{{ row.resolution_note }}</td><td>{{ row.resolved_by.full_name if row.resolved_by else '–' }}</td>
+    </tr>{% else %}<tr><td colspan="5">Noch keine Entscheidungen.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

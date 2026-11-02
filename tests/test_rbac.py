@@ -197,7 +197,7 @@ def test_registry_is_consistent(client):
         "Own.Time.Cancel",
     }
     assert set(permissions.SCOPED_KEYS) == {
-        "Time.Approve", "Time.Edit", "Time.View", "Vacation.Manage",
+        "Time.Approve", "Time.Sync.Resolve", "Time.Edit", "Time.View", "Vacation.Manage",
         # Seit 0.14.2: die Urlaubsübersicht ist ein eigenes Recht – wer den
         # Resturlaub eines Teams sieht, entscheidet nicht zwingend über
         # Anträge.

@@ -129,6 +129,7 @@ _AREA_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "holidays": ("System.Terminals",),
     "integrations": ("System.Terminals",),
     "approvals_manual": ("Time.Approve",),
+    "approvals_sync": ("Time.Sync.Resolve",),
     "approvals_vacations": ("Vacation.Manage",),
     "vacation_overview": ("Vacation.Overview",),
     "reports": ("Time.View",),
@@ -141,7 +142,7 @@ _AREA_PERMISSIONS: dict[str, tuple[str, ...]] = {
 def area_permissions(user: Optional[models.User]) -> dict[str, bool]:
     """Kompaktes Rechte-Abbild für Navigation und Templates."""
     result = {area: has_any(user, keys) for area, keys in _AREA_PERMISSIONS.items()}
-    result["approvals"] = result["approvals_manual"] or result["approvals_vacations"]
+    result["approvals"] = result["approvals_manual"] or result["approvals_vacations"] or result["approvals_sync"]
     result["create_companies"] = has(user, "Company.Create")
     result["superadmin"] = is_superadmin(user)
     # Steuert, ob der Administrationsbereich überhaupt erreichbar ist.

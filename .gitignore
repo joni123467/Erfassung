@@ -4,6 +4,10 @@ __pycache__/
 *.db
 .env
 .venv/
+node_modules/
+test-results/
+playwright-report/
+.pytest_cache/
 
 # Runtime volume artefacts (config/data/logs)
 /logs/

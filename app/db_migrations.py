@@ -1010,6 +1010,10 @@ def _repair_time_entry_utc_stamps(engine: Engine) -> None:
         LOGGER.info("UTC-Stempel von %s Buchungen an die Ortszeiten angeglichen", repaired)
 
 
+def _add_mobile_sync_receipts(engine: Engine) -> None:
+    models.MobileSyncReceipt.__table__.create(bind=engine, checkfirst=True)
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -1035,6 +1039,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (22, _add_employment_period),
     (23, _add_planning_and_calendar),
     (24, _repair_time_entry_utc_stamps),
+    (25, _add_mobile_sync_receipts),
 ]
 
 

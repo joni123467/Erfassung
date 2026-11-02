@@ -2,7 +2,14 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.20.9`
+**Version:** `0.21.0`
+
+> Seit 0.21.0: **Buchungen bleiben bei Synchronisationsfehlern erhalten.**
+> Eine dauerhafte Outbox, eindeutige Empfangsbestätigungen und atomare
+> Serververarbeitung sichern den Abgleich. Updates warten auf Zustimmung;
+> Konflikte erhalten einen Freigabeablauf mit eigenem Recht `Time.Sync.Resolve`.
+> [Release Notes](docs/RELEASE_NOTES_0.21.0.md) ·
+> [Synchronisationsarchitektur und iOS-Grenzen](docs/PWA_SYNCHRONISATION.md).
 
 > Seit 0.20.9: **Ein überschreibender Nachtrag wird nicht mehr doppelt
 > gezählt.** Wurde eine Buchung durch einen Nachtrag geteilt oder gekürzt,
@@ -335,7 +342,7 @@ Der Standardweg ist jetzt vollständig image-basiert:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -1820,125 +1827,46 @@ GHCR funktioniert auch mit privaten Repositories. In Portainer muss dann ein Reg
 
 ## Mobile Offline-Funktion (`/mobile`)
 
-Die mobile Oberfläche ist als pragmatische **Offline-first-PWA** umgesetzt.
+Die installierte PWA ist für ein Benutzerkonto pro Gerät ausgelegt. Sie speichert
+Stempelungen vor der Bestätigung lokal und überträgt sie mit unveränderter ID.
+Mindestens eine Woche Offlinebetrieb wird unterstützt; offene Buchungen haben
+keine automatische Löschfrist. Eine neue Anmeldung benötigt eine Verbindung,
+löscht aber keine offenen Buchungen.
 
-### Was offline funktioniert
+Die Statusanzeige unterscheidet lokal gespeichert, offline, laufender Abgleich,
+synchronisiert, Anmeldung erforderlich, Fehler und Konfliktfreigabe. Unter den
+Details stehen offene Aktionen, Wiederholungen und ein Export/Import der lokalen
+Buchungssicherung. „Übersicht neu laden“ löscht keine Buchungen.
 
-- Laden der mobilen Seite `/mobile` inklusive zentraler Assets per Service Worker.
-- Start/Stop von Arbeitszeitbuchungen.
-- Pausenstart/Pausenende.
-- Firmen-/Auftragsstart und -ende.
-- Firmensuche mit Vorschlagsliste: ein gewählter Vorschlag wird automatisch in
-  die Firmenauswahl übernommen (ab 0.9.10); zusätzlich löst der Server den
-  Suchtext als Fallback über den Firmennamen auf.
-- Kommentar-/Notizfelder in mobilen Aktionen.
-- Kommentar nachbearbeiten (ab 0.9.10): Nach „Auftrag beenden" bzw.
-  „Arbeitszeit beenden" öffnet sich optional ein Dialog, um den Kommentar der
-  beendeten Buchung anzupassen; zusätzlich gibt es unter den Stempel-Aktionen
-  den Button „Kommentar der letzten Buchung bearbeiten" (Buchungen des
-  aktuellen Tages).
-- Offline erstellte Urlaubsanträge.
+Konflikte erscheinen unter **Administration → Zeiterfassung →
+Synchronisationskonflikte**. Dafür wird das eigenständige, nach Benutzern/Gruppen
+begrenzbare Recht **Synchronisationskonflikte freigeben** (`Time.Sync.Resolve`)
+benötigt. Eine Entscheidung braucht eine Begründung; das Original bleibt erhalten.
 
-### Lokale Datenhaltung (letzte 6 Monate)
+Updates werden beim Öffnen und bei Rückkehr in die App erkannt und angezeigt.
+Sie werden erst nach Zustimmung und abgeschlossenen Eingaben aktiviert. Bei
+der ersten Aktualisierung einer älteren PWA gegebenenfalls alle Erfassung-Fenster
+schließen und erneut öffnen; die PWA und ihre Website-Daten behalten.
 
-Die App speichert mobilrelevante Serverdaten für ca. 6 Monate (183 Tage) lokal im Browser (IndexedDB):
+**iOS:** Bei geöffneter App und bei Rückkehr in den Vordergrund wird automatisch
+synchronisiert. Eine geschlossene App kann unter iOS nicht zuverlässig im
+Hintergrund übertragen. Browser-/Betriebssystem-Löschung lokaler Daten kann eine
+PWA nicht verhindern; bei Problemen daher zuerst die Buchungssicherung exportieren.
 
-- Zeitbuchungen/Stempelhistorie.
-- Firmenliste.
-- Urlaubsanträge.
-- Aktiven Buchungszustand und mobile Kennzahlen.
-- Metadaten wie `lastSyncAt`.
+Details zu Migration, Updates, Bestätigungen, Tests und Wiederherstellung:
+[`docs/PWA_SYNCHRONISATION.md`](docs/PWA_SYNCHRONISATION.md).
 
-### Synchronisation
+### Tests
 
-- Automatische Synchronisation beim Start der mobilen Seite.
-- Automatische Synchronisation beim Wechsel von Offline zu Online.
-- Offline-Aktionen bleiben persistent in einer lokalen Queue gespeichert (auch nach Browser-Neustart).
-- **Queue-and-forward (ab 0.5.0):** Jedes Ereignis wird zuerst unconditional in
-  IndexedDB gespeichert und dann in Erstellungsreihenfolge an den Server gesendet.
-  Eine Aktion wird nur entfernt, wenn der Server sie eindeutig bestätigt – der
-  Server (mit `client_action_id`-Idempotenz) ist die alleinige Wahrheitsquelle.
-  Dadurch keine verlorenen Stempelungen und keine Dubletten.
-- Die Sync-Endpunkte (`/punch`, `/vacations`) antworten bei `Accept: application/json`
-  mit `{ok, duplicate, retryable, message}`, sodass der Client zuverlässig
-  entscheidet, ob eine Aktion erledigt ist oder erneut gesendet werden muss.
-- **Echte Ereigniszeit (ab 0.5.0):** Der Client sendet die lokale Zeit der Aktion
-  (`event_time`); offline erfasste Zeiten bleiben korrekt, auch wenn erst Stunden
-  später synchronisiert wird.
+```bash
+pip install --require-hashes -r requirements.lock
+pip install pytest==8.3.5
+python -m pytest -q
+npm ci
+npm test
+npx playwright install --with-deps chromium webkit
+npm run test:browser
+```
 
-### Service Worker / Offline-Start
-
-- Der Service Worker wird von der Wurzel ausgeliefert (`GET /sw.js`) mit dem
-  Header `Service-Worker-Allowed: /`, damit sein Scope die `/mobile`-`start_url`
-  abdeckt. (Ein unter `/static/` ausgelieferter Worker kann nicht für `/`
-  registriert werden – das verhinderte früher den Offline-Start auf iOS/Safari.)
-- Beim ersten Online-Aufruf installiert der Worker und legt App-Shell, CSS, JS und
-  Icons in den Cache. Danach startet `/mobile` vollständig ohne Netzwerk.
-
-### Statusmeldungen in der mobilen App
-
-Die mobile Seite zeigt nutzerfreundlich an:
-
-- Online/Offline-Serverstatus.
-- Ob lokale Daten verfügbar sind.
-- Anzahl ausstehender Offline-Aktionen.
-- Zeitstempel der letzten erfolgreichen Synchronisation.
-
-### Einschränkungen
-
-- Eine **neue Anmeldung** benötigt weiterhin Serververbindung.
-- Eine bereits aktive Sitzung mit lokal gespeicherten Mobil-Daten kann offline weiterarbeiten.
-- Fokus liegt bewusst auf der mobilen Kernfunktion (Stempeln/Synchronisation), nicht auf vollständiger Offline-Abdeckung aller Admin-/Desktop-Seiten.
-
-### Browser-Unterstützung
-
-- Moderne Browser mit Service Worker + IndexedDB (aktuelles Chrome/Edge/Safari/Firefox mobile).
-- Bei deaktiviertem IndexedDB fällt die App auf reduzierte Browser-Speicherung zurück.
-
-### Updates & Service-Worker-Versionierung
-
-- Die Route `GET /sw.js` **brennt die Version in den Skriptinhalt ein**
-  (`self.__ERFASSUNG_VERSION`, Quelle: Datei `VERSION`) und liefert mit
-  `Cache-Control: no-cache` aus. Jedes Release ändert damit die Skript-Bytes –
-  der Update-Check des Browsers erkennt die neue Version auch dann, wenn eine
-  installierte PWA noch eine alte gecachte Seite (mit alter
-  Registrierungs-URL) ausführt. Vorher blieb die PWA in diesem Fall dauerhaft
-  auf dem alten Stand hängen (Update kam erst nach Neuinstallation an).
-- Der Cache-Name (`erfassung-mobile-v<VERSION>`) folgt der eingebrannten
-  Version; der alte Cache wird beim `activate`-Event gelöscht (`skipWaiting()`
-  + `clients.claim()`). Beim Installieren lädt der Worker die Assets mit
-  `cache: 'no-cache'`, damit kein staler HTTP-Cache in die neue Cache-Version
-  gelangt.
-- **Aktive Update-Prüfung (ab 0.9.13):** Die Registrierung nutzt
-  `updateViaCache: 'none'`; zusätzlich stößt die App `registration.update()`
-  bei jedem Start, beim Zurückholen in den Vordergrund (App-Resume, wichtig
-  für iOS) und nach jedem Sync mit geänderter Server-Version an. Übernimmt
-  ein neuer Worker die Kontrolle, lädt sich die Seite **einmalig automatisch
-  neu**, sodass sofort die frischen Assets aktiv sind (Offline-Queue bleibt
-  erhalten – sie liegt persistent in IndexedDB).
-- **Sync bei App-Resume (ab 0.9.13):** Beim Wechsel der PWA in den Vordergrund
-  wird automatisch synchronisiert – zuvor geschah das nur beim Seitenstart
-  und beim `online`-Ereignis.
-- Es ist **kein** manuelles Editieren von `static/sw.js` oder `static/app.js` pro
-  Release mehr nötig.
-
-### PWA am Desktop/PC verwenden
-
-Ja – die mobile Oberfläche ist nicht auf Smartphones beschränkt:
-
-- **Ohne Installation:** `/mobile` einfach im Desktop-Browser öffnen; alle
-  Funktionen (Stempeln, Offline-Queue, Synchronisation) stehen zur Verfügung.
-- **Als installierte App:** Chrome/Edge am PC bieten über das Symbol in der
-  Adressleiste (bzw. Menü → „App installieren") die Installation an
-  (`display: standalone`). Die App startet dann in einem eigenen Fenster mit
-  `/mobile` als Startseite und funktioniert offline wie am Smartphone.
-- Die Oberfläche ist für schmale Bildschirme gestaltet, läuft im
-  Desktop-Fenster aber uneingeschränkt; für die volle Desktop-Oberfläche
-  (Administration, Berichte) bleibt die normale Web-Ansicht (`/dashboard`)
-  die bessere Wahl.
-
-### Installierbarkeit
-
-Installierbar auf Android, iOS, Windows, macOS und Linux über das Manifest
-(`static/manifest.webmanifest`) mit `id`, `start_url`, `scope`, `display: standalone`
-sowie Icons in 192px, 512px und SVG (maskable).
+Die Browserprüfungen verwenden eine eigene temporäre Datenbank. GitHub Actions
+führt diese Prüfungen und einen Container-Smoke-Test vor dem Publishing aus.

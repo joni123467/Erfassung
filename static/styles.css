@@ -55,6 +55,25 @@
     --ring: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 
+/* Persistent booking safety indicator, shared by online and offline shells. */
+.sync-status { border: 1px solid var(--border); border-left: 4px solid var(--brand); border-radius: var(--radius-lg); background: var(--surface); padding: 1rem; margin: 0 0 1rem; overflow-wrap: anywhere; }
+.sync-status p { margin: .4rem 0; }
+.sync-status[data-state="synced"] { border-left-color: var(--success); }
+.sync-status[data-state="error"], .sync-status[data-state="storage"], .sync-status[data-state="conflict"] { border-left-color: var(--danger); }
+.sync-status__actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.sync-status button, .sync-status a, .sync-status summary { min-height: 44px; }
+.sync-status summary { cursor: pointer; padding: .75rem 0; color: var(--text-muted); }
+.sync-status ul { padding-left: 1.25rem; max-height: 20rem; overflow: auto; }
+.sync-status li { margin: .75rem 0; }
+.sync-import { display: grid; gap: .5rem; margin: 1rem 0; }
+.sync-import input { max-width: 100%; }
+.sync-conflict { padding: 1rem 0; border-top: 1px solid var(--border); }
+.sync-conflict__data { display: grid; grid-template-columns: minmax(7rem, 1fr) 2fr; gap: .5rem; overflow-wrap: anywhere; }
+.sync-conflict__data dd { margin: 0; }
+.sync-conflict__form { display: grid; gap: .75rem; max-width: 48rem; }
+.sync-conflict__form label { display: grid; gap: .3rem; }
+@media (max-width: 480px) { .sync-conflict__data { grid-template-columns: 1fr; } .sync-conflict__data dt { font-weight: 600; } }
+
 
 * {
     box-sizing: border-box;
@@ -3258,6 +3277,7 @@ tr.company-deleted td {
 }
 
 .info-tip__bubble {
+    display: none;
     position: absolute;
     bottom: calc(100% + 0.5rem);
     left: -0.5rem;
@@ -3300,10 +3320,16 @@ tr.company-deleted td {
 .info-tip:hover .info-tip__bubble,
 .info-tip:focus-within .info-tip__bubble,
 .info-tip.is-open .info-tip__bubble {
+    display: block;
     opacity: 1;
     visibility: visible;
     pointer-events: auto;
     transform: translateY(0);
+}
+
+@media (max-width: 600px) {
+    .mobile-dashboard .info-tip__bubble { position: fixed; left: 1rem; right: 1rem; top: 5rem; bottom: auto; width: auto; max-width: none; }
+    .mobile-dashboard .info-tip__bubble::after { display: none; }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

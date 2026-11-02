@@ -1,3 +1,10 @@
+import './mobile-sync.js';
+const { MobileStore, SyncEngine } = globalThis.ErfassungSync;
+const outbox = new MobileStore();
+let localWriteInFlight = 0;
+let updateQuiesced = false;
+const dirtyForms = new Set();
+
 const TAB_SELECTOR = '.mobile-tab';
 const PANEL_SELECTOR = '[data-tab-panel]';
 const MODAL_ID = 'mobile-order-modal';
@@ -7,22 +14,16 @@ const MOBILE_STATE_SELECTOR = '[data-mobile-state]';
 const VACATION_LIST_SELECTOR = '[data-vacation-list]';
 const VACATION_EMPTY_SELECTOR = '[data-vacation-empty]';
 
-const DB_NAME = 'erfassung-mobile';
-const DB_VERSION = 4;
 const ACTION_STORE = 'pendingActions';
 const DATA_STORE = 'mobileData';
 const META_STORE = 'meta';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
-const SERVER_REACHABILITY_KEY = 'serverReachability';
-const SYNC_LOCK_KEY = 'syncLock';
 const SETTINGS_DEFAULT = { syncDays: 30 };
 
-const supportsIndexedDb = typeof indexedDB !== 'undefined';
 let localStorageUnavailable = false;
 let mobileState = null;
 let workDurationTimerId = null;
 let modalController = null;
-let syncInFlight = false;
 let initialServerState = null;
 // Gruppenberechtigungen aus dem Server-Snapshot (null = unbekannt → erlauben).
 let mobilePermissions = null;
@@ -50,6 +51,18 @@ function withLocalStorage(callback) {
 }
 
 function dispatchSyncStatus(message, state = 'default') {
+  const panel = document.getElementById('sync-status');
+  if (panel) {
+    panel.dataset.state = state;
+    panel.querySelector('[data-sync-label]').textContent = ({ synced: 'Synchronisiert', syncing: 'Synchronisation läuft',
+      offline: 'Offline', queue: 'Ausstehende Buchungen', error: 'Synchronisation fehlgeschlagen',
+      auth: 'Anmeldung erforderlich', account: 'Anderes Konto angemeldet', identity: 'Kontozuordnung prüfen',
+      storage: 'Speicher prüfen', conflict: 'Freigabe erforderlich' })[state] || 'Synchronisation';
+    panel.querySelector('[data-sync-message]').textContent = message;
+    panel.querySelector('[data-sync-login]').hidden = !['auth', 'account'].includes(state);
+    panel.querySelector('[data-sync-identity]').hidden = state !== 'identity';
+  }
+  setStatusBadge(state === 'synced' ? 'online' : state);
   document.dispatchEvent(new CustomEvent('offline-sync-status', { detail: { message, state } }));
 }
 
@@ -78,6 +91,8 @@ function setStatusBadge(state) {
     offline: 'Offline',
     unreachable: 'Server nicht erreichbar',
     syncing: 'Synchronisiert …',
+    auth: 'Bitte anmelden', account: 'Konto prüfen', conflict: 'Freigabe erforderlich',
+    queue: 'Buchungen ausstehend', error: 'Abgleich fehlgeschlagen', storage: 'Speicherfehler', identity: 'Konto prüfen',
   };
   badge.textContent = labels[state] || labels.offline;
   badge.dataset.state = state;
@@ -130,12 +145,6 @@ function getCsrfToken() {
   return '';
 }
 
-function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => window.clearTimeout(timeoutId));
-}
-
 function escHtml(str) {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -172,23 +181,6 @@ function getISOWeekNumber(date) {
   d.setUTCDate(d.getUTCDate() + 4 - day);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-}
-
-async function refreshCsrfToken() {
-  try {
-    const response = await fetchWithTimeout('/api/csrf', {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-    }, 3000);
-    if (!response.ok) return;
-    const data = await response.json();
-    if (!data.csrf_token) return;
-    try { window.localStorage.setItem('erfassung_csrf_token', data.csrf_token); } catch { /* ignore */ }
-    const meta = document.querySelector('meta[name="csrf-token"]');
-    if (meta) meta.setAttribute('content', data.csrf_token);
-  } catch { /* non-fatal */ }
 }
 
 function normalizeBreakLabel(minutes) {
@@ -406,58 +398,11 @@ function clearStoredMobileState() {
   });
 }
 
-function openDatabase() {
-  return new Promise((resolve, reject) => {
-    if (!supportsIndexedDb) {
-      resolve(null);
-      return;
-    }
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(ACTION_STORE)) {
-        const store = db.createObjectStore(ACTION_STORE, { keyPath: 'clientActionId' });
-        store.createIndex('createdAt', 'createdAt');
-      }
-      if (!db.objectStoreNames.contains(DATA_STORE)) {
-        db.createObjectStore(DATA_STORE, { keyPath: 'key' });
-      }
-      if (!db.objectStoreNames.contains(META_STORE)) {
-        db.createObjectStore(META_STORE, { keyPath: 'key' });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-  });
-}
-
-async function withStore(storeName, mode, callback) {
-  const db = await openDatabase();
-  if (!db) return null;
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, mode);
-    const store = transaction.objectStore(storeName);
-    const request = callback(store);
-    transaction.oncomplete = () => resolve(request?.result ?? null);
-    transaction.onerror = () => reject(transaction.error);
-  });
-}
-
-async function putRecord(storeName, record) {
-  return withStore(storeName, 'readwrite', (store) => store.put(record));
-}
-
-async function getRecord(storeName, key) {
-  return withStore(storeName, 'readonly', (store) => store.get(key));
-}
-
-async function deleteRecord(storeName, key) {
-  return withStore(storeName, 'readwrite', (store) => store.delete(key));
-}
-
-async function getAllRecords(storeName) {
-  return (await withStore(storeName, 'readonly', (store) => store.getAll())) || [];
-}
+function withStore(name, mode, callback) { return outbox.withStore(name, mode, callback); }
+function putRecord(name, record) { return outbox.put(name, record); }
+function getRecord(name, key) { return outbox.get(name, key); }
+function deleteRecord(name, key) { return outbox.remove(name, key); }
+function getAllRecords(name) { return outbox.all(name); }
 
 function serializeFormData(form) {
   const payload = {};
@@ -468,26 +413,17 @@ function serializeFormData(form) {
 }
 
 function generateClientActionId(prefix) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${crypto.randomUUID()}`;
 }
 
 async function queueAction(type, payload) {
-  const clientActionId = payload.client_action_id || generateClientActionId(type);
-  payload.client_action_id = clientActionId;
-  await putRecord(ACTION_STORE, {
-    clientActionId,
-    type,
-    endpoint: type === 'vacation' ? '/vacations' : '/punch',
-    payload,
-    createdAt: Date.now(),
-  });
-  return clientActionId;
+  const id = await outbox.enqueue(type, payload);
+  navigator.storage?.persist?.().catch(() => {});
+  navigator.serviceWorker?.ready.then(registration => registration.sync?.register('erfassung-outbox')).catch(() => {});
+  return id;
 }
 
-async function readPendingActions() {
-  const all = await getAllRecords(ACTION_STORE);
-  return all.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-}
+function readPendingActions() { return outbox.pending(); }
 
 async function refreshQueueIndicator() {
   const actions = await readPendingActions();
@@ -598,14 +534,17 @@ async function recomputeEffectiveState() {
   const pending = await readPendingActions();
 
   let base = initialServerState ? cloneState(initialServerState) : buildStateFromEntry(snapshot?.data?.active_entry || null);
-  if (!snapshot?.data?.active_entry && !initialServerState) {
+  if (!snapshot && !initialServerState) {
     const stored = loadStoredMobileState();
     if (stored && stored.version >= 1) {
       base = cloneState(stored);
     }
   }
 
-  for (const action of pending) {
+  const acknowledgedSinceSnapshot = (await getAllRecords(DATA_STORE))
+    .filter(row => row.key.startsWith('receipt:') && row.savedAt > (snapshot?.savedAt || 0) && row.receipt.status === 'applied')
+    .map(row => row.entry);
+  for (const action of [...acknowledgedSinceSnapshot, ...pending].sort((a, b) => a.createdAt - b.createdAt)) {
     if (action.type !== 'punch') continue;
     const payload = action.payload || {};
     if (payload.action === 'start_company' && !payload.company_name) {
@@ -647,39 +586,6 @@ async function appendVacationPreview(payload, offline = false) {
     item.appendChild(badge);
   }
   list.prepend(item);
-}
-
-async function checkServerReachability(force = false) {
-  if (!navigator.onLine) {
-    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'offline', updatedAt: Date.now() });
-    setStatusBadge('offline');
-    return 'offline';
-  }
-
-  const last = await getRecord(META_STORE, SERVER_REACHABILITY_KEY);
-  if (!force && last?.value === 'online' && Date.now() - (last.updatedAt || 0) < 15000) {
-    setStatusBadge('online');
-    return 'online';
-  }
-
-  try {
-    const response = await fetchWithTimeout('/api/ping', {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-    }, 2500);
-    if (!response.ok) {
-      throw new Error(`Ping ${response.status}`);
-    }
-    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'online', updatedAt: Date.now() });
-    setStatusBadge('online');
-    return 'online';
-  } catch (error) {
-    await putRecord(META_STORE, { key: SERVER_REACHABILITY_KEY, value: 'unreachable', updatedAt: Date.now() });
-    setStatusBadge('unreachable');
-    return 'unreachable';
-  }
 }
 
 // Blendet Aktionen aus, die die Gruppe des Benutzers nicht erlaubt. Wird aus
@@ -823,29 +729,18 @@ async function syncServerData() {
   try {
     const settings = await loadSettings();
     const days = Math.max(1, settings.syncDays || 30);
-    const response = await fetchWithTimeout(`/mobile/sync-data?days=${days}`, {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
+    const payload = await syncEngine.request(`/mobile/sync-data?days=${days}`, {
+      method: 'GET', headers: { Accept: 'application/json' },
     }, 12000);
-    if (!response.ok) {
-      const msg = `Sync fehlgeschlagen (HTTP ${response.status}). Bitte erneut versuchen.`;
-      dispatchSyncStatus(msg, 'error');
-      showFeedback(msg, 'error');
-      return false;
-    }
-    const payload = await response.json();
+    const owner = await outbox.identity();
+    if (!owner || payload.user?.id !== owner.id) throw new Error('Kontozuordnung stimmt nicht überein.');
     await putRecord(DATA_STORE, { key: 'snapshot', data: payload, savedAt: Date.now() });
     // Den Ausgangszustand am frischen Serverstand ausrichten. Sonst bliebe er
     // an dem Wert vom Seitenaufruf hängen – und die Anzeige sprang direkt nach
     // einer übertragenen Einstempelung zurück auf „arbeitet nicht".
     initialServerState = buildStateFromEntry(payload.active_entry || null);
-    const nowIso = new Date().toISOString();
-    await putRecord(META_STORE, { key: 'lastSyncAt', value: nowIso, updatedAt: Date.now() });
     await putRecord(META_STORE, { key: 'localDataReady', value: true, updatedAt: Date.now() });
     updateLocalDataBadge(true);
-    updateLastSyncLabel(nowIso);
     await hydrateCompaniesFromCache();
     await hydrateLocationsFromCache();
     applyMobilePermissions(payload.permissions || null);
@@ -859,183 +754,28 @@ async function syncServerData() {
   }
 }
 
-// Schickt einen einzelnen wartenden Vorgang und gibt die auswertbare Antwort
-// des Servers zurück: { ok, duplicate, retryable, message }.
-//
-// Die Endpunkte antworten mit JSON statt einer 303-Weiterleitung, weil wir
-// `Accept: application/json` mitschicken. Dadurch lassen sich Erfolg, Dublette
-// und vorübergehender Fehler sicher unterscheiden, statt sie aus einer
-// undurchsichtigen Weiterleitung zu raten.
-//
-// Eine Ausnahme fliegt nur bei Übertragungs- oder Anmeldefehlern – dann bleibt
-// der Vorgang stehen und wird später erneut versucht.
-async function postQueuedAction(entry) {
-  const token = getCsrfToken();
-  const body = new URLSearchParams(entry.payload);
-  body.set('csrf_token', token);
-  const response = await fetchWithTimeout(entry.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-      'Accept': 'application/json',
-      'X-CSRF-Token': token,
-    },
-    body: body.toString(),
-    credentials: 'same-origin',
-    cache: 'no-store',
-  }, 8000);
-
-  if (response.status === 401) {
-    throw new Error('AUTH'); // session expired – keep action, retry after re-auth
-  }
-  if (response.status === 403) {
-    throw new Error('CSRF'); // token invalid – keep action, retry after refresh
-  }
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`); // 5xx/transient – keep, retry
-  }
-  try {
-    return await response.json();
-  } catch {
-    // Endpoint answered 200 without JSON (shouldn't happen) – treat as success.
-    return { ok: true, duplicate: false, retryable: false, message: '' };
-  }
-}
-
-// Schickt alle wartenden Vorgänge in der Reihenfolge ihres Entstehens und
-// überlässt dem **Server** die Entscheidung – er ist die maßgebliche Stelle und
-// erkennt Dubletten an der `client_action_id`.
-//
-// Ein noch nicht gesendeter Vorgang wird nie aufgrund einer Vermutung des
-// Geräts verworfen; genau daran gingen früher Ausstempelungen verloren.
-// Entfernt wird ein Vorgang erst, wenn der Server ihn endgültig behandelt hat.
-// Bei vorübergehenden Fehlern oder fehlender Anmeldung bleibt er für den
-// nächsten Durchgang liegen.
-async function flushOfflineQueue() {
-  const pending = await readPendingActions();
-  if (!pending.length) {
-    return { processed: 0, failed: 0, skipped: 0 };
-  }
-
-  dispatchSyncStatus('Synchronisation läuft …', 'syncing');
-  setStatusBadge('syncing');
-
-  let processed = 0;
-  let skipped = 0;
-  // Stempelungen hängen aneinander: Ein Ausstempeln setzt sein Einstempeln
-  // voraus. Wird eines nicht angenommen, bricht die Kette ab und der Rest kommt
-  // beim nächsten Durchgang dran – die Reihenfolge bleibt gewahrt, und kein
-  // Vorgang geht dabei verloren.
-  let punchBlocked = false;
-
-  for (const entry of pending) {
-    const isPunch = entry.type === 'punch';
-    if (isPunch && punchBlocked) continue;
-
-    let result;
-    try {
-      result = await postQueuedAction(entry);
-    } catch {
-      // Netz, Zeitüberschreitung, Anmeldung, CSRF oder Serverfehler → Vorgang
-      // behalten und später erneut versuchen.
-      if (isPunch) punchBlocked = true;
-      continue;
-    }
-
-    if (result.ok || result.duplicate) {
-      // Auf dem Server erledigt – auch bei einer wiederholten Sendung → darf weg.
-      await deleteRecord(ACTION_STORE, entry.clientActionId);
-      processed += 1;
-    } else {
-      // Jede andere JSON-Antwort des Servers ist **endgültig**: Der Vorgang
-      // ließ sich nicht anwenden – etwa ein Ausstempeln ohne Gegenstück, dessen
-      // Buchung auf dem Server längst geschlossen ist, oder eine ungültige
-      // beziehungsweise überschneidende Buchung. Er wird entfernt, damit er
-      // nicht als Geistereintrag „wartet" stehen bleibt.
-      //
-      // Echte Reihenfolgeabhängigkeiten kommen hier nie an: Ein vorheriger
-      // vorübergehender Fehler setzt punchBlocked, und die abhängige Stempelung
-      // wird oben übersprungen und aufgehoben, um beim nächsten Durchgang der
-      // Reihe nach erneut zu laufen.
-      await deleteRecord(ACTION_STORE, entry.clientActionId);
-      skipped += 1;
-    }
-  }
-
-  const remaining = await refreshQueueIndicator();
-  if (remaining.total === 0) {
-    dispatchSyncStatus('Synchronisation erfolgreich. Alle Aktionen wurden übertragen.', 'synced');
-    showFeedback('Synchronisation erfolgreich.', 'success');
-    return { processed, failed: 0, skipped };
-  }
-  if (processed > 0 || skipped > 0) {
-    dispatchSyncStatus('Synchronisation teilweise erfolgreich. Verbleibende Aktionen folgen automatisch.', 'queue');
-    showFeedback('Teilweise synchronisiert. Rest wird erneut versucht.', 'info');
-    return { processed, failed: remaining.total, skipped };
-  }
-  dispatchSyncStatus('Server aktuell nicht erreichbar. Aktionen bleiben sicher lokal gespeichert.', 'unreachable');
-  return { processed: 0, failed: remaining.total, skipped };
-}
-
-let syncRequestedWhileInFlight = false;
+const syncEngine = new SyncEngine(outbox, {
+  notify: (state, message) => dispatchSyncStatus(message, state),
+  snapshot: session => {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) meta.content = session.csrf_token;
+    return syncServerData();
+  },
+});
 
 async function performReconnectSync(trigger = 'auto') {
-  if (syncInFlight) {
-    // Aktion wurde eingereiht, während ein Sync bereits lief (z. B. Kommentar
-    // direkt nach dem Beenden gespeichert): Folgesync vormerken, sonst bleibt
-    // die Aktion bis zum nächsten externen Trigger in der Queue liegen.
-    syncRequestedWhileInFlight = true;
-    return;
-  }
-  syncInFlight = true;
-  await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: true, updatedAt: Date.now() });
+  if (updateQuiesced) return;
   try {
-    const status = await checkServerReachability(true);
-    if (status !== 'online') {
-      if (status === 'unreachable') {
-        dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar.', 'unreachable');
-      } else {
-        dispatchSyncStatus('Keine Verbindung. Du arbeitest offline.', 'offline');
-      }
-      // Trotzdem mit den örtlich vorhandenen Daten zeichnen
-      await recomputeEffectiveState();
-      renderOverview().catch(() => {});
-      renderSalden().catch(() => {});
-      renderVacations().catch(() => {});
-      return;
-    }
-
-    // 1. Pull latest data from server
-    const syncOk = await syncServerData();
+    await syncEngine.run(['manual', 'online-event', 'resume', 'punch', 'vacation'].includes(trigger));
     await recomputeEffectiveState();
-
-    if (syncOk) {
-      // 2. Refresh CSRF token so queued actions use a valid token
-      await refreshCsrfToken();
-      // 3. Flush offline queue (push local actions to server)
-      await flushOfflineQueue();
-      // 4. Pull again to get server state after our pushed actions
-      await syncServerData();
-      await recomputeEffectiveState();
-    }
-
     await refreshQueueIndicator();
-    // Re-render client-side tabs with fresh data
+    await updateSettingsTab();
     renderOverview().catch(() => {});
     renderSalden().catch(() => {});
     renderVacations().catch(() => {});
-
-    if (trigger !== 'background' && syncOk) {
-      dispatchSyncStatus('Server wieder erreichbar. Daten sind synchronisiert.', 'synced');
-    }
-  } finally {
-    await putRecord(META_STORE, { key: SYNC_LOCK_KEY, value: false, updatedAt: Date.now() });
-    syncInFlight = false;
-    await checkServerReachability();
-    if (syncRequestedWhileInFlight) {
-      syncRequestedWhileInFlight = false;
-      window.setTimeout(() => { performReconnectSync('follow-up').catch(() => {}); }, 0);
-    }
+    await renderSyncDetails();
+  } catch (error) {
+    dispatchSyncStatus(error.message, 'storage');
   }
 }
 
@@ -1044,7 +784,7 @@ async function processPunchSubmission(form, payload) {
   // Die tatsächliche Zeit **jetzt** festhalten – den Moment des Tippens. So
   // übersteht sie die Warteschlange und erreicht den Server auch dann richtig,
   // wenn erst Stunden später übertragen wird.
-  if (!payload.event_time) payload.event_time = localIsoTimestamp();
+  if (!payload.event_time) payload.event_time = new Date().toISOString();
   if (payload.action === 'start_company') {
     payload.company_name = determineCompanyName(form, payload);
     // Suchvorschlag gewählt, aber Dropdown unberührt: company_id client-seitig
@@ -1075,7 +815,8 @@ async function processPunchSubmission(form, payload) {
   // wird aufgrund einer Vermutung des Geräts verworfen – genau daran gingen
   // früher Ausstempelungen verloren. Was eine Dublette ist, entscheidet allein
   // der Server anhand der `client_action_id`.
-  await queueAction('punch', payload);
+  form.dataset.savedActionId = await queueAction('punch', payload);
+  dispatchSyncStatus('Buchung sicher auf diesem Gerät gespeichert. Übertragung steht aus.', navigator.onLine ? 'queue' : 'offline');
   await recomputeEffectiveState();
   await refreshQueueIndicator();
   showFeedback('Buchung lokal erfasst. Synchronisiere …', 'info');
@@ -1093,7 +834,7 @@ async function processPunchSubmission(form, payload) {
 
   // Sofortige Übertragung im Hintergrund anstoßen – die Bedienung wartet nicht darauf
   try {
-    await performReconnectSync('punch');
+    void performReconnectSync('punch');
   } catch { /* sync failure is non-fatal – action stays in queue */ }
 }
 
@@ -1101,36 +842,57 @@ async function processVacationSubmission(form, payload) {
   payload.client_action_id = payload.client_action_id || generateClientActionId('vacation');
 
   // ── Queue-first: always save locally, then attempt sync ──
-  await queueAction('vacation', payload);
+  form.dataset.savedActionId = await queueAction('vacation', payload);
+  dispatchSyncStatus('Antrag auf diesem Gerät gespeichert. Übertragung steht aus.', navigator.onLine ? 'queue' : 'offline');
   await renderVacations();
   await refreshQueueIndicator();
   showFeedback('Urlaubsantrag lokal erfasst. Synchronisiere …', 'info');
 
   // Attempt immediate sync in background
   try {
-    await performReconnectSync('vacation');
+    void performReconnectSync('vacation');
   } catch { /* sync failure is non-fatal – action stays in queue */ }
 }
 
 async function handleOfflineSubmission(event) {
   event.preventDefault();
+  if (updateQuiesced) return;
   const form = event.target;
-  const payload = serializeFormData(form);
-  if (form.dataset.offline === 'vacation') {
-    await processVacationSubmission(form, payload);
-  } else {
-    await processPunchSubmission(form, payload);
-  }
-  form.reset();
-  // Steckt das Formular in einem Dialog – etwa „Auftrag starten" –, wird dieser
-  // nach dem Abschicken von selbst geschlossen, damit man wieder in der
-  // gewohnten Ansicht landet. Der Vorgang geht ohnehin zuerst in die
-  // Warteschlange, gilt hier also immer als erfolgreich.
-  const modal = form.closest('.modal');
-  if (modal) {
-    modal.classList.remove('is-visible');
-    modal.setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('modal-open');
+  if (form.dataset.saving === '1') return;
+  form.dataset.saving = '1';
+  localWriteInFlight++;
+  const buttons = [...form.querySelectorAll('button[type="submit"], button:not([type])')];
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const payload = serializeFormData(form);
+    if (form.dataset.offline === 'vacation') await processVacationSubmission(form, payload);
+    else await processPunchSubmission(form, payload);
+    form.reset();
+    dirtyForms.delete(form);
+    const modal = form.closest('.modal');
+    if (modal) {
+      modal.classList.remove('is-visible');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('modal-open');
+    }
+  } catch (error) {
+    if (form.dataset.savedActionId) {
+      // A later display/read failure must not turn a durable write into a
+      // misleading "not saved" message and invite the user to book it again.
+      const message = `Buchung lokal gespeichert. Anzeige konnte nicht aktualisiert werden: ${error.message}. Bitte abgleichen.`;
+      showFeedback(message, 'error');
+      dispatchSyncStatus(message, 'storage');
+      form.reset();
+      dirtyForms.delete(form);
+    } else {
+      showFeedback(`Nicht gespeichert: ${error.message}`, 'error');
+      dispatchSyncStatus(`Buchung nicht bestätigt: ${error.message}`, 'storage');
+    }
+  } finally {
+    localWriteInFlight--;
+    form.dataset.saving = '';
+    delete form.dataset.savedActionId;
+    buttons.forEach(button => { button.disabled = false; });
   }
 }
 
@@ -1339,6 +1101,11 @@ function registerOfflineForms() {
 
 function initializeServerStateFromDataset() {
   const root = document.querySelector(MOBILE_STATE_SELECTOR);
+  if (root?.hasAttribute('data-offline-shell')) {
+    initialServerState = null;
+    mobileState = buildStateFromEntry(null);
+    return;
+  }
   if (!root) {
     initialServerState = buildStateFromEntry(null);
     mobileState = buildStateFromEntry(null);
@@ -1759,57 +1526,13 @@ async function initSettingsTab() {
   }
 
   const syncBtn = document.getElementById('mobile-sync-now-btn');
-  if (syncBtn) {
-    syncBtn.addEventListener('click', async () => {
-      syncBtn.disabled = true;
-      try {
-        const reachability = await checkServerReachability(true);
-        if (reachability !== 'online') {
-          showFeedback('Server nicht erreichbar. Bitte Internetverbindung prüfen.', 'error');
-          return;
-        }
-        const syncOk = await syncServerData();
-        if (syncOk) {
-          await refreshCsrfToken();
-          await flushOfflineQueue();
-          await syncServerData(); // second pass after queue flush
-          renderOverview().catch(() => {});
-          renderSalden().catch(() => {});
-          renderVacations().catch(() => {});
-          await updateSettingsTab();
-          dispatchSyncStatus('Synchronisation erfolgreich abgeschlossen.', 'synced');
-          showFeedback('Synchronisation abgeschlossen.', 'success');
-        } else {
-          await updateSettingsTab();
-        }
-      } finally {
-        syncBtn.disabled = false;
-      }
-    });
-  }
-
+  if (syncBtn) syncBtn.addEventListener('click', () => performReconnectSync('manual'));
   const clearBtn = document.getElementById('mobile-clear-cache-btn');
   if (clearBtn) {
+    clearBtn.textContent = 'Übersicht neu laden';
     clearBtn.addEventListener('click', async () => {
-      if (
-        !confirm(
-          'Alle lokal gespeicherten Daten und noch nicht synchronisierten Offline-Aktionen löschen?\n\nDaten auf dem Server bleiben erhalten.'
-        )
-      )
-        return;
-      // Keep settings, clear everything else
-      const settingsRecord = await getRecord(META_STORE, 'settings');
-      await withStore(ACTION_STORE, 'readwrite', (store) => store.clear());
-      await withStore(DATA_STORE, 'readwrite', (store) => store.clear());
-      await withStore(META_STORE, 'readwrite', (store) => store.clear());
-      if (settingsRecord) await putRecord(META_STORE, settingsRecord);
-      mobileState = buildStateFromEntry(null);
-      updateUiState();
-      updateLocalDataBadge(false);
-      updateLastSyncLabel(null);
-      await refreshQueueIndicator();
-      await updateSettingsTab();
-      showFeedback('Lokaler Cache wurde geleert.', 'success');
+      // Only refresh derived display data. Outbox, account and receipts stay intact.
+      await performReconnectSync('manual');
     });
   }
 }
@@ -1826,50 +1549,69 @@ async function initializeSyncMeta() {
 
 function setupConnectionHandlers() {
   window.addEventListener('online', () => performReconnectSync('online-event'));
-  window.addEventListener('offline', async () => {
-    setStatusBadge('offline');
-    dispatchSyncStatus('Keine Verbindung. Eingaben werden lokal gespeichert.', 'offline');
-    await checkServerReachability(true);
-  });
-  // iOS-PWA: Beim Zurückholen in den Vordergrund synchronisieren – die App
-  // bleibt dort oft tagelang "geladen", ohne dass ein online-Event oder ein
-  // Seitenstart erneut feuert.
+  window.addEventListener('offline', () => dispatchSyncStatus('Offline. Neue Buchungen werden auf diesem Gerät gespeichert.', 'offline'));
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      performReconnectSync('resume').catch(() => {});
+    if (document.visibilityState === 'visible') performReconnectSync('resume');
+  });
+  window.addEventListener('pageshow', () => performReconnectSync('resume'));
+  // iOS has no Background Sync. Retry while visible; resume is mandatory.
+  window.setInterval(() => {
+    if (document.visibilityState === 'visible' && navigator.onLine) performReconnectSync('background');
+  }, 15000);
+  navigator.serviceWorker?.addEventListener('message', event => {
+    if (event.data?.type === 'SYNC_COMPLETE') performReconnectSync('worker');
+    if (event.data?.type === 'CAN_ACTIVATE') {
+      const safe = canActivateUpdate();
+      if (safe) {
+        updateQuiesced = true;
+        const dashboard = document.querySelector('.mobile-dashboard');
+        if (dashboard) dashboard.inert = true;
+        // Another tab may veto or disappear. Never leave this page disabled.
+        setTimeout(() => { updateQuiesced = false; if (dashboard) dashboard.inert = false; }, 5000);
+      }
+      event.ports[0]?.postMessage({ safe });
     }
   });
 }
 
-// ── Service-Worker-Updates ────────────────────────────────────────────────────
-// Die installierte PWA lädt /mobile aus dem SW-Cache; ohne aktive Update-Prüfung
-// bekam sie neue Versionen nie mit (Sync brach, bis die App neu installiert
-// wurde). Deshalb: update() bei Start/Resume und nach jedem Sync mit neuer
-// Server-Version; übernimmt ein neuer Worker die Kontrolle, wird die Seite
-// einmalig neu geladen, damit frische Assets aktiv werden.
-let swReloadedForUpdate = false;
+function canActivateUpdate() {
+  return !localWriteInFlight && !syncEngine.running && ![...dirtyForms].some(form => form.isConnected)
+    && !document.querySelector('.modal.is-visible');
+}
 
 function setupServiceWorkerUpdateHandling() {
   if (!('serviceWorker' in navigator)) return;
-
+  let reloaded = false;
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    // Erstinstallation (clients.claim ohne vorherigen Controller) nicht neu
-    // laden – nur echte Updates; und nur einmal (kein Reload-Loop).
-    if (!hadController || swReloadedForUpdate) return;
-    swReloadedForUpdate = true;
-    window.location.reload();
+    // Only an explicitly accepted update reloads this tab. Persisted stamps survive.
+    if (hadController && !reloaded && canActivateUpdate()) {
+      reloaded = true;
+      window.location.reload();
+    } else if (!canActivateUpdate()) {
+      showUpdateAvailable();
+    }
   });
-
-  const triggerUpdateCheck = () => {
-    navigator.serviceWorker.getRegistration()
-      .then((registration) => registration?.update())
-      .catch(() => {});
+  const check = async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) return;
+    if (registration.waiting) showUpdateAvailable();
+    registration.addEventListener('updatefound', () => {
+      registration.installing?.addEventListener('statechange', () => {
+        if (registration.waiting) showUpdateAvailable();
+      });
+    });
+    await registration.update();
   };
-  triggerUpdateCheck();
+  check().catch(() => {});
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') triggerUpdateCheck();
+    if (document.visibilityState === 'visible') check().catch(() => {});
   });
+}
+
+function showUpdateAvailable() {
+  const button = document.getElementById('sync-update');
+  if (button) button.hidden = false;
 }
 
 async function handleServerVersion(serverVersion) {
@@ -1886,7 +1628,117 @@ async function handleServerVersion(serverVersion) {
   }
 }
 
+function installSyncPanel() {
+  const container = document.querySelector('.mobile-dashboard');
+  if (!container) return;
+  for (const name of ['input', 'change']) container.addEventListener(name, event => {
+    const form = event.target.closest('form');
+    if (form) dirtyForms.add(form);
+  });
+  container.addEventListener('reset', event => dirtyForms.delete(event.target));
+  const panel = document.createElement('section');
+  panel.id = 'sync-status';
+  panel.className = 'sync-status';
+  panel.setAttribute('aria-label', 'Buchungssicherheit und Synchronisation');
+  panel.innerHTML = `<div role="status" aria-live="polite" aria-atomic="true">
+    <strong data-sync-label>Synchronisation wird vorbereitet</strong>
+    <p data-sync-message>Gespeicherte Buchungen werden geprüft.</p></div>
+    <div class="sync-status__actions">
+      <button type="button" class="button small" data-sync-retry>Jetzt abgleichen</button>
+      <a href="/login" class="button small" data-sync-login hidden>Erneut anmelden</a>
+      <button type="button" class="button small" id="sync-update" hidden>Update verfügbar · jetzt laden</button>
+    </div>
+    <details><summary>Buchungen und Synchronisationsdetails</summary>
+      <p data-sync-owner></p><p data-sync-count></p><p data-sync-last></p>
+      <ul data-sync-entries></ul><p data-sync-decision></p>
+      <button type="button" class="button ghost small" data-sync-export>Buchungen als Sicherung exportieren</button>
+      <label class="sync-import">Buchungssicherung wiederherstellen
+        <input type="file" data-sync-import accept="application/json,.json">
+      </label>
+      <button type="button" class="button ghost small" data-sync-identity hidden>Alte Buchungen meinem Konto zuordnen</button>
+      <p class="muted">Ausstehende Buchungen bleiben bis zur Bestätigung erhalten. Bei Problemen die App nicht löschen.
+      Safari/iOS kann Website-Daten entfernen; die Sicherung enthält deine lokalen Buchungen.</p>
+    </details>`;
+  container.querySelector('header')?.after(panel);
+  panel.querySelector('[data-sync-retry]').addEventListener('click', () => performReconnectSync('manual'));
+  panel.querySelector('details').addEventListener('toggle', () => renderSyncDetails().catch(error => dispatchSyncStatus(error.message, 'storage')));
+  panel.querySelector('[data-sync-export]').addEventListener('click', async () => {
+    try {
+      const backup = { format: 'erfassung-outbox-1', exportedAt: new Date().toISOString(), owner: await outbox.identity(),
+        actions: await outbox.pending(), receipts: (await outbox.all(DATA_STORE)).filter(row => row.key.startsWith('receipt:')) };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(backup, (key, value) => key === 'csrf_token' ? undefined : value, 2)], { type: 'application/json' }));
+      const link = document.createElement('a'); link.href = url; link.download = 'erfassung-buchungssicherung.json'; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (error) { dispatchSyncStatus(error.message, 'storage'); }
+  });
+  panel.querySelector('[data-sync-import]').addEventListener('change', async event => {
+    try {
+      const file = event.target.files[0];
+      if (!file) return;
+      if (file.size > 10 * 1024 * 1024) throw new Error('Die Sicherung ist zu groß (maximal 10 MB).');
+      const backup = JSON.parse(await file.text());
+      if (!confirm('Diese Buchungssicherung für dein Konto wiederherstellen? Vorhandene Buchungen bleiben erhalten.')) return;
+      localWriteInFlight++;
+      try { await outbox.restore(backup); } finally { localWriteInFlight--; }
+      await performReconnectSync('manual');
+    } catch (error) { dispatchSyncStatus(error.message, 'storage'); }
+    finally { event.target.value = ''; }
+  });
+  panel.querySelector('[data-sync-identity]').addEventListener('click', async () => {
+    try {
+      const session = await syncEngine.request('/api/mobile/session');
+      if (await outbox.identity()) return;
+      const entries = await outbox.pending();
+      if (!entries.length) return;
+      if (!confirm(`${entries.length} alte Buchungen ohne Kontozuordnung gefunden. Gehören ALLE zu ${session.user.name}? Nur dann bestätigen. Andernfalls zuerst exportieren und prüfen lassen.`)) return;
+      await outbox.put(META_STORE, { key: 'owner', ...session.user });
+      await outbox.identity();
+      await performReconnectSync('manual');
+    } catch (error) { dispatchSyncStatus(error.message, error.state || 'error'); }
+  });
+  panel.querySelector('#sync-update').addEventListener('click', async () => {
+    if (!canActivateUpdate()) { showFeedback('Bitte Eingabe abschließen und den laufenden Abgleich abwarten.', 'info'); return; }
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration?.waiting) { window.location.reload(); return; }
+    window.erfassungUpdateAccepted = true;
+    const channel = new MessageChannel();
+    channel.port1.onmessage = event => {
+      if (!event.data?.accepted) {
+        window.erfassungUpdateAccepted = false;
+        showFeedback('In einem anderen Fenster läuft noch eine Eingabe. Bitte dort abschließen oder das Fenster schließen.', 'info');
+      }
+      channel.port1.close();
+    };
+    registration.waiting.postMessage({ type: 'ACTIVATE_UPDATE' }, [channel.port2]);
+  });
+}
+
+async function renderSyncDetails() {
+  const panel = document.getElementById('sync-status');
+  if (!panel) return;
+  const owner = await outbox.identity();
+  const entries = await outbox.pending();
+  const last = await getRecord(META_STORE, 'lastSyncAt');
+  panel.querySelector('[data-sync-owner]').textContent = owner ? `Konto: ${owner.name || owner.id}` : 'Konto noch nicht zugeordnet';
+  panel.querySelector('[data-sync-count]').textContent = `${entries.length} Buchung(en) noch nicht abschließend bestätigt`;
+  panel.querySelector('[data-sync-last]').textContent = last?.value ? `Letzter vollständiger Abgleich: ${new Date(last.value).toLocaleString('de-DE')}` : 'Noch kein vollständiger Abgleich';
+  updateLastSyncLabel(last?.value);
+  const list = panel.querySelector('[data-sync-entries]');
+  list.replaceChildren();
+  for (const entry of entries) {
+    const li = document.createElement('li');
+    const label = ({ start_work: 'Arbeitszeit starten', end_work: 'Arbeitszeit beenden', start_break: 'Pause starten',
+      end_break: 'Pause beenden', start_company: 'Auftrag starten', end_company: 'Auftrag beenden', update_notes: 'Kommentar' })[entry.payload?.action] || 'Urlaubsantrag';
+    li.textContent = `${label} · ${entry.payload?.event_time ? new Date(entry.payload.event_time).toLocaleString('de-DE') : new Date(entry.createdAt).toLocaleString('de-DE')} · ${entry.status === 'conflict' ? 'Wartet auf Freigabe' : 'Lokal gespeichert'}${entry.message ? `: ${entry.message}` : ''}`;
+    list.appendChild(li);
+  }
+  const decision = await getRecord(META_STORE, 'lastDecision');
+  panel.querySelector('[data-sync-decision]').textContent = decision ? `Eine Buchung wurde bei der Prüfung abgelehnt: ${decision.message}` : '';
+}
+
 window.addEventListener('DOMContentLoaded', async () => {
+  installSyncPanel();
+  try {
   // Das heutige Datum in der Offline-Hülle setzen; das statische HTML bringt
   // keines vom Server mit.
   const offlineDateEl = document.getElementById('offline-shell-date');
@@ -1905,6 +1757,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   setupConnectionHandlers();
   setupServiceWorkerUpdateHandling();
   initializeServerStateFromDataset();
+  await outbox.identity();
   await initializeSyncMeta();
   await initSettingsTab();
   await hydrateCompaniesFromCache();
@@ -1923,11 +1776,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   } catch { /* sync failure is non-fatal */ }
   await updateSettingsTab();
 
-  // Show status based on current reachability
-  const status = await checkServerReachability();
-  if (status === 'unreachable') {
-    dispatchSyncStatus('Internet vorhanden, aber Server nicht erreichbar. Lokale Daten werden genutzt.', 'unreachable');
-  } else if (status !== 'online') {
-    dispatchSyncStatus('Offline-Modus aktiv. Lokale Daten werden verwendet.', 'offline');
+  } catch (error) {
+    dispatchSyncStatus(error.message, 'storage');
   }
 });
