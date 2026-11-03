@@ -1,6 +1,7 @@
 const {test:base,expect}=require('@playwright/test');
 const {execFileSync}=require('node:child_process');
 const {randomUUID}=require('node:crypto');
+const fs=require('node:fs'),path=require('node:path');
 const test=base.extend({
   account:async({},use)=>{
     const username=`pwa-${randomUUID().slice(0,10)}`;
@@ -15,14 +16,23 @@ async function login(page,account){
   await Promise.all([page.waitForURL('**/dashboard'),page.locator('button[type=submit]').click()]);
   await page.goto('/mobile');
   await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
-  await page.evaluate(()=>navigator.serviceWorker.ready);
-  await page.reload();
+  // Wait for control without aborting a startup/resume sync with an artificial
+  // reload. Reload/restart behavior is exercised explicitly by the relevant tests.
+  await page.evaluate(async()=>{
+    await navigator.serviceWorker.ready;
+    if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));
+  });
   await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
 }
 async function pending(page){return page.evaluate(async()=>{const s=new ErfassungSync.MobileStore();try{return await s.pending();}finally{s.close();}});}
 async function queue(page,action='start_work',eventTime){return page.evaluate(async({action,eventTime})=>{const s=new ErfassungSync.MobileStore();try{return await s.enqueue('punch',{action,event_time:eventTime||new Date().toISOString()});}finally{s.close();}},{action,eventTime});}
 async function count(page,n){await expect.poll(async()=>(await pending(page)).length).toBe(n);}
 async function sync(page){await page.locator('[data-sync-retry]').click();}
+function networkFault(mode){
+  const marker=path.join(process.env.ERFASSUNG_E2E_ROOT,'network-fault');
+  fs.writeFileSync(marker,mode);
+  return ()=>fs.rmSync(marker,{force:true});
+}
 
 // A real form/IndexedDB/server round trip, with the service worker controlling navigation.
 test('online stamp is saved and acknowledged',async({page,account})=>{
@@ -90,23 +100,29 @@ test('offline interface remains usable at phone width',async({page,account,conte
   await expect(page.locator('[data-sync-label]')).toHaveText('Offline');
 });
 
-test('connection lost after server commit retries the same event without duplication',async({page,context,account})=>{
+test('connection lost after server commit retries the same event without duplication',async({page,account})=>{
   await login(page,account);
-  await context.route('**/api/mobile/actions',async route=>{await route.fetch();await route.abort('failed');});
-  await queue(page);
-  await sync(page);await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisation fehlgeschlagen');await count(page,1);
-  const id=(await pending(page))[0].clientActionId;
-  await context.unroute('**/api/mobile/actions');await sync(page);await count(page,0);
-  const receipt=await page.evaluate(async id=>{const s=new ErfassungSync.MobileStore();try{return (await s.get('mobileData',`receipt:${id}`)).receipt;}finally{s.close();}},id);
-  expect(receipt.duplicate).toBe(true);
+  const recover=networkFault('disconnect-after-commit');
+  try{
+    const id=await queue(page);
+    await sync(page);await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisation fehlgeschlagen');await count(page,1);
+    expect((await (await page.request.get('/mobile/sync-data')).json()).active_entry).toBeTruthy();
+    expect((await pending(page))[0].clientActionId).toBe(id);
+    recover();await sync(page);await count(page,0);
+    const receipt=await page.evaluate(async id=>{const s=new ErfassungSync.MobileStore();try{return (await s.get('mobileData',`receipt:${id}`)).receipt;}finally{s.close();}},id);
+    expect(receipt.duplicate).toBe(true);
+  }finally{recover();}
 });
 
-test('HTML response is never interpreted as a booking receipt',async({page,context,account})=>{
+test('HTML response is never interpreted as a booking receipt',async({page,account})=>{
   await login(page,account);
-  await context.route('**/api/mobile/actions',route=>route.fulfill({status:200,contentType:'text/html',body:'<h1>Login</h1>'}));
-  await queue(page);
-  await sync(page);await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisation fehlgeschlagen');await count(page,1);
-  await context.unroute('**/api/mobile/actions');await sync(page);await count(page,0);
+  const recover=networkFault('html');
+  try{
+    await queue(page);
+    await sync(page);await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisation fehlgeschlagen');await count(page,1);
+    expect((await (await page.request.get('/mobile/sync-data')).json()).active_entry).toBeNull();
+    recover();await sync(page);await count(page,0);
+  }finally{recover();}
 });
 
 test('version 4 IndexedDB is migrated without losing its pending event',async({page,account})=>{
@@ -127,15 +143,14 @@ test('version 4 IndexedDB is migrated without losing its pending event',async({p
   expect(await page.evaluate(async()=>{const s=new ErfassungSync.MobileStore();try{return !!await s.get('mobileData','receipt:legacy-e2e');}finally{s.close();}})).toBe(true);
 });
 
-test('update waits for acceptance and preserves pending events across worker change',async({page,context,account})=>{
-  const fs=require('node:fs'),path=require('node:path');
+test('update waits for acceptance and preserves pending events across worker change',async({page,account})=>{
   const marker=path.join(process.env.ERFASSUNG_E2E_ROOT,'worker-version');
   await login(page,account);
-  await context.route('**/api/mobile/actions',route=>route.abort('failed'));
-  const id=await queue(page);
-  // A release changes the actual worker bytes, exercising install/waiting/activate.
-  fs.writeFileSync(marker,`0.21.0-e2e-${Date.now()}`);
+  const recover=networkFault('unavailable');
   try {
+    const id=await queue(page);
+    // A release changes the actual worker bytes, exercising install/waiting/activate.
+    fs.writeFileSync(marker,`0.21.0-e2e-${Date.now()}`);
     await page.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();await r.update();});
     await expect(page.locator('#sync-update')).toBeVisible();
     await count(page,1);
@@ -151,8 +166,8 @@ test('update waits for acceptance and preserves pending events across worker cha
     await expect.poll(()=>page.evaluate(async()=>!(await navigator.serviceWorker.getRegistration()).waiting)).toBe(true);
     await expect(page.locator('#sync-status')).toBeVisible();await count(page,1);
     expect((await pending(page))[0].clientActionId).toBe(id);
-    await context.unroute('**/api/mobile/actions');await sync(page);await count(page,0);
-  } finally {fs.rmSync(marker,{force:true});}
+    recover();await sync(page);await count(page,0);
+  } finally {recover();fs.rmSync(marker,{force:true});}
 });
 
 test('confirmed running work is available for clock-out after offline restart',async({page,context,account})=>{

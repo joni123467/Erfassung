@@ -68,7 +68,11 @@ Clientcode.
 Der Container verwendet einen festgelegten Basisimage-Digest sowie einen
 Hash-geprüften Abhängigkeits-Lock. Compose prüft den funktionalen Health-Endpunkt.
 GitHub Actions führt Python-, JavaScript- und Chromium/WebKit-Tests sowie einen
-Containerstart mit Neustartprüfung vor dem Publishing aus.
+Containerstart mit Neustartprüfung vor dem Publishing als getrennte Checks aus.
+Browserfehler werden direkt an der Teststelle annotiert. Die Simulation von
+Netzabbrüchen und falschen HTTP-Antworten erfolgt im isolierten Testserver;
+Playwright-Routing allein erfasst Service-Worker-Anfragen unter WebKit nicht
+zuverlässig.
 
 ## Nachweise und Grenzen
 

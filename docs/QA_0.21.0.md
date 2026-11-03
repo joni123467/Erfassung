@@ -1,6 +1,6 @@
 # Abschluss- und Prüfbericht 0.21.0
 
-Stand: 2. November 2026. Entwicklungsbranch: `version-0.21.0`, ausgehend von
+Stand: 3. November 2026. Entwicklungsbranch: `version-0.21.0`, ausgehend von
 `022b752` / Version 0.20.9. Zielbetrieb: installierte iOS-PWA pro Benutzer,
 Deutschland, SQLite und mindestens eine Woche offline. Keine Veröffentlichung
 und kein Produktivdeployment wurden durchgeführt.
@@ -10,7 +10,7 @@ und kein Produktivdeployment wurden durchgeführt.
 Die Synchronisation wurde innerhalb der bestehenden FastAPI-/Jinja-/JavaScript-
 Architektur überarbeitet. Ein Frameworkwechsel war dafür nicht erforderlich.
 Die Implementierung und ihre lokalen Prüfungen sind abgeschlossen. Die unten
-genannten WebKit-, Geräte- und externen Integrationsprüfungen stehen noch aus;
+genannten Geräte- und externen Integrationsprüfungen stehen noch aus;
 eine vollständige Freigabe für den iOS-Produktivbetrieb wird daher nicht behauptet.
 
 Der konkrete alte iOS-Zustand ist nach der vom Benutzer vorgenommenen
@@ -64,6 +64,7 @@ Details, Protokoll und Rollout:
 | Vollständige Python-Suite, Python 3.11.17 | 910 bestanden, 0 fehlgeschlagen, 0 übersprungen | Alle 42 Testdateien in vier isolierten Prozessen mit getrennten temporären Verzeichnissen; kein pytest-xdist |
 | Node-Test-Suite | 17 bestanden, 0 fehlgeschlagen, 0 übersprungen | IndexedDB, Queue, Identität, Backoff, Lease und Fehlerbehandlung |
 | Playwright / System-Chromium | 15 bestanden | Reale Browser-, IndexedDB-, Service-Worker- und HTTP-Abläufe, ohne automatische Testwiederholungen |
+| Playwright / WebKit | 15 bestanden | Am 3. November nachgeholt; gemeinsam mit Chromium 30/30 bestanden, ohne übersprungene Tests oder Wiederholungen |
 | Docker-Build | Erfolgreich | Hash-geprüfte Python-Pakete, festgelegtes Python-3.11-Basisimage; Cloud-CA nur als temporäres BuildKit-Secret |
 | Containerstart und Neustart | Erfolgreich | Health 0.21.0, Login, Stempelpaar, Dublettenquittung, Konfliktseite und Worker-Version; Benutzer, Schema 25, Quittungen, Konfiguration und Logs bleiben erhalten |
 | Entwicklungsumgebung neu starten | Erfolgreich | Upgrade auf Schema 25, SQLite-Integrität, unveränderte Benutzer-/Konfigurationsprüfsummen, Health und Assets |
@@ -95,14 +96,37 @@ simulierten Offline-Woche und einen Lesefehler nach erfolgreicher Speicherung.
 Die lokalen Rohprotokolle und XML-Ergebnisse liegen in der Cloud-Arbeitsumgebung
 unter `/workspace/erfassung-cloud/`, insbesondere `final-tests/all.xml`,
 `node-tests-final.log`, `browser-tests-final.log`, `docker-build-final.log` und
-`docker-smoke-result.txt`. Diese temporären Ausgaben gehören nicht ins Repository.
+`docker-smoke-result.txt`. Die Browser-Nachprüfung vom 3. November steht in
+`browser-tests-ci-fix.log`. Diese temporären Ausgaben gehören nicht ins Repository.
 
 ## CI/CD, Abhängigkeiten und Skills
 
 `.github/workflows/checks.yml` prüft Python, Node, Chromium, WebKit sowie
-Containerstart und Neustart. Der bestehende Container-Publishing-Workflow wartet
-auf diese Prüfungen. **Ein entfernter GitHub-Actions-Lauf wurde nicht gestartet.**
-Die lokale Ausführung belegt kein bereits erfolgreiches CI-Publishing.
+Containerstart und Neustart als getrennte Jobs auf Ubuntu 24.04. Der bestehende
+Container-Publishing-Workflow wartet auf alle diese Prüfungen. Der bisherige
+Checkname `tests` bleibt als gemeinsamer Abschlusscheck erhalten und verlangt
+den Erfolg aller Einzelprüfungen. Der erste
+[GitHub-Lauf](https://github.com/joni123467/Erfassung/actions/runs/41473637069)
+bestand Python und JavaScript, scheiterte im Browser-Schritt und übersprang
+deshalb Docker. Das war kein Scheitern sämtlicher Tests.
+
+Bei der Nachprüfung wurden unter WebKit drei Fehler der Testsimulation
+reproduziert: Playwright-Routing fing die Service-Worker-kontrollierten
+Anfragen nicht ab; statt des simulierten Fehlers kam die normale erfolgreiche
+Serverantwort. Die Fehler werden nun ausschließlich im Testserver ausgelöst.
+Der Abbruchtest trennt die HTTP-Verbindung nach tatsächlichem Commit und prüft
+danach dieselbe offene ID sowie die Dublettenquittung beim Wiederholen.
+Kein Test wurde deaktiviert, kein Erwartungswert gelockert und kein Service
+Worker für diese Prüfungen abgeschaltet. Die drei korrigierten Fälle bestanden
+lokal unter WebKit; anschließend bestanden alle 30 Browserfälle in Chromium und
+WebKit gemeinsam. Außerdem wartet die Anmelde-Fixture jetzt auf die tatsächliche
+Service-Worker-Kontrolle, statt eine laufende Start-Synchronisation durch einen
+zusätzlichen Reload abzubrechen. Dieser künstliche Abbruch konnte den gültigen
+30-Sekunden-Lease hinterlassen und die 12-Sekunden-Erwartung der Fixture verletzen.
+Die eigenständigen Reload- und vollständigen Browserneustart-Tests bleiben erhalten.
+Den aktuellen CI-Stand zeigt
+[PR #178](https://github.com/joni123467/Erfassung/pull/178); dieser Bericht ist
+kein Nachweis einer Containerveröffentlichung.
 
 Die direkten Python-Abhängigkeiten wurden nicht geändert. `requirements.lock`
 fixiert zusätzlich ihre transitiven Versionen mit Hashes. Neue, ausschließlich
@@ -117,11 +141,13 @@ dieser Vorgang aktiviert oder veröffentlicht die Umgebung nicht.
 
 ## Offene Abnahmen und Betriebsgrenzen
 
-- **WebKit nicht ausgeführt:** Browserdownloads wurden durch die aktive
-  Cloud-Netzrichtlinie mit HTTP 403 blockiert. Die erforderlichen Domains
-  `cdn.playwright.dev` und `playwright.download.prss.microsoft.com` sind im
-  Konfigurationsentwurf ergänzt. Nach Aktivierung der Netzwerkänderung WebKit
-  installieren und `npm run test:browser -- --project=webkit` ausführen.
+- **Lokaler WebKit-Test nachgeholt:** der Download war zunächst blockiert,
+  funktioniert inzwischen aber für WebKit. Fehlende Debian-Bibliotheken wurden
+  aus signierten Paketquellen isoliert im lokalen Browser-Bundle ergänzt und
+  ihre Ladefähigkeit geprüft. Die globale ldconfig-Vorprüfung wurde nur lokal
+  übersprungen, weil diese Bibliotheken außerhalb der Systemverzeichnisse
+  liegen. GitHub installiert Browser und Systembibliotheken regulär über
+  `playwright install --with-deps`; dort wird keine Vorprüfung abgeschaltet.
 - **Physisches iOS-Gerät:** kein realer Test über sieben Kalendertage,
   Betriebssystem-Updates, Speicherbereinigung oder Energiesparmodus. Automatisiert
   wurde das Alter der Ereignisse simuliert; das ist kein siebentägiger Gerätetest.

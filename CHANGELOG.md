@@ -17,6 +17,9 @@
 - Sichtbarer Buchungs-/Syncstatus, kontrollierte Updates und additive
   Wiederherstellung exportierter Buchungssicherungen.
 - JavaScript- und Browserprüfungen; CI-Prüfungen vor der Containerveröffentlichung.
+- Getrennte GitHub-Checks für Python, JavaScript, Chromium, WebKit und Docker;
+  Browserfehler erscheinen direkt an der betroffenen Teststelle. Netzwerkfehler
+  werden auch unter WebKit zuverlässig im isolierten Testserver simuliert.
 
 ### Geändert
 - Service Worker cached eine neutrale Hülle und konsistente Release-Assets.

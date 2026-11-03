@@ -1869,4 +1869,6 @@ npm run test:browser
 ```
 
 Die Browserprüfungen verwenden eine eigene temporäre Datenbank. GitHub Actions
-führt diese Prüfungen und einen Container-Smoke-Test vor dem Publishing aus.
+zeigt Python, JavaScript, Chromium, WebKit und Containerstart als getrennte
+Checks an; alle müssen vor dem Publishing bestehen. Die Browser-Fehlersimulation
+läuft im Testserver, damit auch Service-Worker-Anfragen unter WebKit erfasst werden.

@@ -7,6 +7,7 @@ process.env.ERFASSUNG_PYTHON ||= fs.existsSync('.venv/bin/python') ? path.resolv
 module.exports = defineConfig({
   testDir: './tests/browser', testMatch: '**/*.spec.cjs', fullyParallel: false, workers: 1,
   timeout: 45000, expect: { timeout: 12000 }, retries: 0,
+  reporter: process.env.CI ? [['line'], ['github'], ['junit', { outputFile: 'test-results/browser.xml' }]] : [['list']],
   use: { baseURL: 'http://127.0.0.1:8765', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   projects: [
     { name:'chromium',use:{...devices['Desktop Chrome'],launchOptions:process.env.ERFASSUNG_CHROMIUM_PATH?{executablePath:process.env.ERFASSUNG_CHROMIUM_PATH}:{} }},

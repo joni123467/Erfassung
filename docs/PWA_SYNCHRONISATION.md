@@ -172,12 +172,18 @@ prüft Browser-/Service-Worker-Verhalten mit eigenen Benutzern und einer
 isolierten temporären SQLite-Instanz. Für einen vorhandenen Chromium kann
 `ERFASSUNG_CHROMIUM_PATH=/usr/bin/chromium` gesetzt werden. Die Testserver-Hooks
 liegen ausschließlich in `tests/browser/`; es gibt keine Produktions-Test-API.
+Die HTTP-Fehlersimulation erfolgt an dieser Testserver-Grenze: unvollständige
+Antwort nach tatsächlichem Servercommit, HTML statt JSON und HTTP 503. Das ist
+auch bei von WebKit-Service-Workern kontrollierten Seiten wirksam, deren
+Anfragen Playwright-Routing nicht zuverlässig abfängt. Die Tests behalten echte
+Service Worker und prüfen weiterhin die gespeicherten IDs und Quittungen.
 
 `docker build -t erfassung:0.21.0 .` nutzt den Hash-Lock. In einer Umgebung mit
 vertrauenswürdigem Unternehmens-/Cloud-CA-Bundle kann BuildKit dieses via
 `--secret id=build_ca,src=/pfad/zum/ca-bundle.pem` nur während der Installation
 bereitstellen. TLS-Verifikation bleibt aktiv; das Bundle wird nicht ins Image
 kopiert. Deployment bleibt Docker/GHCR/Portainer mit config/data/logs.
-GitHub Actions prüft Python, JavaScript, Chromium/WebKit und Containerstart vor
-der Imageveröffentlichung. Ein lokaler Testlauf ist keine Bestätigung eines
+GitHub Actions prüft Python, JavaScript, Chromium, WebKit und Containerstart als
+getrennte Jobs auf Ubuntu 24.04 vor der Imageveröffentlichung. Alle Jobs müssen
+bestehen. Ein lokaler Testlauf ist keine Bestätigung eines
 bereits ausgeführten GitHub-Actions-Laufs.
