@@ -110,7 +110,7 @@ jobs:
   # Keep the original check name for existing branch protection rules.
   tests:
     needs: [python, javascript, browser, container]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
