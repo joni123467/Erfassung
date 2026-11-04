@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Lizenz – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_license' %}
 {% include "admin/_nav.html" %}
 
@@ -266,4 +267,6 @@
     </p>
 </section>
 {% endif %}
+
+</div>
 {% endblock %}

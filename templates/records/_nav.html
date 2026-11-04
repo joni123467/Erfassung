@@ -1,6 +1,7 @@
 <nav class="timetac-subnav" aria-label="Buchungen und Urlaub">
-    <a href="/records" class="timetac-subnav__link {% if records_active == 'bookings' %}is-active{% endif %}">Buchungen</a>
+    <a href="/records" class="timetac-subnav__link {% if records_active == 'bookings' %}is-active{% endif %}"{% if records_active == 'bookings' %} aria-current="page"{% endif %}>Buchungen</a>
     {% if has_license_feature('vacation') %}
-        <a href="/records/vacations" class="timetac-subnav__link {% if records_active == 'vacations' %}is-active{% endif %}">Urlaub</a>
+        <a href="/records/vacations" class="timetac-subnav__link {% if records_active == 'vacations' %}is-active{% endif %}"{% if records_active == 'vacations' %} aria-current="page"{% endif %}>Urlaub</a>
     {% endif %}
 </nav>
+{% include "admin/_interface.html" %}

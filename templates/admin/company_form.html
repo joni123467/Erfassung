@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{% if company %}Firma bearbeiten{% else %}Firma anlegen{% endif %} – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'companies' %}
 {% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
@@ -172,4 +173,6 @@
     </p>
 </section>
 {% endif %}
+
+</div>
 {% endblock %}

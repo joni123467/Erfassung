@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Logs – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_logs' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -101,4 +102,6 @@
     setTimeout(function () { window.location.reload(); }, 10000);
 </script>
 {% endif %}
+
+</div>
 {% endblock %}

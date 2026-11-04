@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Freigaben – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'approvals' %}
 {% include "admin/_nav.html" %}
 {% if show_manual_section %}
 <section class="card">
     <h1>Manuelle Zeitbuchungen</h1>
-    <p>Pendente Zeitbuchungen müssen bestätigt werden, bevor sie in Auswertungen erscheinen.</p>
+    <p class="interface-notice">Prüfe Zeitraum, Pause und Auftrag. Offene Zeitbuchungen zählen erst nach deiner Freigabe in den Auswertungen. Eine Ablehnung benötigt eine Begründung.</p>
     <div class="table-scroll">
         <table class="striped-table">
             <thead>
@@ -31,7 +32,7 @@
                     <td>{{ entry.notes or '-' }}</td>
                     <td class="actions">
                         {% if admin_permissions.edit_time_entries %}
-                            <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/edit?next=/admin/approvals&user={{ entry.user_id }}">Bearbeiten</a>
+                            <a class="button ghost small" href="/admin/time-entries/{{ entry.id }}/edit?next=/admin/approvals&user={{ entry.user_id }}">Vor Freigabe bearbeiten</a>
                         {% endif %}
                         <form method="post" action="/admin/time-entries/{{ entry.id }}/status" class="inline-form approval-form">
                             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
@@ -98,6 +99,7 @@
     {% endif %}
     {% if has_withdrawals %}
         <h2>Rücknahmeanfragen</h2>
+        <p class="form-hint">Rücknahme bestätigen hebt die bisherige Genehmigung auf. Bei Ablehnung bleibt der bisherige Antrag bestehen.</p>
         <div class="table-scroll">
             <table class="striped-table">
                 <thead>
@@ -154,4 +156,6 @@
     <p>Sie verfügen über keine Freigaberechte.</p>
 </section>
 {% endif %}
+
+</div>
 {% endblock %}

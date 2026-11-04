@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Datenbank – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_database' %}
 {% include "admin/_nav.html" %}
 
@@ -263,4 +264,6 @@
     updateForType();
 })();
 </script>
+
+</div>
 {% endblock %}

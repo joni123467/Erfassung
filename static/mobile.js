@@ -472,6 +472,8 @@ function startWorkTimer() {
 
 function updateUiState() {
   if (!mobileState) return;
+  const dashboard = document.querySelector(MOBILE_STATE_SELECTOR);
+  if (dashboard) dashboard.dataset.workState = mobileState.onBreak ? 'pause' : mobileState.isWorking ? 'working' : 'idle';
   applyStateVisibility('active', mobileState.isWorking);
   applyStateVisibility('idle', !mobileState.isWorking);
   applyStateVisibility('break-active', mobileState.isWorking && mobileState.onBreak);
@@ -486,6 +488,7 @@ function updateUiState() {
     'break-start': mobileState.onBreak ? mobileState.breakLabel || '--:--' : '',
     'break-total': mobileState.breakTotalLabel || '0:00',
     'booking-mode': mobileState.hasCompany ? 'Auftrag läuft' : 'Nur Arbeitszeit',
+    'work-status': mobileState.onBreak ? 'Pause läuft' : 'Arbeitszeit läuft',
   };
   Object.entries(values).forEach(([key, value]) => {
     const element = document.querySelector(`[data-field="${key}"]`);
@@ -595,29 +598,109 @@ async function appendVacationPreview(payload, offline = false) {
 function applyMobilePermissions(perms) {
   if (!perms || typeof perms !== 'object') return;
   mobilePermissions = perms;
+  document.querySelectorAll('[data-mobile-admin]').forEach(link => setElementHidden(link, perms.admin_access !== true));
+  document.querySelectorAll('[data-mobile-manual]').forEach(link => setElementHidden(link, perms.manual_time_entries !== true));
 
   if (perms.edit_own_notes === false) {
     const launch = document.getElementById('mobile-notes-launch');
     if (launch) setElementHidden(launch, true);
   }
 
-  if (perms.create_companies === false) {
-    document.querySelectorAll('input[name="new_company_name"]').forEach((input) => {
-      const label = input.closest('label');
-      setElementHidden(label || input, true);
-    });
-  }
+  document.querySelectorAll('input[name="new_company_name"]').forEach((input) => {
+    const label = input.closest('label');
+    setElementHidden(label || input, perms.create_companies === false);
+  });
 
-  if (perms.request_vacations === false) {
-    document.querySelectorAll('form[data-offline="vacation"]').forEach((form) => setElementHidden(form, true));
-    const denied = document.querySelector('[data-permission="request-vacations-denied"]');
-    if (denied) setElementHidden(denied, false);
-  }
+  document.querySelectorAll('form[data-offline="vacation"]').forEach((form) => setElementHidden(form, perms.request_vacations === false));
+  const denied = document.querySelector('[data-permission="request-vacations-denied"]');
+  if (denied) setElementHidden(denied, perms.request_vacations !== false);
 }
 
 async function hydratePermissionsFromCache() {
   const snapshot = await getRecord(DATA_STORE, 'snapshot');
   applyMobilePermissions(snapshot?.data?.permissions || null);
+}
+
+// Appearance settings are bound to the outbox owner. They never change who
+// owns a booking and an account mismatch must not apply another user's default.
+let overviewPreferenceOwner = null;
+let overviewInteracted = ['day', 'week'].includes(new URLSearchParams(location.search).get('overview'));
+
+async function cacheOverviewPreference(userId, value) {
+  const owner = await outbox.identity();
+  if (!owner || owner.id !== userId || !['day', 'week'].includes(value)) return false;
+  await putRecord(META_STORE, { key: `overview-preference:${userId}`, userId, value, updatedAt: Date.now() });
+  return true;
+}
+
+async function hydrateMobileInterface() {
+  const owner = await outbox.identity();
+  if (!owner) {
+    document.querySelectorAll('[data-mobile-account-name]').forEach(node => { node.textContent = 'Noch kein Konto eingerichtet'; });
+    document.querySelectorAll('[data-mobile-account-group]').forEach(node => { node.textContent = 'Zum ersten Start bitte online anmelden.'; });
+    return;
+  }
+  const snapshot = await getRecord(DATA_STORE, 'snapshot');
+  const user = snapshot?.data?.user?.id === owner.id ? snapshot.data.user : null;
+  document.querySelectorAll('[data-mobile-account-name]').forEach(node => { node.textContent = user?.full_name || owner.name || 'Mein Konto'; });
+  document.querySelectorAll('[data-mobile-account-group]').forEach(node => { node.textContent = user?.group || ''; });
+  document.querySelectorAll('[data-mobile-overtime]').forEach(node => setElementHidden(node, !user?.overtime_vacation_enabled));
+  if (user && ['day', 'week'].includes(user.overview_preference)) {
+    await cacheOverviewPreference(owner.id, user.overview_preference);
+  }
+  const cached = await getRecord(META_STORE, `overview-preference:${owner.id}`);
+  const value = cached?.userId === owner.id && ['day', 'week'].includes(cached.value) ? cached.value : 'day';
+  if (overviewPreferenceOwner !== null && overviewPreferenceOwner !== owner.id) overviewInteracted = false;
+  if (overviewPreferenceOwner !== owner.id || !overviewInteracted) {
+    // Respect an explicit URL choice on first load; it is not a new default.
+    const requested = new URLSearchParams(location.search).get('overview');
+    overviewMode = overviewPreferenceOwner === null && ['day', 'week'].includes(requested) ? requested : value;
+  }
+  overviewPreferenceOwner = owner.id;
+  const select = document.getElementById('mobile-setting-default-view');
+  if (select && !dirtyForms.has(select.form)) select.value = value;
+}
+
+function registerMobileInterface() {
+  document.querySelectorAll('[data-mobile-online]').forEach(link => link.addEventListener('click', event => {
+    if (navigator.onLine !== false) return;
+    event.preventDefault();
+    showFeedback('Dieser Bereich benötigt eine Verbindung. Deine lokalen Buchungen bleiben auf diesem Gerät.', 'info');
+  }));
+  const form = document.getElementById('mobile-preference-form');
+  form?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const feedback = document.getElementById('mobile-preference-feedback');
+    const button = form.querySelector('button[type="submit"]');
+    if (navigator.onLine === false) {
+      feedback.textContent = 'Zum Speichern bitte verbinden. Deine bisherige Startansicht bleibt erhalten.';
+      return;
+    }
+    const value = new FormData(form).get('overview_preference');
+    if (!['day', 'week'].includes(value)) return;
+    button.disabled = true;
+    try {
+      const session = await syncEngine.connect();
+      const answer = await syncEngine.request('/api/account/preferences', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+        body: JSON.stringify({ overview_preference: value, user_id: session.user.id }),
+      });
+      if (answer.user_id !== session.user.id || answer.overview_preference !== value) throw new Error('Die Antwort gehört nicht zu deiner Einstellung. Bitte erneut prüfen.');
+      if (!await cacheOverviewPreference(answer.user_id, value)) throw new Error('Das Konto hat sich geändert. Bitte erneut anmelden.');
+      const snapshot = await getRecord(DATA_STORE, 'snapshot');
+      if (snapshot?.data?.user?.id === answer.user_id) {
+        snapshot.data.user.overview_preference = value;
+        await putRecord(DATA_STORE, snapshot);
+      }
+      dirtyForms.delete(form);
+      overviewMode = value;
+      overviewInteracted = false;
+      feedback.textContent = 'Startansicht gespeichert. Sie gilt für Web und PWA.';
+      await renderOverview();
+    } catch (error) {
+      feedback.textContent = `Nicht gespeichert: ${error.message || 'Bitte Verbindung prüfen.'}`;
+    } finally { button.disabled = false; }
+  });
 }
 
 async function hydrateCompaniesFromCache() {
@@ -728,7 +811,7 @@ async function hydrateLocationsFromCache() {
 async function syncServerData() {
   try {
     const settings = await loadSettings();
-    const days = Math.max(1, settings.syncDays || 30);
+    const days = Math.max(7, settings.syncDays || 30);
     const payload = await syncEngine.request(`/mobile/sync-data?days=${days}`, {
       method: 'GET', headers: { Accept: 'application/json' },
     }, 12000);
@@ -744,6 +827,7 @@ async function syncServerData() {
     await hydrateCompaniesFromCache();
     await hydrateLocationsFromCache();
     applyMobilePermissions(payload.permissions || null);
+    await hydrateMobileInterface();
     await handleServerVersion(payload.version || '');
     return true;
   } catch (error) {
@@ -907,15 +991,24 @@ function registerTabHandling() {
     const current = valid.has(tabName) ? tabName : defaultTab;
     tabs.forEach((tab) => {
       const active = tab.dataset.tab === current;
-      tab.classList.toggle('is-active', active);
-      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+      const moreActive = current === 'salden' && tab.dataset.tab === 'einstellungen';
+      tab.classList.toggle('is-active', active || moreActive);
+      tab.setAttribute('aria-selected', active || moreActive ? 'true' : 'false');
+      if (tab.closest('.mobile-bottom-nav')) tab.tabIndex = active || moreActive ? 0 : -1;
     });
+    const dashboard = document.querySelector(MOBILE_STATE_SELECTOR);
+    if (dashboard) dashboard.dataset.activeTab = current;
+    const title = document.querySelector('.mobile-dashboard__title');
+    if (title) title.textContent = ({ buchung: 'Mein Tag', uebersicht: 'Meine Zeiten', salden: 'Mein Zeitkonto', urlaub: 'Urlaub', einstellungen: 'Mehr' })[current];
     panels.forEach((panel) => {
       const active = panel.dataset.tabPanel === current;
       panel.classList.toggle('is-active', active);
       setElementHidden(panel, !active);
       panel.setAttribute('aria-hidden', active ? 'false' : 'true');
     });
+    // A restart may hydrate the clock while another panel is open. Re-enable
+    // its visible controls when returning, without enabling hidden state actions.
+    refreshControlStates();
     if (updateHistory && history.replaceState) {
       const url = new URL(window.location.href);
       url.searchParams.set('tab', current);
@@ -932,8 +1025,18 @@ function registerTabHandling() {
     if (tabName === 'salden') renderSalden().catch(() => {});
     if (tabName === 'urlaub') renderVacations().catch(() => {});
   }));
+  document.querySelectorAll('[data-mobile-open]').forEach(link => link.addEventListener('click', event => {
+    event.preventDefault(); activate(link.dataset.mobileOpen);
+  }));
+  const primaryTabs = tabs.filter(tab => tab.closest('.mobile-bottom-nav'));
+  primaryTabs.forEach((tab, index) => tab.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? primaryTabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + primaryTabs.length) % primaryTabs.length;
+    primaryTabs[next].focus(); primaryTabs[next].click();
+  }));
   window.addEventListener('hashchange', () => activate(window.location.hash.replace('#', ''), false));
-  activate(window.location.hash.replace('#', ''), false);
+  activate(window.location.hash.replace('#', '') || new URLSearchParams(location.search).get('tab'), false);
 }
 
 function registerModalHandling() {
@@ -1133,22 +1236,24 @@ function initializeServerStateFromDataset() {
 
 // ── Client-side Übersicht (offline-capable day/week view) ────────────────────
 
-let overviewMode = 'day';
+let overviewMode = ['day', 'week'].includes(new URLSearchParams(location.search).get('overview'))
+  ? new URLSearchParams(location.search).get('overview')
+  : document.querySelector(MOBILE_STATE_SELECTOR)?.dataset.overviewPreference === 'week' ? 'week' : 'day';
 let overviewDate = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
 function _overviewAttachNav(container, onPrev, onNext, onMode) {
   container.querySelector('[data-ov-prev]')?.addEventListener('click', () => { onPrev(); renderOverview().catch(() => {}); });
   container.querySelector('[data-ov-next]')?.addEventListener('click', () => { onNext(); renderOverview().catch(() => {}); });
   container.querySelectorAll('[data-ov-mode]').forEach((btn) => {
-    btn.addEventListener('click', () => { onMode(btn.dataset.ovMode); renderOverview().catch(() => {}); });
+    btn.addEventListener('click', () => { overviewInteracted = true; onMode(btn.dataset.ovMode); renderOverview().catch(() => {}); });
   });
 }
 
 function _modeToggleHtml() {
   return `
     <div class="mobile-segmented" role="group" aria-label="Darstellung wählen">
-      <button class="mobile-segmented__button${overviewMode === 'day' ? ' is-active' : ''}" data-ov-mode="day">Tag</button>
-      <button class="mobile-segmented__button${overviewMode === 'week' ? ' is-active' : ''}" data-ov-mode="week">Woche</button>
+      <button type="button" class="mobile-segmented__button${overviewMode === 'day' ? ' is-active' : ''}" data-ov-mode="day" aria-pressed="${overviewMode === 'day'}">Tag</button>
+      <button type="button" class="mobile-segmented__button${overviewMode === 'week' ? ' is-active' : ''}" data-ov-mode="week" aria-pressed="${overviewMode === 'week'}">Woche</button>
     </div>`;
 }
 
@@ -1459,18 +1564,36 @@ async function renderVacations() {
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 async function loadSettings() {
-  const record = await getRecord(META_STORE, 'settings');
+  const owner = await outbox.identity();
+  if (!owner) return { ...SETTINGS_DEFAULT };
+  let record = await getRecord(META_STORE, `settings:${owner.id}`);
+  if (!record) {
+    const snapshot = await getRecord(DATA_STORE, 'snapshot');
+    // The legacy record had no owner. Only migrate it with a matching snapshot.
+    if (snapshot?.data?.user?.id === owner.id) {
+      const legacy = await getRecord(META_STORE, 'settings');
+      if (legacy && (!legacy.userId || legacy.userId === owner.id)) {
+        record = { ...legacy, key: `settings:${owner.id}`, userId: owner.id };
+        await putRecord(META_STORE, record);
+        await putRecord(META_STORE, { ...legacy, userId: owner.id });
+      }
+    }
+  }
   const saved = record?.value || {};
   // Backward compat: migrate old cacheDurationHours → syncDays
   if (saved.cacheDurationHours && !saved.syncDays) {
-    saved.syncDays = Math.max(1, Math.round(saved.cacheDurationHours / 24)) || 30;
+    saved.syncDays = Math.max(7, Math.round(saved.cacheDurationHours / 24)) || 30;
   }
+  if (saved.syncDays) saved.syncDays = [7, 14, 30, 60, 90].find(days => days >= saved.syncDays) || 90;
   return { ...SETTINGS_DEFAULT, ...saved };
 }
 
 async function saveSettings(settings) {
+  const owner = await outbox.identity();
+  if (!owner) throw new Error('Zuerst online mit deinem Konto anmelden.');
   await putRecord(META_STORE, {
-    key: 'settings',
+    key: `settings:${owner.id}`,
+    userId: owner.id,
     value: { ...SETTINGS_DEFAULT, ...settings },
     updatedAt: Date.now(),
   });
@@ -1515,12 +1638,14 @@ async function initSettingsTab() {
   if (select) {
     select.addEventListener('change', async () => {
       const days = Number(select.value);
-      if (Number.isFinite(days) && days > 0) {
-        await saveSettings({ syncDays: days });
-        showFeedback(
-          `Datenzeitraum gesetzt: ${select.options[select.selectedIndex].text}.`,
-          'info'
-        );
+      if ([7, 14, 30, 60, 90].includes(days)) {
+        try {
+          await saveSettings({ syncDays: days });
+          showFeedback(
+            `Datenzeitraum gesetzt: ${select.options[select.selectedIndex].text}.`,
+            'info'
+          );
+        } catch (error) { showFeedback(`Nicht gespeichert: ${error.message}`, 'error'); }
       }
     });
   }
@@ -1647,6 +1772,7 @@ function installSyncPanel() {
       <button type="button" class="button small" data-sync-retry>Jetzt abgleichen</button>
       <a href="/login" class="button small" data-sync-login hidden>Erneut anmelden</a>
       <button type="button" class="button small" id="sync-update" hidden>Update verfügbar · jetzt laden</button>
+      <a href="#einstellungen" class="button ghost small" data-mobile-open="einstellungen">Details &amp; Sicherung</a>
     </div>
     <details><summary>Buchungen und Synchronisationsdetails</summary>
       <p data-sync-owner></p><p data-sync-count></p><p data-sync-last></p>
@@ -1750,6 +1876,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // ── Phase 1: Immediate local rendering (works offline) ─────────────────────
   registerTabHandling();
+  registerMobileInterface();
   registerModalHandling();
   registerNotesModal();
   registerOfflineForms();
@@ -1758,6 +1885,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   setupServiceWorkerUpdateHandling();
   initializeServerStateFromDataset();
   await outbox.identity();
+  await hydrateMobileInterface();
   await initializeSyncMeta();
   await initSettingsTab();
   await hydrateCompaniesFromCache();

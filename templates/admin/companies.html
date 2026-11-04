@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Firmenverwaltung – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'companies' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -47,4 +48,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

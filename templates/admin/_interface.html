@@ -1,0 +1,91 @@
+{# Progressive enhancement only: the original tables, forms and routes remain
+   usable without JavaScript. Small screens receive labelled record cards. #}
+<script>
+(() => {
+    'use strict';
+    if (window.erfassungManagementInterface) return;
+    window.erfassungManagementInterface = true;
+    function enhanceTables() {
+        document.querySelectorAll('.management-interface .table-scroll table').forEach(table => {
+            const headerRow = table.tHead && table.tHead.rows[table.tHead.rows.length - 1];
+            if (!headerRow) return;
+            const headers = Array.from(headerRow.cells);
+            // Matrix/grouped headers need their two-dimensional layout. They
+            // retain a contained, keyboard-accessible table scroller instead.
+            if (headers.some(cell => cell.colSpan > 1 || cell.rowSpan > 1) || table.tHead.rows.length !== 1) return;
+            table.classList.add('responsive-records');
+            table.setAttribute('role', 'table');
+            table.tHead.setAttribute('role', 'rowgroup');
+            headerRow.setAttribute('role', 'row');
+            headers.forEach(cell => { cell.scope = 'col'; cell.setAttribute('role', 'columnheader'); });
+            Array.from(table.tBodies).forEach(body => {
+                body.setAttribute('role', 'rowgroup');
+                Array.from(body.rows).forEach(row => {
+                    row.setAttribute('role', 'row');
+                    let column = 0;
+                    Array.from(row.cells).forEach(cell => {
+                        cell.setAttribute('role', cell.tagName === 'TH' ? 'rowheader' : 'cell');
+                        if (cell.colSpan === 1) cell.dataset.label = headers[column]?.textContent.trim() || '';
+                        else cell.classList.add('record-full-row');
+                        column += cell.colSpan;
+                    });
+                });
+            });
+        });
+        document.querySelectorAll('.management-interface .table-scroll').forEach(scroller => {
+            if (!scroller.querySelector('table')) return;
+            if (!scroller.hasAttribute('tabindex')) scroller.tabIndex = 0;
+            if (!scroller.hasAttribute('aria-label')) scroller.setAttribute('aria-label', 'Datentabelle; bei Bedarf innerhalb der Tabelle scrollen');
+        });
+    }
+    function start() {
+        enhanceTables();
+        const root = document.querySelector('.management-interface');
+        if (!root) return;
+        let activeModal = null;
+        let previousFocus = null;
+        let lastOutsideFocus = document.activeElement;
+        const controls = modal => Array.from(modal.querySelectorAll('a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]'))
+            .filter(control => !control.disabled && control.tabIndex >= 0 && control.getClientRects().length);
+        const syncModalFocus = () => {
+            const modal = root.querySelector('.modal[aria-hidden="false"], .modal.is-visible');
+            if (modal === activeModal) return;
+            if (modal) {
+                previousFocus = modal.contains(document.activeElement) ? lastOutsideFocus : document.activeElement;
+                activeModal = modal;
+                if (!modal.contains(document.activeElement)) {
+                    const focusable = controls(modal);
+                    const first = modal.querySelector('[autofocus]') || focusable.find(control => /^(INPUT|SELECT|TEXTAREA)$/.test(control.tagName)) || focusable[0];
+                    if (first) first.focus();
+                }
+            } else {
+                activeModal = null;
+                if (previousFocus?.isConnected) previousFocus.focus();
+                previousFocus = null;
+            }
+        };
+        document.addEventListener('focusin', event => {
+            if (!event.target.closest('.modal')) lastOutsideFocus = event.target;
+        });
+        document.addEventListener('keydown', event => {
+            if (event.key !== 'Tab' || !activeModal) return;
+            const focusable = controls(activeModal);
+            if (!focusable.length) return;
+            const first = focusable[0], last = focusable[focusable.length - 1];
+            if (event.shiftKey && (document.activeElement === first || !activeModal.contains(document.activeElement))) {
+                event.preventDefault(); last.focus();
+            } else if (!event.shiftKey && (document.activeElement === last || !activeModal.contains(document.activeElement))) {
+                event.preventDefault(); first.focus();
+            }
+        });
+        // Terminal, backup and database screens insert result rows later.
+        new MutationObserver(records => {
+            if (records.some(record => record.addedNodes.length)) enhanceTables();
+            syncModalFocus();
+        }).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-hidden'] });
+        syncModalFocus();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+    else start();
+})();
+</script>

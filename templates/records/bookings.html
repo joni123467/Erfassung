@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Buchungen – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--records">
 {% set records_active = 'bookings' %}
 {% include "records/_nav.html" %}
 <section class="card records-hero">
@@ -215,4 +216,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

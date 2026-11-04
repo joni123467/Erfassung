@@ -38,6 +38,12 @@ function networkFault(mode){
 test('online stamp is saved and acknowledged',async({page,account})=>{
   await login(page,account);
   await page.locator('form[data-offline="punch"]').filter({has:page.locator('input[name=action][value=start_work]')}).locator('button[type=submit]').click();
+  // Enqueue is asynchronous: the previous empty queue and sync label can
+  // still be visible immediately after click. Wait for the saved booking.
+  await expect.poll(async()=>{
+    const response=await page.request.get('/mobile/sync-data');
+    return(await response.json()).active_entry;
+  }).toBeTruthy();
   await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
   await count(page,0);
   const data=await page.request.get('/mobile/sync-data');
@@ -45,21 +51,37 @@ test('online stamp is saved and acknowledged',async({page,account})=>{
 });
 
 test('offline stamp survives page close and seven-day-old events sync in order',async({page,context,account})=>{
+  // A closed page may retain its 30-second ownership lease until expiry.
+  // Allow that lease plus the existing 15-second visible-client retry, without
+  // weakening ownership or adding global retries to the suite.
+  test.setTimeout(75000);
   await login(page,account);
   await context.setOffline(true);
-  const start=new Date(Date.now()-7*86400000).toISOString();
-  await queue(page,'start_work',start);
-  await queue(page,'start_break',new Date(Date.parse(start)+3*3600000).toISOString());
-  await queue(page,'end_break',new Date(Date.parse(start)+3.5*3600000).toISOString());
-  await queue(page,'end_work',new Date(Date.parse(start)+8*3600000).toISOString());
+  const day=new Date(Date.now()-7*86400000);day.setUTCHours(8,0,0,0);
+  const start=day.toISOString(),ids=[];
+  ids.push(await queue(page,'start_work',start));
+  ids.push(await queue(page,'start_break',new Date(Date.parse(start)+3*3600000).toISOString()));
+  ids.push(await queue(page,'end_break',new Date(Date.parse(start)+3.5*3600000).toISOString()));
+  ids.push(await queue(page,'end_work',new Date(Date.parse(start)+8*3600000).toISOString()));
   await count(page,4);
   await page.close();
   const resumed=await context.newPage();await resumed.goto('/mobile');
   await expect(resumed.locator('#sync-status')).toBeVisible();await count(resumed,4);
-  await context.setOffline(false);await sync(resumed);await count(resumed,0);
+  await context.setOffline(false);await sync(resumed);
+  await expect.poll(async()=>(await pending(resumed)).length,{timeout:50000}).toBe(0);
   await expect(resumed.locator('[data-sync-label]')).toHaveText('Synchronisiert');
   const response=await resumed.request.get('/mobile/sync-data');
-  expect((await response.json()).active_entry).toBeNull();
+  const saved=await response.json();
+  expect(saved.active_entry).toBeNull();
+  expect(saved.entries).toHaveLength(1);
+  expect(saved.entries[0]).toMatchObject({worked_minutes:450,total_break_minutes:30,status:'approved'});
+  const receipts=await resumed.evaluate(async ids=>{
+    const store=new ErfassungSync.MobileStore();
+    try{return await Promise.all(ids.map(async id=>(await store.get('mobileData',`receipt:${id}`))?.receipt));}
+    finally{store.close();}
+  },ids);
+  expect(receipts.map(receipt=>receipt.client_action_id)).toEqual(ids);
+  expect(new Set(receipts.map(receipt=>receipt.receipt_id)).size).toBe(4);
 });
 
 test('expired login preserves events and re-login continues',async({page,account,context})=>{
@@ -181,9 +203,12 @@ test('confirmed running work is available for clock-out after offline restart',a
 });
 
 test('outbox survives a complete browser process restart',async({playwright,browserName,account})=>{
+  // A terminated browser cannot release its 30-second ownership lease.
+  // Wait for lease expiry plus the existing 15-second retry in this case only.
+  test.setTimeout(75000);
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'erfassung-browser-'));
-  const options={headless:true,baseURL:'http://127.0.0.1:8765',viewport:{width:390,height:844}};
+  const options={headless:true,baseURL:`http://127.0.0.1:${process.env.ERFASSUNG_E2E_PORT||8765}`,viewport:{width:390,height:844}};
   if(browserName==='chromium'&&process.env.ERFASSUNG_CHROMIUM_PATH)options.executablePath=process.env.ERFASSUNG_CHROMIUM_PATH;
   let context;
   try{
@@ -194,7 +219,21 @@ test('outbox survives a complete browser process restart',async({playwright,brow
     await context.setOffline(true);page=context.pages()[0];await page.goto('/mobile');
     await expect(page.locator('#sync-status')).toBeVisible();await count(page,1);
     expect((await pending(page))[0].clientActionId).toBe(id);
-    await context.setOffline(false);await count(page,0);
+    await context.setOffline(false);
+    await expect.poll(async()=>(await pending(page)).length,{timeout:50000}).toBe(0);
+    await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+    const saved=await (await page.request.get('/mobile/sync-data')).json();
+    expect(saved.entries).toHaveLength(1);
+    expect(saved.active_entry).toMatchObject({id:saved.entries[0].id,status:'approved',is_open:true});
+    const receipts=await page.evaluate(async()=>{
+      const store=new ErfassungSync.MobileStore();
+      try{return(await store.all('mobileData')).filter(row=>row.key.startsWith('receipt:')).map(row=>row.receipt);}
+      finally{store.close();}
+    });
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({client_action_id:id,owner_id:saved.user.id,received:true,status:'applied'});
+    expect(Number.isInteger(receipts[0].receipt_id)).toBe(true);
+    expect(receipts[0].receipt_id).toBeGreaterThan(0);
   }finally{await context?.close();fs.rmSync(profile,{recursive:true,force:true});}
 });
 

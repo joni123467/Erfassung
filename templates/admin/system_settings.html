@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Systemeinstellungen – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_settings' %}
 {% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
@@ -196,4 +197,6 @@
         </div>
     </form>
 </section>
+
+</div>
 {% endblock %}

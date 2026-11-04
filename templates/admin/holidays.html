@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Feiertage verwalten – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'holidays' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -26,6 +27,7 @@
         <p class="card-header__hint">Bundesland wählen und <strong>Feiertage übernehmen</strong>: Die gesetzlichen Feiertage des aktuellen Jahres ({{ current_year }}) werden geladen, gespeichert und aktiv übernommen. Eigene Feiertage bleiben dabei erhalten.</p>
         <div class="holiday-actions">
             <form method="post" action="/admin/holidays/create" class="holiday-form">
+                <h2>Eigenen Feiertag ergänzen</h2>
                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                 <input type="hidden" name="state" value="{{ selected_state }}">
                 <div class="holiday-form__grid">
@@ -47,6 +49,7 @@
                 </div>
             </form>
             <form method="post" action="/admin/holidays/import" class="holiday-form" enctype="multipart/form-data">
+                <h2>Kalenderdatei übernehmen</h2>
                 <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                 <div class="holiday-form__grid">
                     <label>
@@ -94,4 +97,6 @@
         </div>
     </div>
 </section>
+
+</div>
 {% endblock %}

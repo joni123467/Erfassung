@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Terminals – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'terminals' %}
 {% include "admin/_nav.html" %}
 
@@ -178,4 +179,6 @@
     });
 })();
 </script>
+
+</div>
 {% endblock %}

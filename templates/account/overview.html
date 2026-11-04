@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Mein Konto – Erfassung{% endblock %}
+{% block content %}
+<div class="account-page">
+    <header class="card-header">
+        <div><p class="eyebrow">Persönlicher Bereich</p><h1>Mein Konto</h1></div>
+        <a class="button ghost" href="/dashboard">Zur Zeiterfassung</a>
+    </header>
+    <div class="account-layout">
+        <section class="card account-profile" aria-labelledby="account-profile-title">
+            <h2 id="account-profile-title">{{ user.full_name }}</h2>
+            <dl class="account-details">
+                <dt>Benutzername</dt><dd>{{ user.username }}</dd>
+                <dt>E-Mail</dt><dd>{{ user.email or 'Nicht hinterlegt' }}</dd>
+                <dt>Gruppen</dt><dd>{{ user.group_names | join(', ') or 'Keine Gruppe zugeordnet' }}</dd>
+                <dt>Rollen</dt><dd>{{ user.role_names | join(', ') or 'Keine Rolle zugeordnet' }}</dd>
+                <dt>Zeitkonto</dt><dd>{{ 'Aktiv' if user.time_account_enabled else 'Nicht aktiviert' }}</dd>
+                <dt>Überstunden für Urlaub</dt><dd>{{ 'Möglich' if user.overtime_vacation_enabled else 'Nicht aktiviert' }}</dd>
+            </dl>
+            <p class="form-hint">Deine Stammdaten und Arbeitszeitregeln verwaltet die zuständige Administration.</p>
+            <div class="form-actions"><a class="button" href="/account/password">Kennwort ändern</a>
+                {% if can_access_admin %}<a class="button ghost" href="/admin">Administration öffnen</a>{% endif %}
+            </div>
+        </section>
+
+        <section class="card" id="preferences" aria-labelledby="account-preferences-title">
+            <h2 id="account-preferences-title">Meine Darstellung</h2>
+            <form method="post" action="/account/preferences" data-account-preferences>
+                <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <fieldset class="account-preference-options">
+                    <legend>Bevorzugte Startansicht</legend>
+                    <label><input type="radio" name="overview_preference" value="day" {% if overview_preference == 'day' %}checked{% endif %}>
+                        <span><strong>Tag</strong><small>Heute stempeln und den Tagesverlauf ansehen.</small></span>
+                    </label>
+                    <label><input type="radio" name="overview_preference" value="week" {% if overview_preference == 'week' %}checked{% endif %}>
+                        <span><strong>Woche</strong><small>Die Woche überblicken und deine Zeiten vergleichen.</small></span>
+                    </label>
+                </fieldset>
+                <p class="form-hint">Gilt für dein Konto im Web und in der PWA. In der Übersicht kannst du jederzeit vorübergehend wechseln.</p>
+                <button class="button primary" type="submit">Startansicht speichern</button>
+            </form>
+            <div class="account-theme">
+                <h3>Hell oder dunkel</h3>
+                <button type="button" class="button ghost" data-theme-toggle aria-pressed="false">Helles / dunkles Design wechseln</button>
+                <p class="form-hint">Das Design wird auf diesem Gerät gespeichert.</p>
+            </div>
+        </section>
+
+        <section class="card user-qr" id="mobile-login" aria-labelledby="account-mobile-title">
+            <h2 id="account-mobile-title">Meine mobile Anmeldung</h2>
+            <p>Scanne deinen persönlichen QR-Code auf einem weiteren Gerät, um dich dort anzumelden.</p>
+            <div class="user-qr__code">
+                <img id="account-qr" src="/account/mobile-qr.png?size=224&amp;refresh={{ qr_nonce }}"
+                     alt="Persönlicher QR-Code für die mobile Anmeldung von {{ user.full_name }}"
+                     width="224" height="224" loading="lazy">
+            </div>
+            <div class="user-qr__actions">
+                <a class="button ghost" href="/account/mobile-qr.png?size=400&amp;download=true" download>QR-Code herunterladen</a>
+                <form method="post" action="/account/mobile-qr/regenerate">
+                    <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+                    <button class="button ghost" type="submit">Neu erzeugen</button>
+                </form>
+            </div>
+            <p class="form-hint">Der Code ermöglicht die Anmeldung zu deinem Konto und gilt {{ qr_valid_days }} Tage. Bereits ausgegebene Codes bleiben beim Neuerzeugen bis zu ihrem Ablauf gültig.</p>
+        </section>
+
+        <section class="card" aria-labelledby="account-mobile-settings-title">
+            <h2 id="account-mobile-settings-title">Mobile App &amp; Offline-Daten</h2>
+            <p>Übertragungsstand, ausstehende Buchungen und den Offline-Datenzeitraum findest du in der PWA unter „Mehr“.</p>
+            <div class="form-actions">
+                <a class="button primary" href="/mobile?tab=einstellungen">PWA-Einstellungen öffnen</a>
+                <a class="button ghost" href="/mobile">Mobile Erfassung öffnen</a>
+            </div>
+            <p class="form-hint">Deine Kontoseite und der Anmelde-QR benötigen eine Verbindung.</p>
+        </section>
+    </div>
+</div>
+{% endblock %}

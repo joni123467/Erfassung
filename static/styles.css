@@ -9,13 +9,13 @@
     --accent-soft: rgba(37, 99, 235, 0.10);
 
     /* ── Neutrals (slate) ──────────────────────────────────────────── */
-    --bg: #f8fafc;                  /* app background (slate-50) */
+    --bg: #f5f6f7;                  /* app background (slate-50) */
     --surface: #ffffff;             /* cards */
     --surface-muted: #f9fafb;       /* table head / subtle panels */
     --input-bg: #ffffff;            /* form controls */
-    --border: #e2e8f0;              /* slate-200 */
+    --border: #dce2e6;              /* slate-200 */
     --border-strong: #cbd5e1;       /* slate-300 */
-    --text: #0f172a;                /* slate-900 */
+    --text: #182731;                /* slate-900 */
     --text-muted: #64748b;          /* slate-500 */
     --text-subtle: #94a3b8;         /* slate-400 */
     --hover: rgba(15, 23, 42, 0.045);   /* neutral hover/stripe wash */
@@ -34,19 +34,29 @@
     --info: #2563eb;
     --info-soft: #dbeafe;
 
-    /* ── Formensprache (eine Quelle, nie über 8px) ─────────────────── */
-    --radius-xs: 3px;               /* tabs, badges, chips */
-    --radius-sm: 5px;               /* buttons, inputs, selects */
-    --radius-md: 6px;               /* segmented controls, alerts, small panels */
-    --radius-lg: 8px;               /* cards, dialogs */
+    /* ── Formensprache: gemeinsame Tokens ─────────────────────────── */
+    --radius-xs: 5px;               /* tabs, badges, chips */
+    --radius-sm: 8px;               /* buttons, inputs, selects */
+    --radius-md: 10px;               /* segmented controls, alerts, small panels */
+    --radius-lg: 14px;               /* cards, dialogs */
     --radius: var(--radius-lg);     /* legacy alias (cards/dialogs) */
 
     /* ── Controls (one height per row) ─────────────────────────────── */
-    --control-h: 2.5rem;            /* inputs, selects, buttons */
+    --control-h: 2.75rem;            /* inputs, selects, buttons */
     --control-h-sm: 2rem;           /* compact buttons (table rows) */
 
     /* ── Layout ────────────────────────────────────────────────────── */
-    --header-h: 3.5rem;
+    --header-h: 4rem;
+    --sidebar-w: 15rem;
+    --space-1: .25rem;
+    --space-2: .5rem;
+    --space-3: .75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-10: 2.5rem;
+    --space-12: 3rem;
 
     /* ── Elevation (intentionally subtle) ──────────────────────────── */
     --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
@@ -4260,4 +4270,110 @@ tr.company-deleted td {
   .work-schedules-modal .form-grid { grid-template-columns: minmax(0, 1fr); }
   .work-schedules-modal .modal__foot, .work-schedule-list li { align-items: stretch; flex-direction: column; }
   .user-deactivation, .user-deactivation form { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Shared application shell. All business forms and actions remain on their
+   original routes; the shell only provides orientation and responsive layout. */
+html { max-width: 100%; overflow-x: clip; overscroll-behavior-x: none; }
+body { max-width: 100%; overflow-x: clip; overscroll-behavior-x: none; line-height: 1.5; }
+.page, .page > *, .card, .card-header > *, .form-grid > *, .dashboard-layout > *, .timetac-header > * { min-width: 0; }
+h1, h2, h3, h4, p, dt, dd, label, a, button, summary { overflow-wrap: anywhere; }
+input, select, textarea, fieldset { min-width: 0; max-width: 100%; }
+input[type="file"] { width: 100%; }
+pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+img, canvas { max-width: 100%; }
+button, .button, .timetac-nav-link { touch-action: manipulation; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.skip-link { position: fixed; z-index: 1500; inset: var(--space-2) auto auto var(--space-2); transform: translateY(-200%); background: var(--surface); color: var(--brand); padding: var(--space-3) var(--space-4); border: 1px solid var(--brand); border-radius: var(--radius-sm); }
+.skip-link:focus { transform: translateY(0); }
+.app-shell { padding-left: var(--sidebar-w); }
+.app-shell .timetac-header { position: fixed; inset: 0 auto 0 0; width: var(--sidebar-w); height: 100vh; height: 100dvh; flex-direction: column; align-items: stretch; gap: var(--space-8); padding: var(--space-6) var(--space-4); border-right: 1px solid var(--border); border-bottom: 0; overflow-y: auto; overscroll-behavior: contain; }
+.app-shell .timetac-header__brand { flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2); font-size: 1.1rem; }
+.app-shell .timetac-header__logo { background: transparent; color: var(--brand); width: 2rem; height: 2rem; }
+.app-shell .timetac-header__logo svg { width: 1.7rem; height: 1.7rem; }
+.app-shell .timetac-header__version { margin-left: auto; font-size: .65rem; }
+.app-shell .timetac-header__nav { display: flex; flex-direction: column; align-items: stretch; flex: 1 0 auto; gap: var(--space-1); }
+.app-shell .timetac-nav-link { min-height: 46px; padding: var(--space-3); gap: var(--space-3); font-size: .9rem; border-radius: var(--radius-sm); }
+.app-shell .timetac-nav-link__icon svg { width: 1.15rem; height: 1.15rem; }
+.navigation-caption { padding: var(--space-2) var(--space-3); color: var(--text-muted); font-size: .65rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; }
+.navigation-caption--organization, .navigation-caption--tools { margin-top: var(--space-6); }
+.app-shell .timetac-header__actions { margin: auto 0 0; flex-wrap: wrap; align-items: center; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.app-shell .timetac-header__profile { width: 100%; align-items: flex-start; flex-direction: column; gap: var(--space-3); }
+.app-shell .timetac-header__user { align-items: flex-start; gap: var(--space-1); min-width: 0; }
+.timetac-header__name { color: var(--text); text-decoration: none; }
+.timetac-header__name:hover { color: var(--brand); }
+.app-shell .timetac-header__logout { min-height: 44px; padding: var(--space-2) var(--space-3); }
+.workspace-topbar { min-height: var(--header-h); padding: var(--space-4) clamp(1rem, 3vw, 3rem); display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); background: var(--surface); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: .8rem; }
+.workspace-topbar > * { min-width: 0; }
+.workspace-topbar span span { margin-inline: var(--space-2); color: var(--text-subtle); }
+.workspace-identity { color: var(--text-muted); text-decoration: none; max-width: 35%; text-align: right; }
+.workspace-identity:hover { color: var(--brand); }
+.app-shell .page { width: 100%; max-width: 1500px; padding: clamp(1rem, 3vw, 3rem); gap: var(--space-6); }
+.navigation-toggle { display: none; }
+.navigation-toggle svg { width: 1.2rem; height: 1.2rem; flex: 0 0 auto; }
+.app-public .timetac-header { flex-wrap: wrap; }
+.app-public .page { max-width: 1100px; }
+.card { box-shadow: var(--shadow-sm); }
+.card h1, .page > h1 { font-size: clamp(1.45rem, 2.3vw, 1.9rem); letter-spacing: -.04em; }
+.card h2 { font-size: 1.1rem; }
+.card h3 { font-size: 1rem; }
+.button { min-height: 44px; white-space: normal; text-align: center; }
+.button.small { min-height: 36px; }
+.form-grid label { line-height: 1.5; }
+.table-responsive { max-width: 100%; overscroll-behavior-x: contain; }
+.modal__dialog { max-width: calc(100vw - 2 * var(--space-4)); max-height: calc(100dvh - 2 * var(--space-4)); overflow-y: auto; overscroll-behavior: contain; }
+.modal__actions { flex-wrap: wrap; }
+.mobile-version-footer { color: var(--text-muted); padding: var(--space-2) var(--space-4); text-align: center; }
+@media (max-width: 1023px) {
+    .app-shell { padding-left: 0; }
+    .app-shell .timetac-header { position: sticky; inset: 0 0 auto; width: 100%; height: auto; min-height: var(--header-h); padding: var(--space-3) var(--space-4); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+    .app-shell .timetac-header__brand { padding: 0; }
+    .app-shell .timetac-header__version { margin-left: 0; }
+    .navigation-toggle { display: inline-flex; align-items: center; gap: var(--space-2); }
+    .app-shell .timetac-header__nav, .app-shell .timetac-header__actions { display: none; }
+    .app-shell.navigation-open .timetac-header__nav { display: flex; grid-column: 1 / -1; max-height: 65dvh; overflow-y: auto; }
+    .app-shell.navigation-open .timetac-header__actions { display: flex; grid-column: 1 / -1; }
+    .app-shell .timetac-header__profile { flex-direction: row; align-items: center; justify-content: space-between; }
+    .app-shell .timetac-header__nav { gap: 0; }
+    .navigation-caption--organization, .navigation-caption--tools { margin-top: var(--space-3); }
+    .workspace-topbar { padding: var(--space-3) var(--space-4); min-height: 3rem; }
+    .app-shell .page { padding: var(--space-4); }
+}
+@media (max-width: 600px) {
+    input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px; }
+    .page { padding: var(--space-4); gap: var(--space-4); }
+    .workspace-identity { display: none; }
+    .timetac-header__version { display: none; }
+    .modal__dialog { padding: var(--space-4); }
+    .button.small { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+
+/* Personal account reuses the same cards and controls as administration. */
+.account-page { display: grid; gap: var(--space-6); min-width: 0; }
+.account-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); align-items: start; }
+.account-layout > .card { min-width: 0; margin: 0; }
+.account-details { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-3) var(--space-4); font-size: .9rem; }
+.account-details dt { color: var(--text-muted); }
+.account-details dd { margin: 0; overflow-wrap: anywhere; }
+.account-preference-options { border: 0; padding: 0; display: grid; gap: var(--space-3); }
+.account-preference-options legend { padding-bottom: var(--space-3); color: var(--text-muted); font-size: .85rem; }
+.account-preference-options label { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; }
+.account-preference-options label:has(input:checked) { border-color: var(--brand); background: var(--accent); }
+.account-preference-options input { margin-top: var(--space-1); accent-color: var(--brand); }
+.account-preference-options label span { display: grid; gap: var(--space-1); min-width: 0; }
+.account-preference-options small { color: var(--text-muted); line-height: 1.6; }
+.account-theme { margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.account-layout .user-qr { align-items: stretch; }
+.account-layout .user-qr__code { width: min(100%, 256px); margin-inline: auto; padding: var(--space-4); background: var(--brand-contrast); border-radius: var(--radius-md); }
+.account-layout .user-qr__code img { display: block; width: 100%; height: auto; }
+.account-layout .user-qr__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-3); margin-top: var(--space-4); }
+.account-layout .user-qr__actions form { margin: 0; }
+.account-layout .form-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+@media (max-width: 760px) {
+    .account-layout { grid-template-columns: minmax(0, 1fr); }
+    .account-details { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+    .account-details dd { margin-bottom: var(--space-3); }
 }

@@ -7,6 +7,7 @@
    wirksame Dialog steht am Ende des Inhaltsblocks. #}
 {% block title %}{% if form_user %}Benutzer bearbeiten{% else %}Benutzer anlegen{% endif %} – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'users' %}
 {% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
@@ -103,9 +104,9 @@
                             </label>
                             <label class="checkbox">
                                 <input type="checkbox" name="auto_break_deduction" {% if not is_edit or form_user.auto_break_deduction %}checked{% endif %}>
-                                Automatische gesetzliche Pausen anwenden (ArbZG)
+                                Automatischen Pausenabzug für Altbuchungen beibehalten
                             </label>
-                            <p class="form-hint user-form__hint">Deaktiviert: Es werden nur tatsächlich gestempelte Pausen abgezogen, keine automatische Pausenkorrektur.</p>
+                            <p class="form-hint user-form__hint">Gilt nur für Altbuchungen mit der früheren Pausenregel. Neue Buchungen ziehen ausschließlich erfasste Pausen ab; fehlende Mindestpausen werden als Hinweis angezeigt.</p>
                             <p class="form-hint user-form__hint">Der Einsatzort (vor Ort, Remote oder ein Standort der gebuchten Firma) wird seit 0.20.1 für alle Personen erfasst und braucht keine Freischaltung mehr.</p>
                         </div>
                     </fieldset>
@@ -273,4 +274,6 @@
 })();
 </script>
 {% endif %}
+
+</div>
 {% endblock %}

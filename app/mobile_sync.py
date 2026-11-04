@@ -254,7 +254,9 @@ def receive(request: Request, action: Action) -> dict:
 def session_info(request: Request, db: Session = Depends(database.get_db)):
     from . import main
     user = authenticated(request, db)
-    return JSONResponse({"protocol": PROTOCOL, "user": {"id": user.id, "name": user.full_name},
+    return JSONResponse({"protocol": PROTOCOL, "user": {"id": user.id, "name": user.full_name,
+                                                      "overview_preference": user.overview_preference},
+                         "permissions": {"admin_access": main.has_admin_access(user), "account_access": True},
                          "csrf_token": main.get_csrf_token(request), "version": main.APP_VERSION},
                         headers={"Cache-Control": "no-store"})
 

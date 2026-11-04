@@ -119,9 +119,13 @@ def entry_bounds(entry: Any) -> tuple[datetime, datetime]:
     else:
         end = from_utc_column(getattr(entry, "ended_at_utc", None))
         if end is None:
-            end = from_local(datetime.combine(entry.work_date, entry.end_time), tz)
-            if end is not None and end < start:
-                end += timedelta(days=1)
+            end_local = datetime.combine(entry.work_date, entry.end_time)
+            start_local = datetime.combine(entry.work_date, entry.start_time or time(0))
+            if end_local < start_local:
+                # A local calendar day may contain 23 or 25 elapsed hours.
+                # Advance the local date before converting, not UTC by 24h.
+                end_local += timedelta(days=1)
+            end = from_local(end_local, tz)
     if end < start:
         end = start
     return start, end
@@ -138,11 +142,22 @@ def local_date(moment: datetime, tz_name: Optional[str] = None) -> date:
     return moment.astimezone(zone(tz_name)).date()
 
 
-def to_utc_naive(moment: Optional[datetime], tz_name: Optional[str] = None):
+def to_utc_naive(
+    moment: Optional[datetime], tz_name: Optional[str] = None,
+    *, previous_utc: Optional[datetime] = None,
+):
     """Ortszeit als naiven UTC-Wert – so, wie ihn die Spalten speichern."""
     if moment is None:
         return None
-    converted = from_local(moment, zone(tz_name))
+    tz = zone(tz_name)
+    if moment.tzinfo is None and previous_utc is not None:
+        previous_local = from_utc_column(previous_utc).astimezone(tz)
+        if moment.date() == previous_local.date():
+            # SQL TIME / HTML time fields cannot retain which occurrence of
+            # an autumn hour was recorded. An edit on the same local date
+            # retains that known occurrence unless an explicit UTC is given.
+            moment = moment.replace(fold=previous_local.fold)
+    converted = from_local(moment, tz)
     return converted.replace(tzinfo=None) if converted else None
 
 

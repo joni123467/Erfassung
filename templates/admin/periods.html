@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Abrechnungsperioden – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'periods' %}
 {% include "admin/_nav.html" %}
 
@@ -55,7 +56,7 @@
                         {% endif %}
                     </td>
                     <td>
-                        <form method="post" action="/admin/periods/{{ period.id }}/action" class="period-actions">
+                        <form method="post" action="/admin/periods/{{ period.id }}/action" class="period-actions" onsubmit="return !event.submitter || event.submitter.value !== 'lock' || confirm('Periode sperren? Buchungen in diesem Zeitraum können danach erst nach begründeter Entsperrung geändert werden.');">
                             <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
                             {% if period.status == 'locked' %}
                                 <input type="text" name="note" required maxlength="500"
@@ -111,4 +112,6 @@
         braucht aber eine Begründung und bleibt an der Periode vermerkt.
     </p>
 </section>
+
+</div>
 {% endblock %}

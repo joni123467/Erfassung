@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Urlaub – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--records">
 {% set records_active = 'vacations' %}
 {% include "records/_nav.html" %}
 {% set vacation_tab = 'requests' %}{% include "records/_vacation_tabs.html" %}
@@ -97,7 +98,7 @@
     <div class="card-header">
         <h2>Urlaubsantrag stellen</h2>
     </div>
-    <p class="form-hint">Deine Gruppe darf keine Urlaubsanträge stellen. Wende dich an die Verwaltung.</p>
+    <p class="form-hint">Deine zugewiesenen Rollen erlauben keine Urlaubsanträge. Wende dich an die Verwaltung.</p>
 </section>
 {% endif %}
 
@@ -182,5 +183,7 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}
 {% block scripts %}<script src="/static/vacation-calendar.js?v={{ app_version }}" defer></script>{% endblock %}

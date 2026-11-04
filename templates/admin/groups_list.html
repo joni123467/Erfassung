@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Gruppenverwaltung – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'groups' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -45,4 +46,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Synchronisation – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_sync' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -53,4 +54,6 @@
         <a href="/admin/system/logs?channel=sync">sync.log</a>.
     </p>
 </section>
+
+</div>
 {% endblock %}

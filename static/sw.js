@@ -4,7 +4,8 @@ const APP_VERSION = self.__ERFASSUNG_VERSION || new URLSearchParams(self.locatio
 const CACHE_PREFIX = 'erfassung-mobile-v';
 const CACHE_VERSION = `${CACHE_PREFIX}${APP_VERSION}`;
 const OFFLINE_SHELL = '/static/mobile-offline-shell.html';
-const CORE_ASSETS = [OFFLINE_SHELL, '/static/styles.css', '/static/mobile.js', '/static/mobile-sync.js',
+const CORE_ASSETS = [OFFLINE_SHELL, '/static/styles.css', '/static/mobile-interface.css', '/static/admin-interface.css',
+  '/static/dashboard-interface.css', '/static/interface.js', '/static/mobile.js', '/static/mobile-sync.js',
   '/static/app.js', '/static/theme.js', '/static/vacation-calendar.js', '/static/manifest.webmanifest',
   '/static/icons/icon.svg', '/static/icons/icon-192.png', '/static/icons/icon-512.png'];
 importScripts(`/static/mobile-sync.js?v=${APP_VERSION}`);

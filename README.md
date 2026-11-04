@@ -2,7 +2,15 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.21.0`
+**Version:** `0.22.0`
+
+> Seit 0.22.0: **Überarbeitete Oberfläche für Web, Administration und PWA.**
+> Tages- oder Wochenansicht lässt sich pro Benutzer speichern; das eigene Konto
+> zeigt den optionalen Anmelde-QR. Stempelaktionen, Firmenanlage, vollständige
+> Formulare und Berechtigungen bleiben erhalten. Korrekturen an geteilten
+> Buchungen, Pausen und Nachtarbeit sichern die Zeitberechnung ab.
+> [Release Notes](docs/RELEASE_NOTES_0.22.0.md) ·
+> [Prüfbericht](docs/QA_0.22.0.md).
 
 > Seit 0.21.0: **Buchungen bleiben bei Synchronisationsfehlern erhalten.**
 > Eine dauerhafte Outbox, eindeutige Empfangsbestätigungen und atomare
@@ -318,6 +326,98 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 
 > Die mobile Oberfläche (`/mobile`) ist eine installierbare, offline-fähige PWA.
 > Details siehe Abschnitt [„Mobile Offline-Funktion"](#mobile-offline-funktion-mobile) und [`CHANGELOG.md`](CHANGELOG.md).
+
+## Oberfläche und Bedienung ab 0.22.0
+
+Die Weboberfläche führt über die Seitenleiste zu **Übersicht**, **Meine Zeiten**,
+**Urlaub**, **Mein Konto** und – mit entsprechender Berechtigung – zur
+**Administration**. Auf schmalen Bildschirmen öffnet die Schaltfläche **Menü**
+diese Navigation. Die Administration bündelt ihre bestehenden Funktionen in
+**Benutzer**, **Zeiterfassung**, **Sicherung**, **System** und **Einstellungen**.
+Rollen, Gruppenzuständigkeiten und Lizenzbausteine bestimmen weiterhin die
+sichtbaren Bereiche und die erlaubten Aktionen.
+
+Die PWA verwendet unten die Bereiche **Übersicht**, **Meine Zeiten**, **Urlaub**
+und **Mehr**; Urlaub erscheint bei freigeschaltetem Lizenzbaustein. Unter
+**Mehr** liegen Zeitkonto, Kontozugang, Darstellung, Offline-Datenzeitraum und
+Synchronisation. Berechtigte Personen erreichen dort auch die Administration.
+Web und PWA verwenden gemeinsame Farben und Bedienelemente für helles und
+dunkles Design; Formulare und lange Inhalte sind für schmale Ansichten angepasst.
+
+### Tages- und Wochenansicht
+
+Unter **Mein Konto → Meine Darstellung** lässt sich **Tag** oder **Woche** als
+Startansicht speichern. Die Einstellung gehört zum Benutzerkonto und gilt für
+Web und PWA. In der PWA kann sie auch unter **Mehr** gespeichert werden; dafür
+ist eine Verbindung erforderlich. Die zuletzt bestätigte Einstellung ist dem
+jeweiligen Konto im lokalen Datenbestand zugeordnet.
+
+Die Umschaltung und Datumsnavigation in der Übersicht sind vorübergehend und
+ändern den gespeicherten Standard nicht. Auch beim Betrachten eines vergangenen
+Tages oder einer vergangenen Woche gelten **Arbeitszeit starten**, **Pause** und
+**Auftrag starten** immer für den aktuellen Zeitpunkt. Die Stempelkarte zeigt
+heutige Nettoarbeitszeit; Feiertagsgutschriften werden getrennt benannt.
+
+### Firmen, Nachträge und Pausenkorrekturen
+
+**Auftrag starten** bietet weiterhin die vorhandenen Firmen und deren
+Einsatzorte. Mit `Company.Create` und freigeschaltetem Auftragsbaustein kann im
+selben Dialog optional eine neue Firma angelegt werden. Der Schnellstart ohne
+Firma behält die Auswahl **Vor Ort / Remote**.
+
+**Zeit nachtragen** öffnet das vollständige Formular mit Datum, Start, Ende,
+Pause, Firma, Einsatzort und Kommentar. Für eine Nachtschicht wie
+**22:00–06:00 Uhr** muss **Ende am Folgetag** ausdrücklich gesetzt werden; das
+Datum bezeichnet den Arbeitsbeginn. Ohne dieses Häkchen wird eine Endzeit vor
+der Startzeit abgewiesen. Gleiche Start- und Endzeit sind kein gültiger Nachtrag.
+Auch Nachträge innerhalb einer bestehenden Nachtschicht, etwa **23:00–01:00**
+oder **01:00–02:00 am Folgetag**, werden den richtigen Datumsgrenzen zugeordnet.
+Freigabe- und Periodensperren gelten weiterhin.
+
+In der Administration lassen sich vorhandene, beendete Pausenintervalle bei der
+Zeitbuchung einzeln korrigieren. Das benötigt `Time.Edit` für die betreffende
+Person, eine Begründung und eine offene Abrechnungsperiode. Die Prüfung
+verhindert Überschneidungen und Pausen außerhalb der Buchung. Vorheriger Stand,
+Akteur und Begründung bleiben in der Historie; der Freigabestatus bleibt erhalten.
+Nicht genommene gesetzliche Pausen werden weiterhin nur als Hinweis behandelt.
+
+### Eigener QR-Code und bestehende Funktionen
+
+**Mein Konto → Meine mobile Anmeldung** zeigt den persönlichen QR-Code für die
+optionale Anmeldung auf einem weiteren Gerät. Anzeige, Download und Neuerzeugen
+benötigen eine Verbindung und beziehen sich ausschließlich auf das angemeldete
+Konto. Der bestehende QR-Zugang in den administrativen Benutzereinstellungen
+bleibt verfügbar. Das Tokenformat und die Gültigkeit bleiben unverändert;
+Neuerzeugen widerruft ältere, noch gültige Codes nicht.
+
+Buchungs- und Urlaubsformulare, Kommentare, Rücknahmen, Kalender und optionale
+Kalenderfeeds, Freigaben, Auswertungen, Exporte, Benutzer-/Rollenverwaltung,
+Backups, Wiederherstellung, Datenbankverwaltung, Terminals und
+Synchronisationskonflikte bleiben über ihre bestehenden Abläufe erreichbar.
+Die neue Darstellung ersetzt keine serverseitigen Rechte- oder
+Zuständigkeitsprüfungen.
+
+### Aktualisierung einer bestehenden Installation
+
+Migration **26** ergänzt `users.overview_preference` als `VARCHAR(8) NOT NULL`
+mit Standard `day`. Automatische Schemaergänzung und versionierter
+Migrationsrunner verwenden denselben wiederholbaren Pfad. Bestehende Konten
+starten mit der Tagesansicht; eine bereits gespeicherte Wochenansicht bleibt
+beim erneuten Start erhalten.
+
+Für Neuaufbau und Upgrade auf PostgreSQL wurden außerdem ältere Migrationen
+auf passende Boolean-Werte und -Standardwerte umgestellt. Historische
+Gruppenflags in INTEGER-Spalten bleiben kompatibel. Die bisherigen
+Migrationsnummern bleiben erhalten; neu hinzu kommt ausschließlich Nummer 26.
+
+Die vorhandenen **config-, data- und logs-Volumes behalten**. Die Aktualisierung
+erfordert keine PWA-Neuinstallation und kein Löschen der Website-Daten oder
+offener Buchungen. Den vorhandenen Updatehinweis verwenden und bei älteren
+Clients gegebenenfalls die App-Fenster schließen und wieder öffnen. Outbox,
+Empfangsbestätigungen und Konfliktfreigabe bleiben Teil des bestehenden
+Synchronisationsablaufs. Einzelheiten und Ausführungsergebnisse stehen in den
+[Release Notes](docs/RELEASE_NOTES_0.22.0.md) und im
+[Prüfbericht](docs/QA_0.22.0.md).
 
 ## Deployment-Standard (neu)
 

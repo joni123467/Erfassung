@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Regelverstöße – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'compliance' %}
 {% include "admin/_nav.html" %}
 
@@ -202,4 +203,6 @@
         Bewertung des Einzelfalls bleibt Sache von Menschen.
     </p>
 </section>
+
+</div>
 {% endblock %}

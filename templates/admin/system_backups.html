@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Backups – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_backups' %}
 {% include "admin/_nav.html" %}
 
@@ -230,4 +231,6 @@
     updateGroups();
 })();
 </script>
+
+</div>
 {% endblock %}

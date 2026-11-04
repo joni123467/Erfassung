@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from types import SimpleNamespace
 from typing import Iterable, List, Optional
 
 from sqlalchemy import func
@@ -48,7 +49,7 @@ def _to_utc(moment: datetime) -> datetime:
     zone = _local_zone()
     if zone is None:
         return moment.replace(tzinfo=None)
-    aware = moment.replace(tzinfo=zone)
+    aware = moment if moment.tzinfo is not None else moment.replace(tzinfo=zone)
     from datetime import timezone as _tz
 
     return aware.astimezone(_tz.utc).replace(tzinfo=None)
@@ -411,7 +412,8 @@ def _entry_bounds(work_date: date, start_time: time, end_time: time, is_open: bo
     """
     start_dt = datetime.combine(work_date, start_time)
     if is_open:
-        current_end = max(datetime.now(), start_dt + timedelta(seconds=1))
+        local_now = datetime.now(worktime.zone()).replace(tzinfo=None)
+        current_end = max(local_now, start_dt + timedelta(seconds=1))
         return start_dt, current_end
     end_dt = datetime.combine(work_date, end_time)
     if end_dt < start_dt:
@@ -422,7 +424,8 @@ def _entry_bounds(work_date: date, start_time: time, end_time: time, is_open: bo
 def _intervals_overlap(
     first_start: datetime, first_end: datetime, second_start: datetime, second_end: datetime
 ) -> bool:
-    return first_start < second_end and second_start < first_end
+    return (first_start < first_end and second_start < second_end
+            and first_start < second_end and second_start < first_end)
 
 
 def _floor_to_minute(moment: datetime) -> datetime:
@@ -492,11 +495,13 @@ def _overlapping_entries(
     if exclude_id is not None:
         query = query.filter(models.TimeEntry.id != exclude_id)
     conflicts: list[models.TimeEntry] = []
+    # Explicit UTC stamps distinguish the two occurrences of the autumn
+    # clock hour. Comparing their identical wall times would reject real,
+    # consecutive stamping as an overlap.
+    new_utc_start, new_utc_end = worktime.entry_bounds(SimpleNamespace(**payload))
     for existing in query.all():
-        existing_start, existing_end = _entry_bounds(
-            existing.work_date, existing.start_time, existing.end_time, existing.is_open
-        )
-        if _intervals_overlap_minute(new_start, new_end, existing_start, existing_end):
+        existing_start, existing_end = worktime.entry_bounds(existing)
+        if _intervals_overlap_minute(new_utc_start, new_utc_end, existing_start, existing_end):
             conflicts.append(existing)
     return conflicts
 
@@ -530,28 +535,87 @@ def _ensure_no_vacation_overlap(db: Session, vacation: schemas.VacationRequestCr
 
 
 def _find_containing_closed_entry(
-    db: Session, user_id: int, new_start: datetime, new_end: datetime
+    db: Session, user_id: int, new_start: datetime, new_end: datetime,
+    *, tz_name: Optional[str] = None,
 ) -> Optional[models.TimeEntry]:
-    """Abgeschlossene (Eintages-)Buchung finden, die den Nachtrag vollständig
-    umschließt. Mehrtägige/über Mitternacht laufende Bestandsbuchungen werden
-    bewusst ausgeklammert (Teilen wäre mehrdeutig)."""
-    work_date = new_start.date()
-    if new_end.date() != work_date:
-        return None
+    """Abgeschlossene Buchung finden, die den Nachtrag vollständig umschließt.
+
+    Nachtbuchungen beginnen möglicherweise am Vortag. Die Prüfung verwendet
+    deshalb vollständige Datumsgrenzen statt eines Vergleichs der Uhrzeiten.
+    """
     candidates = (
         db.query(models.TimeEntry)
         .filter(models.TimeEntry.user_id == user_id)
         .filter(models.TimeEntry.is_open.is_(False))
-        .filter(models.TimeEntry.status != models.TimeEntryStatus.REJECTED)
-        .filter(models.TimeEntry.work_date == work_date)
+        .filter(models.TimeEntry.status.notin_(
+            [models.TimeEntryStatus.REJECTED, models.TimeEntryStatus.CANCELLED]
+        ))
+        .filter(models.TimeEntry.work_date >= new_start.date() - timedelta(days=1))
+        .filter(models.TimeEntry.work_date <= new_start.date())
         .all()
     )
+    new_utc_start = worktime.from_local(new_start, worktime.zone(tz_name))
+    new_utc_end = worktime.from_local(new_end, worktime.zone(tz_name))
     for existing in candidates:
-        if existing.end_time <= existing.start_time:
-            continue  # über Mitternacht – nicht teilen
-        if existing.start_time <= new_start.time() and new_end.time() <= existing.end_time:
+        start, end = worktime.entry_bounds(existing)
+        if start < end and start <= new_utc_start and new_utc_end <= end:
             return existing
     return None
+
+
+def _partition_entry_breaks(
+    db: Session,
+    original: models.TimeEntry,
+    parts: list[tuple[models.TimeEntry, datetime, datetime]],
+) -> None:
+    """Keep recorded pauses in the remaining sections that actually contain them.
+
+    The caller captures the original in its revision before changing bounds.
+    Intervals removed by the replacement remain as zero-duration records;
+    intervals crossing a cut are split, never charged to an unrelated section.
+    For old aggregate-only data the established first-section allocation is
+    retained, spilling into the next section if the first is too short.
+    """
+    intervals = list(original.breaks or [])
+    aggregate = original.break_minutes or 0
+    windows = [
+        (part, worktime.to_utc_naive(start, original.tz_name),
+         worktime.to_utc_naive(end, original.tz_name))
+        for part, start, end in parts
+    ]
+    for part, _, _ in windows:
+        part.break_minutes = 0
+        part.break_started_at = None
+    if not intervals:
+        for part, start, end in windows:
+            allocated = min(aggregate, max(int((end - start).total_seconds() // 60), 0))
+            part.break_minutes = allocated
+            aggregate -= allocated
+        return
+    for interval in intervals:
+        old_start = interval.started_at_utc
+        old_end = interval.ended_at_utc
+        if old_end is None:
+            raise ValueError("BREAK_RUNNING")
+        clips = [(part, max(start, old_start), min(end, old_end))
+                 for part, start, end in windows
+                 if max(start, old_start) < min(end, old_end)]
+        if not clips:
+            interval.ended_at_utc = old_start
+            continue
+        for index, (part, start, end) in enumerate(clips):
+            if index == 0:
+                interval.entry = part
+                interval.started_at_utc = start
+                interval.ended_at_utc = end
+            else:
+                db.add(models.BreakInterval(entry=part, started_at_utc=start,
+                                           ended_at_utc=end, tz_name=interval.tz_name,
+                                           source=interval.source))
+    db.flush()
+    for part, _, _ in windows:
+        # Also preserve the correct fallback after detaching a loaded entry.
+        part.break_minutes = sum(interval.minutes for interval in part.breaks)
 
 
 def _split_closed_entry(
@@ -560,37 +624,49 @@ def _split_closed_entry(
     payload: dict,
     new_start: datetime,
     new_end: datetime,
+    *,
+    actor: object = None,
 ) -> models.TimeEntry:
     """Nachtrag in eine umschließende, abgeschlossene Buchung einfügen.
 
     Die Bestandsbuchung wird in bis zu zwei Abschnitte (davor/danach) zerlegt,
     die Attribute (Firma, Kommentar, Status, Quelle) bleiben erhalten. Die
-    erfassten Pausenminuten bleiben beim ersten Abschnitt (oder – falls es
-    keinen gibt – beim zweiten). So entstehen keine doppelt gezählten Zeiten.
+    gestempelten Pausen werden anhand ihrer tatsächlichen Lage auf die
+    Restabschnitte verteilt. Alte Summen ohne Zeitstempel bleiben zuerst beim
+    ersten Abschnitt und werden bei Platzmangel auf den zweiten verteilt.
+    So verschwinden in kurzen Abschnitten keine Pausenminuten.
 
     Gesetzt werden hier nur die **Ortszeiten**. Die UTC-Stempel
     (``started_at_utc``/``ended_at_utc``) zieht seit 0.20.9 das Mapper-Ereignis
     ``models._sync_time_entry_stamps`` nach – bis 0.20.8 blieben sie stehen,
     und der gekürzte Abschnitt zählte weiter seine ursprüngliche Länge.
     """
+    ensure_period_open(db, existing.work_date)
+    ensure_period_open(db, new_end.date())
     _ensure_no_time_overlap(db, payload, exclude_id=existing.id)
 
-    original_start = existing.start_time
-    original_end = existing.end_time
-    original_breaks = existing.break_minutes or 0
+    original_utc_start, original_utc_end = worktime.entry_bounds(existing)
+    new_utc_start = worktime.from_local(new_start, worktime.zone(payload.get("tz_name")))
+    new_utc_end = worktime.from_local(new_end, worktime.zone(payload.get("tz_name")))
+    original_zone = worktime.zone(existing.tz_name)
+    original_start = original_utc_start.astimezone(original_zone).replace(tzinfo=None)
+    original_end = original_utc_end.astimezone(original_zone).replace(tzinfo=None)
+    new_start = new_utc_start.astimezone(original_zone).replace(tzinfo=None)
+    new_end = new_utc_end.astimezone(original_zone).replace(tzinfo=None)
     new_start_time = new_start.time()
     new_end_time = new_end.time()
 
-    has_first = new_start_time > original_start
-    has_second = new_end_time < original_end
+    has_first = new_utc_start > original_utc_start
+    has_second = new_utc_end < original_utc_end
 
-    def _clone_part(start_time: time, end_time: time, break_minutes: int) -> models.TimeEntry:
+    def _clone_part(start: datetime, end: datetime, break_minutes: int) -> models.TimeEntry:
         return models.TimeEntry(
             user_id=existing.user_id,
             company_id=existing.company_id,
-            work_date=existing.work_date,
-            start_time=start_time,
-            end_time=end_time,
+            location_id=existing.location_id,
+            work_date=start.date(),
+            start_time=start.time(),
+            end_time=end.time(),
             break_minutes=break_minutes,
             break_started_at=None,
             is_open=False,
@@ -599,7 +675,8 @@ def _split_closed_entry(
             is_manual=existing.is_manual,
             is_remote=bool(existing.is_remote),
             source=existing.source,
-            external_id=existing.external_id,
+            tz_name=existing.tz_name,
+            break_rule=existing.break_rule,
         )
 
     note = "Durch einen Nachtrag geteilt."
@@ -611,13 +688,13 @@ def _split_closed_entry(
         # Bestandsbuchung wird zum ersten Abschnitt (behält Pausen/Referenzen).
         existing.end_time = new_start_time
         if has_second:
-            clone = _clone_part(new_end_time, original_end, 0)
+            clone = _clone_part(new_end, original_end, 0)
             db.add(clone)
     elif has_second:
         # Kein erster Abschnitt: Bestandsbuchung wird zum zweiten Abschnitt.
+        existing.work_date = new_end.date()
         existing.start_time = new_end_time
-        existing.end_time = original_end
-        existing.break_minutes = original_breaks
+        existing.end_time = original_end.time()
     else:
         # Nachtrag deckt die Bestandsbuchung exakt ab. Sie wird **storniert**,
         # nicht gelöscht: Der Originaldatensatz bleibt mitsamt Historie
@@ -630,6 +707,13 @@ def _split_closed_entry(
 
     manual_entry = models.TimeEntry(**payload)
     db.add(manual_entry)
+    if not replaced:
+        parts = [(existing, *_entry_bounds(existing.work_date, existing.start_time,
+                                          existing.end_time, False))]
+        if clone is not None:
+            parts.append((clone, *_entry_bounds(clone.work_date, clone.start_time,
+                                                clone.end_time, False)))
+        _partition_entry_breaks(db, existing, parts)
     db.flush()
 
     if replaced:
@@ -638,24 +722,28 @@ def _split_closed_entry(
         db.flush()
         revision_log.record(
             db, existing, models.RevisionAction.CANCELLED,
+            actor=actor,
             reason=existing.cancel_reason, before=before,
             after=revision_log.snapshot(existing),
         )
     else:
         revision_log.record(
             db, existing, models.RevisionAction.UPDATED,
+            actor=actor,
             reason=note, before=before, after=revision_log.snapshot(existing),
         )
     if clone is not None:
-        revision_log.record_creation(db, clone)
-    revision_log.record_creation(db, manual_entry)
+        revision_log.record_creation(db, clone, actor=actor)
+    revision_log.record_creation(db, manual_entry, actor=actor)
 
     db.commit()
     db.refresh(manual_entry)
     return manual_entry
 
 
-def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tuple[models.TimeEntry, bool]:
+def create_manual_time_entry(
+    db: Session, entry: schemas.TimeEntryCreate, *, actor: object = None,
+) -> tuple[models.TimeEntry, bool]:
     """Manuelle Buchung anlegen; liegt sie innerhalb einer bestehenden Buchung
     des Benutzers (laufend oder abgeschlossen), wird diese geteilt.
 
@@ -671,6 +759,7 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
       nur teilweise Überlappung (z. B. Ende in der Zukunft).
     """
     payload = entry.model_dump()
+    ensure_period_open(db, payload["work_date"])
     new_start, new_end = _entry_bounds(
         payload["work_date"], payload["start_time"], payload["end_time"], False
     )
@@ -684,7 +773,8 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
             open_entry.work_date, open_entry.start_time, open_entry.end_time, True
         )
         if _intervals_overlap_minute(new_start, new_end, open_start, open_end):
-            if open_entry.break_started_at:
+            ensure_period_open(db, open_entry.work_date)
+            if open_entry.break_started_at or open_entry.running_break is not None:
                 raise ValueError("BREAK_RUNNING")
             if new_start < open_start or new_end > open_end:
                 # Nur teilweise Überlappung (beginnt vor der laufenden Buchung
@@ -693,10 +783,13 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
 
             _ensure_no_time_overlap(db, payload, exclude_id=open_entry.id)
 
+            before = revision_log.snapshot(open_entry)
+            first_part = None
             if new_start - open_start >= timedelta(minutes=1):
                 first_part = models.TimeEntry(
                     user_id=open_entry.user_id,
                     company_id=open_entry.company_id,
+                    location_id=open_entry.location_id,
                     work_date=open_entry.work_date,
                     start_time=open_entry.start_time,
                     end_time=new_start.time(),
@@ -704,12 +797,14 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
                     break_started_at=None,
                     is_open=False,
                     notes=open_entry.notes or "",
-                    status=models.TimeEntryStatus.APPROVED,
-                    is_manual=False,
+                    status=open_entry.status,
+                    is_manual=open_entry.is_manual,
                     is_remote=bool(open_entry.is_remote),
+                    source=open_entry.source,
+                    tz_name=open_entry.tz_name,
+                    break_rule=open_entry.break_rule,
                 )
                 db.add(first_part)
-                open_entry.break_minutes = 0
 
             # Laufende Buchung ab dem Ende des Nachtrags weiterlaufen lassen
             # (offene Einträge führen end_time als Platzhalter == start_time).
@@ -721,17 +816,28 @@ def create_manual_time_entry(db: Session, entry: schemas.TimeEntryCreate) -> tup
 
             manual_entry = models.TimeEntry(**payload)
             db.add(manual_entry)
+            parts = [(first_part, open_start, new_start)] if first_part is not None else []
+            parts.append((open_entry, new_end, open_end))
+            _partition_entry_breaks(db, open_entry, parts)
+            db.flush()
+            revision_log.record(db, open_entry, models.RevisionAction.UPDATED,
+                                actor=actor, reason="Durch einen Nachtrag geteilt.", before=before,
+                                after=revision_log.snapshot(open_entry))
+            if first_part is not None:
+                revision_log.record_creation(db, first_part, actor=actor)
+            revision_log.record_creation(db, manual_entry, actor=actor)
             db.commit()
             db.refresh(manual_entry)
             return manual_entry, True
 
     # 2. Fällt der Nachtrag in eine abgeschlossene Buchung? → diese teilen.
-    containing = _find_containing_closed_entry(db, payload["user_id"], new_start, new_end)
+    containing = _find_containing_closed_entry(db, payload["user_id"], new_start, new_end,
+                                               tz_name=payload.get("tz_name"))
     if containing is not None:
-        return _split_closed_entry(db, containing, payload, new_start, new_end), True
+        return _split_closed_entry(db, containing, payload, new_start, new_end, actor=actor), True
 
     # 3. Sonst normal anlegen (mit Überschneidungsprüfung).
-    return create_time_entry(db, entry), False
+    return create_time_entry(db, entry, actor=actor), False
 
 
 def create_time_entry(
@@ -739,6 +845,7 @@ def create_time_entry(
     entry: schemas.TimeEntryCreate,
     *,
     actor: Optional[models.User] = None,
+    commit: bool = True,
 ) -> models.TimeEntry:
     """Buchung anlegen und den Vorgang historisieren.
 
@@ -765,7 +872,8 @@ def create_time_entry(
     revision_log.record_creation(
         db, db_entry, actor=actor, source=payload.get("source")
     )
-    db.commit()
+    if commit:
+        db.commit()
     db.refresh(db_entry)
     return db_entry
 
@@ -848,6 +956,8 @@ def update_time_entry_notes(
 
 
 def _normalize_time(moment: datetime) -> datetime:
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(worktime.zone()).replace(tzinfo=None)
     return moment.replace(microsecond=0)
 
 
@@ -994,6 +1104,7 @@ def end_break(
             end_utc += timedelta(days=1)
         running.ended_at_utc = end_utc
         entry.break_started_at = None
+        entry.break_minutes = sum(interval.minutes for interval in entry.breaks)
         db.flush()
         revision_log.record(
             db,
@@ -1042,6 +1153,7 @@ def correct_break(
     reason: str,
     started_at: Optional[datetime] = None,
     ended_at: Optional[datetime] = None,
+    entry_id: Optional[int] = None,
 ) -> Optional[models.BreakInterval]:
     """Eine bereits erfasste Pause nachträglich verschieben.
 
@@ -1054,15 +1166,46 @@ def correct_break(
         .filter(models.BreakInterval.id == interval_id)
         .first()
     )
-    if interval is None:
+    if interval is None or (entry_id is not None and interval.entry_id != entry_id):
         return None
     entry = interval.entry
     ensure_period_open(db, entry.work_date)
+    if not (reason or "").strip():
+        raise revision_log.ReasonRequired("Eine Pausenkorrektur braucht eine Begründung.")
+    if interval.is_running or entry.running_break is not None:
+        raise ValueError("BREAK_RUNNING")
+    def corrected_stamp(moment: datetime, previous: datetime) -> datetime:
+        zone = worktime.zone(entry.tz_name)
+        if moment.tzinfo is None:
+            # datetime-local cannot represent a fold. Preserve the known
+            # occurrence of an existing interval on the same local date.
+            old_local = worktime.from_utc_column(previous).astimezone(zone)
+            if old_local.date() == moment.date():
+                moment = moment.replace(fold=old_local.fold)
+            converted = worktime.from_local(moment, zone)
+            if converted.astimezone(zone).replace(tzinfo=None) != moment:
+                raise ValueError("INVALID_BREAK_INTERVAL")
+            return converted.replace(tzinfo=None)
+        return worktime.to_utc_naive(moment, entry.tz_name)
+
+    new_start = (corrected_stamp(started_at, interval.started_at_utc)
+                 if started_at is not None else interval.started_at_utc)
+    new_end = (corrected_stamp(ended_at, interval.ended_at_utc)
+               if ended_at is not None else interval.ended_at_utc)
+    entry_start, entry_end = worktime.entry_bounds(entry)
+    if (new_end is None or new_end < new_start
+            or new_start < entry_start.replace(tzinfo=None)
+            or new_end > entry_end.replace(tzinfo=None)):
+        raise ValueError("INVALID_BREAK_INTERVAL")
+    if new_end > new_start and any(other.id != interval.id and other.ended_at_utc is not None
+           and other.ended_at_utc > other.started_at_utc
+           and new_start < other.ended_at_utc and other.started_at_utc < new_end
+           for other in entry.breaks):
+        raise ValueError("OVERLAPPING_BREAK_INTERVAL")
     before = revision_log.snapshot(entry)
-    if started_at is not None:
-        interval.started_at_utc = _to_utc(_normalize_time(started_at))
-    if ended_at is not None:
-        interval.ended_at_utc = _to_utc(_normalize_time(ended_at))
+    interval.started_at_utc = new_start
+    interval.ended_at_utc = new_end
+    entry.break_minutes = sum(item.minutes for item in entry.breaks)
     db.flush()
     revision_log.record(
         db,
@@ -1102,8 +1245,14 @@ def cancel_break(
         return None
     entry = interval.entry
     ensure_period_open(db, entry.work_date)
+    if not (reason or "").strip():
+        raise revision_log.ReasonRequired("Eine Pausenstornierung braucht eine Begründung.")
     before = revision_log.snapshot(entry)
+    was_running = interval.is_running
     interval.ended_at_utc = interval.started_at_utc
+    if was_running:
+        entry.break_started_at = None
+    entry.break_minutes = sum(item.minutes for item in entry.breaks)
     db.flush()
     revision_log.record(
         db,
@@ -1170,6 +1319,36 @@ def get_time_entries(
     return query.all()
 
 
+def _time_entry_edit_payload(db_entry: models.TimeEntry, entry: schemas.TimeEntryCreate) -> dict:
+    """Use the same known UTC occurrence in the preview, overlap check and save.
+
+    An explicit UTC timestamp wins. Date or timezone changes intentionally use
+    the newly selected local date/zone instead of inheriting an old fold.
+    """
+    payload = entry.model_dump()
+    payload["tz_name"] = payload.get("tz_name") or db_entry.tz_name
+    for field in ("started_at_utc", "ended_at_utc"):
+        if payload.get(field) is None:
+            # Form defaults are not a request to erase an exact UTC instant.
+            # The mapper updates only the boundary whose local fields change.
+            payload.pop(field, None)
+    if payload["work_date"] == db_entry.work_date and payload["tz_name"] == db_entry.tz_name:
+        bounds = _entry_bounds(payload["work_date"], payload["start_time"], payload["end_time"], False)
+        for field, local_field, moment in (
+            ("started_at_utc", "start_time", bounds[0]),
+            ("ended_at_utc", "end_time", bounds[1]),
+        ):
+            if field not in payload:
+                previous = getattr(db_entry, field)
+                unchanged = payload[local_field] == getattr(db_entry, local_field)
+                if field == "ended_at_utc" and payload["start_time"] != db_entry.start_time and previous is not None:
+                    previous_date = worktime.from_utc_column(previous).astimezone(worktime.zone(payload["tz_name"])).date()
+                    unchanged = unchanged and previous_date == moment.date()
+                payload[field] = (previous if previous is not None and unchanged
+                                  else worktime.to_utc_naive(moment, payload["tz_name"], previous_utc=previous))
+    return payload
+
+
 def plan_time_entry_overwrite(
     db: Session, entry_id: int, entry: schemas.TimeEntryCreate
 ) -> list[dict]:
@@ -1183,7 +1362,7 @@ def plan_time_entry_overwrite(
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return []
-    payload = entry.model_dump()
+    payload = _time_entry_edit_payload(db_entry, entry)
     payload["break_started_at"] = None
     payload["is_open"] = False
     payload.pop("source", None)
@@ -1246,22 +1425,25 @@ def _apply_overwrite(
     0.20.9 ``models._sync_time_entry_stamps`` nach (siehe dort).
     """
     note = (reason or "").strip() or "Durch eine überschreibende Korrektur angepasst."
+    # Validate every affected record before mutating any part of the plan.
+    for item in plan:
+        ensure_period_open(db, item["entry"].work_date)
+        if item["entry"].running_break is not None or item["entry"].break_started_at:
+            raise ValueError("BREAK_RUNNING")
     for item in plan:
         conflict: models.TimeEntry = item["entry"]
-        action = item["action"]
         before = revision_log.snapshot(conflict)
-        if action == "delete":
-            if conflict.is_open:
-                # Laufende Buchung ab dem Ende der neuen Buchung fortführen.
-                conflict.work_date = new_end.date()
-                conflict.start_time = new_end.time()
-                conflict.end_time = new_end.time()
-                db.flush()
-                revision_log.record(
-                    db, conflict, models.RevisionAction.UPDATED, actor=actor,
-                    reason=note, before=before, after=revision_log.snapshot(conflict),
-                )
-                continue
+        start, end = _entry_bounds(conflict.work_date, conflict.start_time,
+                                   conflict.end_time, conflict.is_open)
+        was_open = conflict.is_open
+        # Retain full dates: a tail after midnight belongs to the following
+        # calendar day. Running time always continues after the replacement.
+        windows = []
+        if start < new_start:
+            windows.append((start, new_start, False))
+        if new_end < end or was_open:
+            windows.append((new_end, max(end, new_end), was_open))
+        if not windows:
             conflict.status = models.TimeEntryStatus.CANCELLED
             conflict.cancelled_at = datetime.utcnow()
             conflict.cancelled_by_id = getattr(actor, "id", None)
@@ -1272,47 +1454,30 @@ def _apply_overwrite(
                 reason=note, before=before, after=revision_log.snapshot(conflict),
             )
             continue
-        elif action == "shorten":
-            start_time, end_time = item["result"]
-            conflict.start_time = start_time
-            if conflict.is_open:
-                conflict.end_time = start_time
-            else:
-                conflict.end_time = end_time
-            db.flush()
-            revision_log.record(
-                db, conflict, models.RevisionAction.UPDATED, actor=actor,
-                reason=note, before=before, after=revision_log.snapshot(conflict),
+        parts = []
+        for index, (part_start, part_end, is_open) in enumerate(windows):
+            part = conflict if index == 0 else models.TimeEntry(
+                user_id=conflict.user_id, company_id=conflict.company_id,
+                location_id=conflict.location_id, notes=conflict.notes or "",
+                status=conflict.status, is_manual=conflict.is_manual,
+                is_remote=bool(conflict.is_remote), source=conflict.source,
+                tz_name=conflict.tz_name, break_rule=conflict.break_rule,
             )
-        elif action == "split":
-            (first_start, first_end), (second_start, second_end) = item["result"]
-            conflict.start_time = first_start
-            conflict.end_time = first_end
-            conflict.is_open = False
-            second = models.TimeEntry(
-                user_id=conflict.user_id,
-                company_id=conflict.company_id,
-                location_id=conflict.location_id,
-                work_date=conflict.work_date,
-                start_time=second_start,
-                end_time=second_end,
-                break_minutes=0,
-                break_started_at=None,
-                is_open=False,
-                notes=conflict.notes or "",
-                status=conflict.status,
-                is_manual=conflict.is_manual,
-                is_remote=bool(conflict.is_remote),
-                break_rule=conflict.break_rule or models.BreakRule.ACTUAL,
-            )
-            db.add(second)
-            db.flush()
-            revision_log.record(
-                db, conflict, models.RevisionAction.UPDATED, actor=actor,
-                reason=f"{note} (Buchung geteilt)", before=before,
-                after=revision_log.snapshot(conflict),
-            )
-            revision_log.record_creation(db, second, actor=actor)
+            part.work_date = part_start.date()
+            part.start_time = part_start.time()
+            part.end_time = part_start.time() if is_open else part_end.time()
+            part.is_open = is_open
+            if index:
+                db.add(part)
+            parts.append((part, part_start, part_end))
+        _partition_entry_breaks(db, conflict, parts)
+        db.flush()
+        revision_log.record(
+            db, conflict, models.RevisionAction.UPDATED, actor=actor,
+            reason=note, before=before, after=revision_log.snapshot(conflict),
+        )
+        for part, _, _ in parts[1:]:
+            revision_log.record_creation(db, part, actor=actor)
 
 
 def update_time_entry(
@@ -1339,7 +1504,25 @@ def update_time_entry(
         return None
     ensure_period_open(db, db_entry.work_date)
     ensure_period_open(db, entry.work_date)
-    payload = entry.model_dump()
+    if not (reason or "").strip():
+        raise revision_log.ReasonRequired("Eine Korrektur braucht eine Begründung.")
+    payload = _time_entry_edit_payload(db_entry, entry)
+    if db_entry.running_break is not None or db_entry.break_started_at:
+        raise ValueError("BREAK_RUNNING")
+    if db_entry.breaks and payload["break_minutes"] != db_entry.total_break_minutes:
+        # A sum cannot tell us which stamped interval was corrected. Keep the
+        # actual timestamps and require the explicit interval correction form.
+        raise ValueError("BREAK_INTERVALS_REQUIRE_EDIT")
+    new_start, new_end = _entry_bounds(payload["work_date"], payload["start_time"],
+                                      payload["end_time"], False)
+    start_stamp = worktime.from_utc_column(payload.get("started_at_utc"))
+    end_stamp = worktime.from_utc_column(payload.get("ended_at_utc"))
+    start_utc = start_stamp.replace(tzinfo=None) if start_stamp else worktime.to_utc_naive(new_start, payload["tz_name"])
+    end_utc = end_stamp.replace(tzinfo=None) if end_stamp else worktime.to_utc_naive(new_end, payload["tz_name"])
+    if any(interval.minutes and (interval.started_at_utc < start_utc
+                                 or interval.ended_at_utc > end_utc)
+           for interval in db_entry.breaks):
+        raise ValueError("BREAK_OUTSIDE_ENTRY")
     payload["break_started_at"] = None
     payload["is_open"] = False
     payload.pop("source", None)
@@ -1440,6 +1623,7 @@ def cancel_time_entry(
     actor: object,
     reason: str,
     replacement_id: Optional[int] = None,
+    commit: bool = True,
 ) -> Optional[models.TimeEntry]:
     """Buchung stornieren statt löschen.
 
@@ -1477,7 +1661,8 @@ def cancel_time_entry(
         before=before,
         after=revision_log.snapshot(db_entry),
     )
-    db.commit()
+    if commit:
+        db.commit()
     db.refresh(db_entry)
     return db_entry
 
@@ -1505,21 +1690,25 @@ def replace_time_entry(
     ensure_period_open(db, original.work_date)
     ensure_period_open(db, entry.work_date)
 
-    cancel_time_entry(db, entry_id, actor=actor, reason=cleaned)
-    replacement = create_time_entry(db, entry)
-    replacement.replaces_id = original.id
-    original.replaced_by_id = replacement.id
-    db.flush()
-    revision_log.record(
-        db,
-        replacement,
-        models.RevisionAction.REPLACED,
-        actor=actor,
-        reason=cleaned,
-        before=revision_log.snapshot(original),
-        after=revision_log.snapshot(replacement),
-    )
-    db.commit()
+    # Validate before cancelling, then keep both effects in one transaction.
+    # A conflicting or failed replacement must not leave a cancelled original.
+    _ensure_no_time_overlap(db, entry.model_dump(), exclude_id=original.id)
+    before = revision_log.snapshot(original)
+    try:
+        cancel_time_entry(db, entry_id, actor=actor, reason=cleaned, commit=False)
+        replacement = create_time_entry(db, entry, actor=actor, commit=False)
+        replacement.replaces_id = original.id
+        original.replaced_by_id = replacement.id
+        db.flush()
+        revision_log.record(
+            db, replacement, models.RevisionAction.REPLACED,
+            actor=actor, reason=cleaned, before=before,
+            after=revision_log.snapshot(replacement),
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(original)
     db.refresh(replacement)
     return original, replacement

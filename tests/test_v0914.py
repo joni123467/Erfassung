@@ -142,8 +142,8 @@ def _entries_for(user_id: int):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.21.0"
-    assert client.get("/health").json()["version"] == "0.21.0"
+    assert client.main.APP_VERSION == "0.22.0"
+    assert client.get("/health").json()["version"] == "0.22.0"
 
 
 # --- split behaviour --------------------------------------------------------------
@@ -152,7 +152,7 @@ def test_manual_entry_inside_running_entry_splits(client):
     from app import crud, database, models
 
     uid = _admin_id()
-    now = datetime.now()
+    now = _business_now()
     work_start = now - timedelta(hours=3)
     _start_running_entry(uid, work_start, notes="Baustelle", break_minutes=15)
 
@@ -191,7 +191,7 @@ def test_manual_entry_starting_at_running_start(client):
     from app import crud, database
 
     uid = _admin_id()
-    now = datetime.now()
+    now = _business_now()
     work_start = (now - timedelta(hours=2)).replace(microsecond=0)
     _start_running_entry(uid, work_start, break_minutes=10)
 
@@ -220,7 +220,7 @@ def test_manual_entry_with_running_break_rejected(client):
     from app import crud, database
 
     uid = _admin_id()
-    now = datetime.now()
+    now = _business_now()
     _start_running_entry(uid, now - timedelta(hours=2))
     db = database.SessionLocal()
     try:
@@ -235,11 +235,18 @@ def test_manual_entry_with_running_break_rejected(client):
         db.close()
 
 
+def _business_now():
+    # Stempelzeiten sind Betriebszeit, unabhängig von der Host-Zeitzone.
+    from app import worktime
+
+    return datetime.now(worktime.zone()).replace(tzinfo=None)
+
+
 def test_manual_entry_partially_overlapping_rejected(client):
     from app import crud, database
 
     uid = _admin_id()
-    now = datetime.now()
+    now = _business_now()
     work_start = now - timedelta(hours=1)
     _start_running_entry(uid, work_start)
     db = database.SessionLocal()
@@ -324,7 +331,7 @@ def test_manual_entry_outside_running_entry_no_split(client):
     from app import crud, database
 
     uid = _admin_id()
-    now = datetime.now()
+    now = _business_now()
     _start_running_entry(uid, now - timedelta(hours=2))
     yesterday = datetime.combine(date.today() - timedelta(days=1), datetime.min.time())
     db = database.SessionLocal()
@@ -345,7 +352,7 @@ def test_manual_entry_outside_running_entry_no_split(client):
 def test_time_route_splits_and_reports_message(client):
     login(client)
     uid = _admin_id()
-    now = datetime.now()
+    now = _business_now()
     _start_running_entry(uid, now - timedelta(hours=3))
     token = _csrf(client, "/dashboard")
     call_start = (now - timedelta(hours=1)).replace(second=0, microsecond=0)
@@ -376,7 +383,7 @@ def test_time_route_break_running_message(client):
 
     login(client)
     uid = _admin_id()
-    now = datetime.now()
+    now = _business_now()
     _start_running_entry(uid, now - timedelta(hours=2))
     db = database.SessionLocal()
     try:

@@ -2,6 +2,7 @@
 {% from "_components.html" import location_toggle, location_picker, location_catalogue %}
 {% block title %}Zeitbuchung bearbeiten – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {{ location_catalogue(location_catalogue_data) }}
 {% set admin_active = active_tab %}
 {% set admin_nav_collapse = true %}
@@ -11,11 +12,15 @@
         <h1>Zeitbuchung bearbeiten</h1>
         <a href="{{ next_url }}" class="button ghost">Zurück</a>
     </div>
+    <p class="interface-notice">Zeiten korrigieren, Zuordnung prüfen und die Änderung begründen. Falls andere Buchungen betroffen sind, zeigt der nächste Schritt jede Auswirkung vor dem Speichern.</p>
     <form method="post" action="/admin/time-entries/{{ entry.id }}/update" class="form-grid">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <input type="hidden" name="user_id" value="{{ entry.user_id }}">
         <input type="hidden" name="redirect_user" value="{{ redirect_user or '' }}">
         <input type="hidden" name="next_url" value="{{ next_url }}">
+        <fieldset class="interface-form-section">
+        <legend>1 · Person und Arbeitszeit</legend>
+        <div class="interface-section-body">
         <label>
             Mitarbeiter
             <input type="text" value="{{ entry.user.full_name if entry.user else 'Unbekannt' }}" disabled>
@@ -34,8 +39,14 @@
         </label>
         <label>
             Pausen (Minuten)
-            <input type="number" name="break_minutes" value="{{ entry.break_minutes }}" min="0">
+            <input type="number" name="break_minutes" value="{{ entry.total_break_minutes }}" min="0"{% if entry.breaks %} readonly aria-describedby="break-interval-hint"{% endif %}>
+            {% if entry.breaks %}<small id="break-interval-hint">Die Summe stammt aus den erfassten Pausen. <a href="#break-intervals">Pausenzeiten unten einzeln korrigieren</a>.</small>{% endif %}
         </label>
+        </div>
+        </fieldset>
+        <fieldset class="interface-form-section">
+        <legend>2 · Auftrag und Einsatzort</legend>
+        <div class="interface-section-body">
         <label>
             Firma
             <select name="company_id">
@@ -54,6 +65,10 @@
             {{ location_picker(locations=entry_locations, catalogue=location_catalogue_data,
                                checked=entry.is_remote, selected=entry.location_id) }}
         </div>
+        </div>
+        </fieldset>
+        <fieldset class="interface-form-section">
+        <legend>3 · Änderung nachvollziehbar machen</legend>
         <label class="full-width">
             Begründung der Änderung <span class="required-marker">*</span>
             <input type="text" name="change_reason" required maxlength="500"
@@ -64,15 +79,53 @@
                 ursprüngliche Buchung bleibt dabei erhalten.
             </small>
         </label>
+        </fieldset>
         <div class="form-actions full-width">
-            <button type="submit" class="button primary">Speichern</button>
+            <button type="submit" class="button primary">Korrektur prüfen und speichern</button>
         </div>
     </form>
-    <form method="post" action="/admin/time-entries/{{ entry.id }}/delete" class="danger-zone" onsubmit="return confirm('Buchung wirklich löschen?');">
+    {% if break_edit_rows %}
+    <section id="break-intervals" aria-labelledby="break-intervals-title" class="interface-break-section">
+        <h2 id="break-intervals-title">Erfasste Pausen korrigieren</h2>
+        <p class="interface-notice">Beginn und Ende beziehen sich auf die Zeitzone der Buchung ({{ break_timezone or entry.tz_name or 'Betriebszeitzone' }}). Prüfe bei einem Datumswechsel auch den Kalendertag. Jede Korrektur benötigt eine Begründung und bleibt mit dem vorherigen Stand in der Historie nachvollziehbar.</p>
+        <p class="form-hint">Buchungsstatus: {% if entry.status == 'approved' %}Freigegeben{% elif entry.status == 'pending' %}Wartet auf Freigabe{% elif entry.status == 'cancelled' %}Storniert{% else %}Abgelehnt{% endif %}. Der Freigabestatus bleibt bei einer Pausenkorrektur erhalten. Es werden ausschließlich vorhandene Pausen innerhalb dieser Buchung bearbeitet.</p>
+        {% for row in break_edit_rows %}
+        <form method="post" action="/admin/time-entries/{{ entry.id }}/breaks/{{ row.interval.id }}" class="form-grid interface-break-form">
+            <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
+            <input type="hidden" name="redirect_user" value="{{ redirect_user or '' }}">
+            <input type="hidden" name="next_url" value="{{ next_url }}">
+            <fieldset class="interface-form-section"{% if not row.can_edit %} disabled{% endif %}>
+                <legend>Pause {{ loop.index }} · {% if row.interval.is_running %}läuft{% else %}{{ row.interval.minutes }} Minuten{% endif %}</legend>
+                <div class="interface-section-body">
+                    <label>Beginn der Pause
+                        <input type="datetime-local" name="started_at" value="{{ row.started_local }}" step="1" required>
+                    </label>
+                    <label>Ende der Pause
+                        <input type="datetime-local" name="ended_at" value="{{ row.ended_local }}" step="1" required>
+                    </label>
+                    <label class="full-width">Begründung der Pausenkorrektur
+                        <textarea name="change_reason" rows="2" maxlength="500" required placeholder="Warum werden diese Pausenzeiten korrigiert?"></textarea>
+                    </label>
+                    {% if row.can_edit %}<div class="form-actions full-width"><button type="submit" class="button">Pausenkorrektur speichern</button></div>{% endif %}
+                </div>
+            </fieldset>
+            {% if not row.can_edit %}<p class="form-hint full-width">{% if row.interval.is_running %}Pause zuerst beenden. Laufende Pausen können hier nicht korrigiert werden.{% else %}Diese Buchung ist derzeit nicht zur Pausenkorrektur freigegeben. Gesperrte Perioden müssen zuerst begründet wieder geöffnet werden.{% endif %}</p>{% endif %}
+        </form>
+        {% endfor %}
+    </section>
+    {% endif %}
+    <form method="post" action="/admin/time-entries/{{ entry.id }}/delete" class="danger-zone" onsubmit="return confirm('Buchung stornieren? Sie zählt danach nicht mehr zur Arbeitszeit. Original und Verlauf bleiben erhalten.');">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <input type="hidden" name="redirect_user" value="{{ redirect_user or '' }}">
         <input type="hidden" name="next_url" value="{{ next_url }}">
-        <button type="submit" class="button danger small">Buchung löschen</button>
+        <h2>Buchung stornieren</h2>
+        <p class="form-hint">Die Zeit wird aus der Auswertung genommen. Die ursprüngliche Buchung und ihr Verlauf bleiben erhalten.</p>
+        <label>Begründung der Stornierung
+            <input type="text" name="cancel_reason" required maxlength="500" placeholder="Warum wird die Buchung zurückgenommen?">
+        </label>
+        <div class="form-actions"><button type="submit" class="button danger small">Buchung stornieren</button></div>
     </form>
 </section>
+
+</div>
 {% endblock %}

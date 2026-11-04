@@ -1,17 +1,23 @@
 (() => {
     "use strict";
-    const form = document.querySelector("[data-vacation-request][data-team-calendar='true']");
-    const output = document.querySelector("[data-vacation-overlap]");
-    if (!form || !output) return;
+    const form = document.querySelector("[data-vacation-request]");
+    if (!form) return;
+    const output = form.querySelector("[data-vacation-overlap]");
     const start = form.elements.start_date;
     const end = form.elements.end_date;
     let controller;
     async function update() {
+        // Date feedback also works for users without team-calendar access.
+        // Cancel stale requests before validating the newly selected range.
+        if (controller) controller.abort();
+        end.min = start.value || "";
+        end.setCustomValidity(end.value && start.value && end.value < start.value
+            ? "Das Enddatum muss am Startdatum oder danach liegen." : "");
+        if (!output || form.dataset.teamCalendar !== "true") return;
         if (!start.value || !end.value || end.value < start.value) {
             output.textContent = "Zeitraum wählen, um Teamüberschneidungen zu prüfen.";
             return;
         }
-        if (controller) controller.abort();
         controller = new AbortController();
         output.textContent = "Teamüberschneidungen werden geprüft …";
         try {
@@ -31,4 +37,5 @@
     }
     start.addEventListener("change", update);
     end.addEventListener("change", update);
+    update();
 })();
