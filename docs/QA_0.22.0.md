@@ -72,6 +72,12 @@ und additive Sicherungswiederherstellung. Zusätzlich wird der Wechsel aus
 der offline neu geladenen Ansicht „Mehr“ zurück zu bedienbaren Stempelknöpfen
 geprüft. Persönliche QR-Codes werden nicht offline gespeichert.
 
+Neustarttests warten gezielt auf den Ablauf einer noch gültigen 30-Sekunden-
+Synchronisationssperre und den bestehenden 15-Sekunden-Wiederholungszyklus.
+Danach müssen weiterhin genau eine Buchung und der passende Beleg vorhanden
+sein. Der Online-Test wartet auf die gespeicherte Serverbuchung, bevor er die
+leere Warteschlange bewertet. Globale Testwiederholungen wurden nicht eingeführt.
+
 ## Datenbank und Betrieb
 
 Migration 26 ergänzt ausschließlich `users.overview_preference` mit dem

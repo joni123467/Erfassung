@@ -38,6 +38,12 @@ function networkFault(mode){
 test('online stamp is saved and acknowledged',async({page,account})=>{
   await login(page,account);
   await page.locator('form[data-offline="punch"]').filter({has:page.locator('input[name=action][value=start_work]')}).locator('button[type=submit]').click();
+  // Enqueue is asynchronous: the previous empty queue and sync label can
+  // still be visible immediately after click. Wait for the saved booking.
+  await expect.poll(async()=>{
+    const response=await page.request.get('/mobile/sync-data');
+    return(await response.json()).active_entry;
+  }).toBeTruthy();
   await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
   await count(page,0);
   const data=await page.request.get('/mobile/sync-data');
