@@ -526,6 +526,7 @@ def _should_force_password_change(path: str) -> bool:
 
 
 def ensure_schema() -> None:
+    models.MobileSyncReceipt.__table__.create(bind=database.engine, checkfirst=True)
     # ``ensure_schema()`` ist die alte SQLite-Aufrüsthilfe und benutzt
     # SQLite-eigenes SQL (PRAGMA, „CREATE UNIQUE INDEX IF NOT EXISTS", VARCHAR
     # ohne Längenangabe). Auf MySQL/MariaDB und PostgreSQL entsteht das
@@ -2443,15 +2444,15 @@ def _parse_event_time(value: Optional[str]) -> datetime:
     if value:
         text_value = value.strip()
         if text_value.endswith("Z"):
-            text_value = text_value[:-1]
+            text_value = text_value[:-1] + "+00:00"
         try:
             parsed = datetime.fromisoformat(text_value)
         except (ValueError, TypeError):
             parsed = None
         if parsed is not None:
             if parsed.tzinfo is not None:
-                parsed = parsed.replace(tzinfo=None)
-            server_now = datetime.now()
+                parsed = parsed.astimezone(worktime.zone()).replace(tzinfo=None)
+            server_now = datetime.now(worktime.zone()).replace(tzinfo=None)
             if server_now - timedelta(days=400) <= parsed <= server_now + timedelta(days=1):
                 return parsed
     return datetime.now()
@@ -2545,6 +2546,11 @@ def punch_action(
     event_time: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
+    if client_action_id and not db.info.get("mobile_atomic"):
+        arguments = dict(locals())
+        arguments.pop("request")
+        arguments.pop("db")
+        return mobile_sync.legacy_action(request, db, punch_action, arguments)
     user = get_logged_in_user(request, db)
     if not user:
         return _auth_required_response(request)
@@ -2845,6 +2851,11 @@ def submit_vacation(
     client_action_id: Optional[str] = Form(None),
     db: Session = Depends(database.get_db),
 ):
+    if client_action_id and not db.info.get("mobile_atomic"):
+        arguments = dict(locals())
+        arguments.pop("request")
+        arguments.pop("db")
+        return mobile_sync.legacy_action(request, db, submit_vacation, arguments)
     user = get_logged_in_user(request, db)
     if not user:
         return _auth_required_response(request)
@@ -5348,6 +5359,8 @@ def admin_approvals_page(request: Request, db: Session = Depends(database.get_db
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     can_manual = _can_approve_manual_entries(user)
     can_vacation = _can_manage_vacations(user)
+    if not (can_manual or can_vacation) and permission_service.has(user, "Time.Sync.Resolve"):
+        return RedirectResponse("/admin/sync-conflicts", status_code=303)
     if not (can_manual or can_vacation):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     message = request.query_params.get("msg")
@@ -8589,6 +8602,10 @@ async def admin_holidays_import(request: Request, db: Session = Depends(database
         url=f"/admin/holidays?msg={len(to_create)}+Feiertage+importiert",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+from . import mobile_sync
+app.include_router(mobile_sync.router)
 
 
 if __name__ == "__main__":

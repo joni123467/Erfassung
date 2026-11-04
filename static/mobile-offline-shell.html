@@ -33,6 +33,7 @@
     class="mobile-dashboard"
     aria-label="Mobile Zeiterfassung"
     data-mobile-state="true"
+    data-offline-shell
     data-state-running="false"
     data-state-break="false"
     data-state-company="false"
@@ -334,10 +335,10 @@
           </label>
         </div>
         <div class="mobile-card">
-          <h2 class="mobile-card__title">Cache verwalten</h2>
-          <p class="mobile-card__text">Löscht alle lokal gespeicherten Buchungen und Offline-Aktionen. Daten auf dem Server bleiben erhalten.</p>
+          <h2 class="mobile-card__title">Übersicht aktualisieren</h2>
+          <p class="mobile-card__text">Lädt den aktuellen Serverstand. Ausstehende Buchungen, Kontozuordnung und Empfangsbestätigungen bleiben erhalten.</p>
           <div class="mobile-action-grid">
-            <button type="button" id="mobile-clear-cache-btn" class="mobile-button danger">Lokalen Cache löschen</button>
+            <button type="button" id="mobile-clear-cache-btn" class="mobile-button">Übersicht neu laden</button>
           </div>
         </div>
       </section>
@@ -398,62 +399,9 @@
   <a class="mobile-account-footer__logout" href="/logout">Abmelden</a>
 </footer>
 
-<script>
-  // Hinweisblasen: antippen öffnet und schließt. Die Offline-Hülle lädt app.js
-  // nicht, wo derselbe Griff für die gewöhnlichen Seiten steckt.
-  (function () {
-    function closeAll(except) {
-      var open = document.querySelectorAll('.info-tip.is-open');
-      for (var i = 0; i < open.length; i++) {
-        if (open[i] === except) continue;
-        open[i].classList.remove('is-open');
-        var btn = open[i].querySelector('.info-tip__trigger');
-        if (btn) btn.setAttribute('aria-expanded', 'false');
-      }
-    }
-    document.addEventListener('click', function (event) {
-      var trigger = event.target && event.target.closest ? event.target.closest('.info-tip__trigger') : null;
-      var tip = trigger ? trigger.parentElement : null;
-      closeAll(tip);
-      if (trigger && tip) {
-        var openState = tip.classList.toggle('is-open');
-        trigger.setAttribute('aria-expanded', openState ? 'true' : 'false');
-      }
-    });
-    document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape') closeAll(null);
-    });
-  }());
-  (function () {
-    var modal = document.getElementById('mobile-order-modal');
-    if (!modal) return;
-    var openers = document.querySelectorAll('[data-open="mobile-order-modal"]');
-    var closers = modal.querySelectorAll('[data-close]');
-    function setVisible(v) {
-      if (v) {
-        modal.classList.add('is-visible');
-        modal.setAttribute('aria-hidden', 'false');
-        document.body.classList.add('modal-open');
-        var f = modal.querySelector('select, input, button');
-        if (f && f.focus) f.focus();
-      } else {
-        modal.classList.remove('is-visible');
-        modal.setAttribute('aria-hidden', 'true');
-        document.body.classList.remove('modal-open');
-      }
-    }
-    for (var i = 0; i < openers.length; i++) {
-      openers[i].addEventListener('click', function (e) { e.preventDefault(); setVisible(true); });
-    }
-    for (var j = 0; j < closers.length; j++) {
-      closers[j].addEventListener('click', function (e) { e.preventDefault(); setVisible(false); });
-    }
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && modal.classList.contains('is-visible')) setVisible(false);
-    });
-  }());
-</script>
+
 <script src="/static/theme.js" defer></script>
+<script type="module" src="/static/app.js"></script>
 <script type="module" src="/static/mobile.js"></script>
 </body>
 </html>

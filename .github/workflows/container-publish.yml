@@ -16,7 +16,11 @@ env:
   IMAGE_NAME: erfassung
 
 jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
   build-and-push:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

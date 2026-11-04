@@ -164,6 +164,12 @@ CATEGORIES: tuple[PermissionCategory, ...] = (
                 scoped=True,
             ),
             Permission(
+                key="Time.Sync.Resolve",
+                label="Synchronisationskonflikte freigeben",
+                description="Offline-Buchungen prüfen, erneut anwenden oder begründet ablehnen.",
+                scoped=True,
+            ),
+            Permission(
                 key="Time.Edit",
                 label="Zeitbuchungen bearbeiten",
                 description="Buchungen korrigieren, anlegen und löschen.",

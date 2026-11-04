@@ -1304,6 +1304,30 @@ class MobileSyncAction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MobileSyncReceipt(Base):
+    """Dauerhafte Empfangsbestätigung, einschließlich ungeklärter Offline-Ereignisse."""
+
+    __tablename__ = "mobile_sync_receipts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_action_id", name="uq_mobile_receipt_user_action"),
+    )
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    client_action_id = Column(String(191), nullable=False)
+    kind = Column(String(20), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    status = Column(String(20), nullable=False, index=True)
+    message = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolution_note = Column(Text, default="")
+    resolution_json = Column(Text, nullable=True)
+    user = relationship("User", foreign_keys=[user_id])
+    resolved_by = relationship("User", foreign_keys=[resolved_by_id])
+
+
 def default_work_end(start: time, minutes: int) -> time:
     start_dt = datetime.combine(date.today(), start)
     end_dt = start_dt + timedelta(minutes=minutes)

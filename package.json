@@ -1,0 +1,12 @@
+{
+  "name": "erfassung-pwa-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/js/*.test.cjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "fake-indexeddb": "6.2.7"
+  }
+}

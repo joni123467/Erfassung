@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.21.0] – 2026-11-02
+
+### Fehlerbehebungen
+- Wiederholbare Ablehnungen, HTML-Antworten, Speicherfehler und abgelaufene
+  Sitzungen löschen keine offenen Stempelungen und melden keinen falschen Erfolg.
+- Atomare Buchung und Dublettenerkennung, auch über parallele Übertragungen;
+  Synchronisationssperren werden nach Fehlern freigegeben.
+- Laufende Arbeitszeit bleibt nach einem Offline-Neustart sichtbar.
+
+### Hinzugefügt
+- Versioniertes Outbox-Protokoll mit dauerhaften, benutzergebundenen Quittungen,
+  Backoff, Timeouts, tabübergreifender Koordination und iOS-Resume-Abgleich.
+- Konfliktfreigabe mit eigenem Recht `Time.Sync.Resolve`, Geltungsbereich,
+  Begründung, Originaldaten und Auditprotokoll.
+- Sichtbarer Buchungs-/Syncstatus, kontrollierte Updates und additive
+  Wiederherstellung exportierter Buchungssicherungen.
+- JavaScript- und Browserprüfungen; CI-Prüfungen vor der Containerveröffentlichung.
+- Getrennte GitHub-Checks für Python, JavaScript, Chromium, WebKit und Docker;
+  Browserfehler erscheinen direkt an der betroffenen Teststelle. Netzwerkfehler
+  werden auch unter WebKit zuverlässig im isolierten Testserver simuliert.
+
+### Geändert
+- Service Worker cached eine neutrale Hülle und konsistente Release-Assets.
+- Der bisherige Cache-Löschknopf aktualisiert ausschließlich die Übersicht.
+- Hash-geprüfter Python-Lock und funktionaler Compose-Healthcheck.
+
+### Datenbankänderungen
+- Migration 25: `mobile_sync_receipts`, datenerhaltend und wiederholbar.
+- IndexedDB Version 5 behält Stores und Ereignis-IDs; Legacy-Kontozuordnung
+  erfolgt aus dem vorhandenen Snapshot oder nach ausdrücklicher Prüfung.
+
+### Migrationshinweise
+- Bestehende Volumes behalten. Individuelle Rollen erhalten das neue Recht nur
+  durch ausdrückliche Vergabe; Systemrollen werden beim Start aktualisiert.
+- Alte PWA-Fenster gegebenenfalls vollständig schließen und wieder öffnen;
+  keine Neuinstallation und kein Löschen offener Aktionen.
+- iOS überträgt bei sichtbarer App/Resume; geschlossene Apps und OS-bedingte
+  Speicherlöschung können nicht durch die Webanwendung garantiert werden.
+- Details: [Release Notes](docs/RELEASE_NOTES_0.21.0.md) und
+  [Synchronisationsarchitektur](docs/PWA_SYNCHRONISATION.md).
+
 ## [0.20.9] – 2026-08-14
 
 Ein überschreibender Nachtrag wird nicht mehr doppelt gezählt. Einzelheiten in
