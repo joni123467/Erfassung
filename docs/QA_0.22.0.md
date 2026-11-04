@@ -40,7 +40,11 @@ Pausenintervalle und Vorher-/Nachher-Historie:
   Überschneidungen und Zeiten außerhalb der Buchung werden abgewiesen.
 - Europe/Berlin, 22:00–06:00: normalerweise 8 Stunden, in der Frühlingsnacht
   7 und in der Herbstnacht 9 Stunden. Die zweite 02-Uhr-Stunde behält ihren
-  eindeutigen UTC-Zeitpunkt beim Beenden und Bearbeiten.
+  eindeutigen UTC-Zeitpunkt beim Beenden und Bearbeiten. Eine Korrektur von
+  02:10–02:40 auf 02:20–02:40 in der zweiten Stunde ergibt 20 Minuten,
+  eine Endkorrektur auf 02:50 ergibt 40 Minuten. Eine getrennte Buchung in
+  der ersten Stunde blockiert diese Änderung nicht; Vorschau und Speicherung
+  verwenden dieselbe UTC-Zuordnung.
 - Online-Stempelungen ohne brauchbare Gerätezeit verwenden auf einem
   UTC-Server die Betriebszeitzone, im Winter wie im Sommer.
 - Neue Buchungen ziehen ausschließlich tatsächliche Pausen ab. Gesetzliche
@@ -91,7 +95,7 @@ gestartet; Daten, Konfiguration, Schema und Protokolle werden erneut geprüft.
 
 | Prüfung | Ergebnis |
 |---|---|
-| Python | 1.023 unterschiedliche Testfälle bestanden; Gesamtlauf und gezielte Nachprüfungen der zuletzt angepassten Fälle |
+| Python | 1.032 unterschiedliche Testfälle bestanden; Gesamtlauf und gezielte Nachprüfungen der zuletzt angepassten Fälle |
 | JavaScript / IndexedDB | 21 bestanden |
 | Browser | 50 unterschiedliche Fälle bestanden: 25 Chromium, 25 WebKit; Gesamtlauf und gezielte Nachprüfung der zuletzt korrigierten Fälle |
 | Datenbank-Upgrades 25→26 | 4 bestanden, jeweils wiederholt und datenerhaltend |
@@ -101,7 +105,7 @@ gestartet; Daten, Konfiguration, Schema und Protokolle werden erneut geprüft.
 | Container | Build, Healthcheck, Login, Stempelung, QR/Konto/Assets, Dublettenerkennung und Neustart mit Daten-/Konfigerhalt bestanden |
 | Versions-/Dateiprüfung | Releaseversion, Migration 26 und `git diff --check` geprüft |
 
-Die Python-Suite enthält 73 neue Zeitregressionen, 11 Konto-/Migrationsfälle,
+Die Python-Suite enthält 82 neue Zeitregressionen, 11 Konto-/Migrationsfälle,
 18 Pausenkorrektur-/Nachtformularfälle, 4 Betriebszonenfälle, 4 portable
 Migrationsfälle und 3 Konfigurationsschutzfälle beim Restore. Die bestehenden
 910 Tests bleiben enthalten. Bestehende Tests wurden bei Bedarf an die

@@ -197,6 +197,9 @@ test('confirmed running work is available for clock-out after offline restart',a
 });
 
 test('outbox survives a complete browser process restart',async({playwright,browserName,account})=>{
+  // A terminated browser cannot release its 30-second ownership lease.
+  // Wait for lease expiry plus the existing 15-second retry in this case only.
+  test.setTimeout(75000);
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'erfassung-browser-'));
   const options={headless:true,baseURL:`http://127.0.0.1:${process.env.ERFASSUNG_E2E_PORT||8765}`,viewport:{width:390,height:844}};
@@ -210,7 +213,21 @@ test('outbox survives a complete browser process restart',async({playwright,brow
     await context.setOffline(true);page=context.pages()[0];await page.goto('/mobile');
     await expect(page.locator('#sync-status')).toBeVisible();await count(page,1);
     expect((await pending(page))[0].clientActionId).toBe(id);
-    await context.setOffline(false);await count(page,0);
+    await context.setOffline(false);
+    await expect.poll(async()=>(await pending(page)).length,{timeout:50000}).toBe(0);
+    await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+    const saved=await (await page.request.get('/mobile/sync-data')).json();
+    expect(saved.entries).toHaveLength(1);
+    expect(saved.active_entry).toMatchObject({id:saved.entries[0].id,status:'approved',is_open:true});
+    const receipts=await page.evaluate(async()=>{
+      const store=new ErfassungSync.MobileStore();
+      try{return(await store.all('mobileData')).filter(row=>row.key.startsWith('receipt:')).map(row=>row.receipt);}
+      finally{store.close();}
+    });
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({client_action_id:id,owner_id:saved.user.id,received:true,status:'applied'});
+    expect(Number.isInteger(receipts[0].receipt_id)).toBe(true);
+    expect(receipts[0].receipt_id).toBeGreaterThan(0);
   }finally{await context?.close();fs.rmSync(profile,{recursive:true,force:true});}
 });
 

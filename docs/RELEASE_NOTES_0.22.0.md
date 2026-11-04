@@ -77,6 +77,9 @@ Die Korrekturen an der Buchungsverarbeitung betreffen insbesondere:
   Buchung in der wiederholten Herbststunde beim Beenden nicht neu interpretiert.
   Nachtgrenzen werden als lokaler Folgetag bestimmt, bevor die Umrechnung nach
   UTC erfolgt; ein Kalendertag wird nicht pauschal als 24 UTC-Stunden behandelt.
+  Beim Verschieben einer bereits bekannten zweiten 02-Uhr-Stunde bleibt deren
+  UTC-Zuordnung auch in der Vorschau und Überschneidungsprüfung erhalten: Eine
+  Änderung von 02:10–02:40 auf 02:20–02:40 ergibt 20 Minuten.
 - **Echte Pausenkorrektur:** In der administrativen Buchungsbearbeitung lassen
   sich vorhandene, beendete Pausenintervalle mit Beginn, Ende und Begründung
   korrigieren. Erforderlich sind `Time.Edit` für die betreffende Person und eine

@@ -42,7 +42,9 @@
   des Folgetags, auch für Teilabschnitte nach Mitternacht.
 - UTC-Zeitpunkte und die wiederholte Stunde bei der Herbstzeitumstellung bleiben
   bei Stempel-, Teilungs- und Abschlussvorgängen erhalten. Für Nachtgrenzen wird
-  der lokale Folgetag vor der UTC-Umrechnung bestimmt.
+  der lokale Folgetag vor der UTC-Umrechnung bestimmt. Auch beim Verschieben
+  von Beginn oder Ende innerhalb der zweiten Herbststunde bleibt die bekannte
+  Stundeninstanz in Vorschau, Überschneidungsprüfung und Speicherung erhalten.
 - Pausenkorrekturen verhindern Überschneidungen, Änderungen laufender Pausen und
   Intervalle außerhalb der Buchung; eine reine Änderung der Pausensumme ersetzt
   keine erfassten Intervalle.

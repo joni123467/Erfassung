@@ -774,7 +774,9 @@ class TimeEntry(Base):
 _LOCAL_TIME_FIELDS = ("work_date", "start_time", "end_time", "is_open")
 
 
-def _local_stamps(entry: "TimeEntry") -> tuple[Optional[datetime], Optional[datetime]]:
+def _local_stamps(
+    entry: "TimeEntry", *, preserve_fold: bool = False,
+) -> tuple[Optional[datetime], Optional[datetime]]:
     """Beginn und Ende einer Buchung als **naive UTC-Werte** aus ihren Ortszeiten.
 
     Dieselbe Rechnung wie die Rückfallebene in :func:`app.worktime.entry_bounds`
@@ -783,19 +785,21 @@ def _local_stamps(entry: "TimeEntry") -> tuple[Optional[datetime], Optional[date
     """
     if entry.work_date is None or entry.start_time is None:
         return None, None
-    tz = worktime.zone(entry.tz_name)
     start_local = datetime.combine(entry.work_date, entry.start_time)
-    started = worktime.from_local(start_local, tz)
+    started = worktime.to_utc_naive(
+        start_local, entry.tz_name,
+        previous_utc=entry.started_at_utc if preserve_fold else None,
+    )
     if entry.is_open or entry.end_time is None:
-        return (started.replace(tzinfo=None) if started else None), None
+        return started, None
     end_local = datetime.combine(entry.work_date, entry.end_time)
     if end_local < start_local:
         end_local += timedelta(days=1)
-    ended = worktime.from_local(end_local, tz)
-    return (
-        started.replace(tzinfo=None) if started else None,
-        ended.replace(tzinfo=None) if ended else None,
+    ended = worktime.to_utc_naive(
+        end_local, entry.tz_name,
+        previous_utc=entry.ended_at_utc if preserve_fold else None,
     )
+    return started, ended
 
 
 def _sync_time_entry_stamps(mapper, connection, target: "TimeEntry") -> None:
@@ -861,7 +865,10 @@ def _sync_time_entry_stamps(mapper, connection, target: "TimeEntry") -> None:
         # damals gültige Zone ist nicht rekonstruierbar.
         target.tz_name = worktime.timezone_name()
 
-    started, ended = _local_stamps(target)
+    preserve_fold = not is_insert and not any(
+        state.attrs[field].history.has_changes() for field in ("work_date", "tz_name")
+    )
+    started, ended = _local_stamps(target, preserve_fold=preserve_fold)
     # SQL TIME cannot retain the fold of the repeated autumn hour. Closing a
     # running entry changes its end, not its known start instant: recomputing
     # both would turn a 30-minute second-hour booking into 90 minutes.

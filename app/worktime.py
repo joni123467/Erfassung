@@ -142,11 +142,22 @@ def local_date(moment: datetime, tz_name: Optional[str] = None) -> date:
     return moment.astimezone(zone(tz_name)).date()
 
 
-def to_utc_naive(moment: Optional[datetime], tz_name: Optional[str] = None):
+def to_utc_naive(
+    moment: Optional[datetime], tz_name: Optional[str] = None,
+    *, previous_utc: Optional[datetime] = None,
+):
     """Ortszeit als naiven UTC-Wert – so, wie ihn die Spalten speichern."""
     if moment is None:
         return None
-    converted = from_local(moment, zone(tz_name))
+    tz = zone(tz_name)
+    if moment.tzinfo is None and previous_utc is not None:
+        previous_local = from_utc_column(previous_utc).astimezone(tz)
+        if moment.date() == previous_local.date():
+            # SQL TIME / HTML time fields cannot retain which occurrence of
+            # an autumn hour was recorded. An edit on the same local date
+            # retains that known occurrence unless an explicit UTC is given.
+            moment = moment.replace(fold=previous_local.fold)
+    converted = from_local(moment, tz)
     return converted.replace(tzinfo=None) if converted else None
 
 

@@ -1319,6 +1319,36 @@ def get_time_entries(
     return query.all()
 
 
+def _time_entry_edit_payload(db_entry: models.TimeEntry, entry: schemas.TimeEntryCreate) -> dict:
+    """Use the same known UTC occurrence in the preview, overlap check and save.
+
+    An explicit UTC timestamp wins. Date or timezone changes intentionally use
+    the newly selected local date/zone instead of inheriting an old fold.
+    """
+    payload = entry.model_dump()
+    payload["tz_name"] = payload.get("tz_name") or db_entry.tz_name
+    for field in ("started_at_utc", "ended_at_utc"):
+        if payload.get(field) is None:
+            # Form defaults are not a request to erase an exact UTC instant.
+            # The mapper updates only the boundary whose local fields change.
+            payload.pop(field, None)
+    if payload["work_date"] == db_entry.work_date and payload["tz_name"] == db_entry.tz_name:
+        bounds = _entry_bounds(payload["work_date"], payload["start_time"], payload["end_time"], False)
+        for field, local_field, moment in (
+            ("started_at_utc", "start_time", bounds[0]),
+            ("ended_at_utc", "end_time", bounds[1]),
+        ):
+            if field not in payload:
+                previous = getattr(db_entry, field)
+                unchanged = payload[local_field] == getattr(db_entry, local_field)
+                if field == "ended_at_utc" and payload["start_time"] != db_entry.start_time and previous is not None:
+                    previous_date = worktime.from_utc_column(previous).astimezone(worktime.zone(payload["tz_name"])).date()
+                    unchanged = unchanged and previous_date == moment.date()
+                payload[field] = (previous if previous is not None and unchanged
+                                  else worktime.to_utc_naive(moment, payload["tz_name"], previous_utc=previous))
+    return payload
+
+
 def plan_time_entry_overwrite(
     db: Session, entry_id: int, entry: schemas.TimeEntryCreate
 ) -> list[dict]:
@@ -1332,7 +1362,7 @@ def plan_time_entry_overwrite(
     db_entry = get_time_entry(db, entry_id)
     if not db_entry:
         return []
-    payload = entry.model_dump()
+    payload = _time_entry_edit_payload(db_entry, entry)
     payload["break_started_at"] = None
     payload["is_open"] = False
     payload.pop("source", None)
@@ -1476,14 +1506,7 @@ def update_time_entry(
     ensure_period_open(db, entry.work_date)
     if not (reason or "").strip():
         raise revision_log.ReasonRequired("Eine Korrektur braucht eine Begründung.")
-    payload = entry.model_dump()
-    # An ordinary edit must not reinterpret old records in today's timezone.
-    payload["tz_name"] = payload.get("tz_name") or db_entry.tz_name
-    for field in ("started_at_utc", "ended_at_utc"):
-        if payload.get(field) is None:
-            # Form defaults are not a request to erase an exact UTC instant.
-            # The mapper updates only the boundary whose local fields change.
-            payload.pop(field, None)
+    payload = _time_entry_edit_payload(db_entry, entry)
     if db_entry.running_break is not None or db_entry.break_started_at:
         raise ValueError("BREAK_RUNNING")
     if db_entry.breaks and payload["break_minutes"] != db_entry.total_break_minutes:
@@ -1492,8 +1515,10 @@ def update_time_entry(
         raise ValueError("BREAK_INTERVALS_REQUIRE_EDIT")
     new_start, new_end = _entry_bounds(payload["work_date"], payload["start_time"],
                                       payload["end_time"], False)
-    start_utc = worktime.to_utc_naive(new_start, payload["tz_name"])
-    end_utc = worktime.to_utc_naive(new_end, payload["tz_name"])
+    start_stamp = worktime.from_utc_column(payload.get("started_at_utc"))
+    end_stamp = worktime.from_utc_column(payload.get("ended_at_utc"))
+    start_utc = start_stamp.replace(tzinfo=None) if start_stamp else worktime.to_utc_naive(new_start, payload["tz_name"])
+    end_utc = end_stamp.replace(tzinfo=None) if end_stamp else worktime.to_utc_naive(new_end, payload["tz_name"])
     if any(interval.minutes and (interval.started_at_utc < start_utc
                                  or interval.ended_at_utc > end_utc)
            for interval in db_entry.breaks):

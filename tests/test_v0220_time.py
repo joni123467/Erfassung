@@ -724,3 +724,82 @@ def test_pause_correction_cannot_overlap_a_currently_running_pause(main, monkeyp
                                ended_at=datetime.combine(DAY, time(12, 15)))
         db.commit()
         assert previous.minutes == 30 and entry.running_break is not None
+
+
+@pytest.mark.parametrize("start,end,expected_start,expected_end,minutes", [
+    (time(2, 20), time(2, 40), datetime(2026, 10, 25, 1, 20), datetime(2026, 10, 25, 1, 40), 20),
+    (time(2, 10), time(2, 50), datetime(2026, 10, 25, 1, 10), datetime(2026, 10, 25, 1, 50), 40),
+])
+@pytest.mark.parametrize("earlier_booking", [False, True])
+def test_boundary_edit_within_known_second_clock_hour_keeps_its_occurrence(
+    main, start, end, expected_start, expected_end, minutes, earlier_booking,
+):
+    from app import crud, database
+
+    day = date(2026, 10, 25)
+    with database.SessionLocal() as db:
+        if earlier_booking:
+            earlier = create(db, time(2, 41), time(2, 59), work_date=day, tz_name="Europe/Berlin",
+                             started_at_utc=datetime(2026, 10, 25, 0, 41),
+                             ended_at_utc=datetime(2026, 10, 25, 0, 59))
+        entry = create(db, time(2, 10), time(2, 40), work_date=day, tz_name="Europe/Berlin",
+                       started_at_utc=datetime(2026, 10, 25, 1, 10),
+                       ended_at_utc=datetime(2026, 10, 25, 1, 40))
+        correction = payload(start, end, work_date=day)
+        assert crud.plan_time_entry_overwrite(db, entry.id, correction) == []
+        crud.update_time_entry(db, entry.id, correction,
+                               reason="Zeit innerhalb der zweiten Stunde korrigieren")
+        assert entry.started_at_utc == expected_start
+        assert entry.ended_at_utc == expected_end
+        assert entry.worked_minutes == minutes
+        if earlier_booking:
+            assert earlier.worked_minutes == 18 and earlier.status == "approved"
+
+
+@pytest.mark.parametrize("field,value,expected,minutes", [
+    ("start_time", time(2, 20), datetime(2026, 10, 25, 1, 20), 20),
+    ("end_time", time(2, 50), datetime(2026, 10, 25, 1, 50), 40),
+])
+def test_mapper_retains_fold_when_only_one_boundary_is_changed(main, field, value, expected, minutes):
+    from app import database
+
+    with database.SessionLocal() as db:
+        entry = create(db, time(2, 10), time(2, 40), work_date=date(2026, 10, 25),
+                       tz_name="Europe/Berlin", started_at_utc=datetime(2026, 10, 25, 1, 10),
+                       ended_at_utc=datetime(2026, 10, 25, 1, 40))
+        setattr(entry, field, value)
+        db.commit(); db.refresh(entry)
+        assert getattr(entry, "started_at_utc" if field == "start_time" else "ended_at_utc") == expected
+        assert entry.worked_minutes == minutes
+
+
+def test_explicit_utc_correction_keeps_precedence_over_previous_fold(main):
+    from app import crud, database
+
+    day = date(2026, 10, 25)
+    with database.SessionLocal() as db:
+        entry = create(db, time(2, 10), time(2, 40), work_date=day, tz_name="Europe/Berlin",
+                       started_at_utc=datetime(2026, 10, 25, 1, 10), ended_at_utc=datetime(2026, 10, 25, 1, 40))
+        crud.update_time_entry(db, entry.id,
+                               payload(time(2, 20), time(2, 40), work_date=day,
+                                       started_at_utc=datetime(2026, 10, 25, 0, 20)),
+                               reason="Erste Stunde ausdrücklich ausgewählt")
+        assert entry.started_at_utc == datetime(2026, 10, 25, 0, 20)
+        assert entry.ended_at_utc == datetime(2026, 10, 25, 1, 40)
+        assert entry.worked_minutes == 80
+
+
+@pytest.mark.parametrize("changed_day,changed_zone,start,end,expected", [
+    (date(2027, 10, 31), "Europe/Berlin", time(2, 20), time(2, 40), datetime(2027, 10, 31, 0, 20)),
+    (date(2026, 10, 25), "Europe/London", time(1, 20), time(1, 40), datetime(2026, 10, 25, 0, 20)),
+])
+def test_fold_is_not_inherited_when_date_or_timezone_changes(main, changed_day, changed_zone, start, end, expected):
+    from app import crud, database
+
+    with database.SessionLocal() as db:
+        entry = create(db, time(2, 10), time(2, 40), work_date=date(2026, 10, 25),
+                       tz_name="Europe/Berlin", started_at_utc=datetime(2026, 10, 25, 1, 10),
+                       ended_at_utc=datetime(2026, 10, 25, 1, 40))
+        crud.update_time_entry(db, entry.id, payload(start, end, work_date=changed_day, tz_name=changed_zone),
+                               reason="Datum bzw. Betriebszeitzone korrigieren")
+        assert entry.started_at_utc == expected and entry.worked_minutes == 20
