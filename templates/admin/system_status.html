@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Systemstatus – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_status' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -176,4 +177,6 @@
         <a href="/admin/system/restore/history">Restore-Historie</a>
     </p>
 </section>
+
+</div>
 {% endblock %}

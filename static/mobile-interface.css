@@ -1,0 +1,93 @@
+/* PWA shell: the same tokens, controls and content online and offline. */
+body.is-mobile .page { padding: 0; }
+.pwa-interface {
+    max-width: 48rem;
+    margin-inline: auto;
+    gap: var(--space-4);
+    padding: calc(var(--space-6) + env(safe-area-inset-top, 0px)) calc(var(--space-4) + env(safe-area-inset-right, 0px)) calc(6rem + env(safe-area-inset-bottom, 0px)) calc(var(--space-4) + env(safe-area-inset-left, 0px));
+}
+.pwa-interface *, .pwa-interface .mobile-panels, .pwa-interface .mobile-card { min-inline-size: 0; }
+.pwa-interface .mobile-dashboard__header { padding: var(--space-2) 0; border: 0; background: transparent; box-shadow: none; flex-wrap: wrap; gap: var(--space-4); }
+.pwa-interface .mobile-dashboard__title { font-size: clamp(1.65rem, 6vw, 2.2rem); letter-spacing: -.035em; line-height: 1.15; }
+.pwa-interface .mobile-eyebrow { margin: 0 0 var(--space-2); font-size: .75rem; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); }
+.pwa-interface .mobile-dashboard__date { margin-top: var(--space-2); font-size: .875rem; line-height: 1.5; }
+.pwa-interface .mobile-dashboard__status { max-width: 100%; font-size: .8rem; line-height: 1.6; text-align: start; }
+.pwa-interface .mobile-dashboard__status .mobile-badge { margin: 0 var(--space-1) var(--space-1) 0; }
+.pwa-interface .mobile-dashboard__status--idle { display: none; }
+.pwa-interface .mobile-bottom-nav {
+    position: fixed; z-index: 100; bottom: 0; inset-inline: 0;
+    display: flex; gap: var(--space-1); justify-content: center;
+    padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right, 0px)) calc(var(--space-2) + env(safe-area-inset-bottom, 0px)) max(var(--space-2), env(safe-area-inset-left, 0px));
+    background: var(--surface); border-top: 1px solid var(--border); box-shadow: var(--shadow-sm);
+}
+.pwa-interface .mobile-bottom-nav .mobile-tab {
+    flex: 1 1 0; max-width: 10rem; min-height: 52px; flex-direction: column; gap: var(--space-1);
+    padding: var(--space-2) var(--space-1); border-radius: var(--radius-md);
+    font-size: .75rem; line-height: 1.4; font-weight: 600; text-decoration: none;
+    color: var(--text-muted); background: transparent; box-shadow: none;
+}
+.pwa-interface .mobile-bottom-nav .mobile-tab svg { width: 21px; height: 21px; flex-shrink: 0; }
+.pwa-interface .mobile-bottom-nav .mobile-tab.is-active { color: var(--brand); background: var(--accent); }
+.pwa-interface .mobile-card { padding: var(--space-5); gap: var(--space-4); border-radius: var(--radius-lg); box-shadow: none; }
+.pwa-interface .mobile-card__title { font-size: 1rem; line-height: 1.5; }
+.pwa-interface .mobile-card__text { font-size: .875rem; line-height: 1.65; overflow-wrap: anywhere; }
+.pwa-interface .mobile-stamp-card { border-top: 3px solid var(--brand); padding-top: var(--space-5); }
+.pwa-interface .mobile-stamp-card > .mobile-card__title { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.pwa-interface .mobile-stamp-card .mobile-card__section { gap: var(--space-2); }
+.pwa-interface .mobile-timer { margin: var(--space-4) 0; font-variant-numeric: tabular-nums; font-size: clamp(2.6rem, 13vw, 4rem); font-weight: 650; letter-spacing: -.045em; color: var(--text); line-height: 1.1; }
+.pwa-interface .mobile-timer__label { display: block; font-size: .75rem; font-weight: 500; letter-spacing: normal; line-height: 1.6; margin-bottom: var(--space-2); color: var(--text-muted); }
+.pwa-interface .mobile-timer small { font-size: .875rem; font-weight: 450; letter-spacing: normal; color: var(--text-muted); }
+.pwa-interface[data-work-state="pause"] .mobile-stamp-card { border-top-color: var(--warning); }
+.pwa-interface .mobile-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); align-items: end; }
+.pwa-interface .mobile-action-grid form { gap: var(--space-3); }
+.pwa-interface .mobile-button, .pwa-interface .mobile-link-button { min-height: 44px; font-size: .875rem; line-height: 1.5; padding: var(--space-3) var(--space-4); }
+.pwa-interface .mobile-button.primary { background: var(--brand); color: var(--brand-contrast); }
+.pwa-interface .mobile-button.danger { background: var(--danger-soft); color: var(--danger); }
+.pwa-interface .mobile-button.danger:hover:not(:disabled) { background: var(--danger); color: var(--brand-contrast); }
+.pwa-interface .mobile-stamp-card .mobile-link-button { padding-inline: 0; text-align: start; }
+.pwa-interface .mobile-section-heading { display: flex; gap: var(--space-4); align-items: center; justify-content: space-between; }
+.pwa-interface .mobile-section-heading .theme-toggle { flex-shrink: 0; }
+.pwa-interface .mobile-more-links { display: flex; flex-direction: column; }
+.pwa-interface .mobile-more-links a { padding: var(--space-4) 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--space-1); text-align: start; align-items: start; justify-content: center; color: var(--text); background: transparent; text-decoration: none; line-height: 1.5; border-radius: 0; font-size: .9rem; font-weight: 600; min-height: 44px; }
+.pwa-interface .mobile-more-links small { color: var(--text-muted); font-weight: 400; font-size: .8rem; }
+.pwa-interface .mobile-more-links a:hover { color: var(--brand); }
+.pwa-interface .mobile-signout { align-self: start; padding-inline: 0; color: var(--text-muted); }
+.pwa-interface .mobile-preference-form { display: grid; gap: var(--space-3); }
+.pwa-interface .mobile-preference-form label { font-size: .9rem; font-weight: 600; }
+.pwa-interface input:not([type="checkbox"]):not([type="hidden"]), .pwa-interface select, .pwa-interface textarea { min-height: 44px; max-width: 100%; font-size: 1rem; }
+.pwa-interface input[type="file"] { font-size: .8rem; }
+.pwa-interface .form-hint { margin: 0; line-height: 1.6; font-size: .8rem; }
+.pwa-interface #mobile-preference-feedback:empty { display: none; }
+.pwa-interface .mobile-back-link { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; color: var(--brand); font-size: .875rem; }
+.pwa-interface .mobile-card__header { flex-wrap: wrap; }
+.pwa-interface .mobile-segmented { display: flex; padding: var(--space-1); gap: var(--space-1); background: var(--surface-muted); border-radius: var(--radius-md); }
+.pwa-interface .mobile-segmented__button { min-height: 44px; min-width: 4rem; padding: var(--space-2) var(--space-3); }
+.pwa-interface .mobile-overview-summary, .pwa-interface .mobile-stats-grid { gap: var(--space-3); }
+.pwa-interface .mobile-overview-summary div, .pwa-interface .mobile-stats-grid div { padding: var(--space-3); background: var(--surface-muted); }
+.pwa-interface .mobile-overview-summary dd, .pwa-interface .mobile-stats-grid dd { font-size: 1.15rem; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.pwa-interface .mobile-week-list--grid { grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); }
+.pwa-interface .mobile-entry { border-radius: var(--radius-md); padding: var(--space-4); }
+.pwa-interface .mobile-entry__times { font-variant-numeric: tabular-nums; }
+.pwa-interface .mobile-entry__notes { max-width: 100%; }
+.pwa-interface .sync-status { margin: 0; padding: var(--space-3) var(--space-4); border-left-width: 3px; }
+.pwa-interface .sync-status [data-sync-label] { font-size: .8rem; }
+.pwa-interface .sync-status [data-sync-message] { font-size: .75rem; line-height: 1.55; margin: var(--space-1) 0 0; }
+.pwa-interface .sync-status__actions { gap: var(--space-2); margin: var(--space-2) 0 0; }
+.pwa-interface .sync-status__actions .button { font-size: .75rem; padding: var(--space-2) var(--space-3); }
+.pwa-interface:not([data-active-tab="einstellungen"]) .sync-status details { display: none; }
+.pwa-interface .sync-status summary { font-size: .875rem; }
+.pwa-interface .sync-status ul { padding-left: var(--space-5); }
+.pwa-interface .sync-status li, .pwa-interface .sync-status details p { font-size: .8rem; line-height: 1.6; }
+.pwa-interface .mobile-queue { background: var(--surface-muted); color: var(--text); padding: var(--space-3); }
+.pwa-interface .modal { padding: var(--space-4); }
+.pwa-interface .modal__dialog { max-width: 32rem; max-height: calc(100dvh - var(--space-8) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-5); }
+.pwa-interface .modal__form { gap: var(--space-4); }
+.pwa-interface .modal__close { min-height: 44px; min-width: 44px; }
+.pwa-interface :focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+@media (max-width: 359px) {
+    .pwa-interface .mobile-action-grid { grid-template-columns: minmax(0, 1fr); }
+    .pwa-interface .mobile-card { padding: var(--space-4); }
+    .pwa-interface .mobile-overview-summary { gap: var(--space-1); }
+    .pwa-interface .mobile-overview-summary div { padding: var(--space-2); }
+}
+@media (prefers-reduced-motion: reduce) { .pwa-interface *, .pwa-interface *::before, .pwa-interface *::after { transition: none !important; scroll-behavior: auto !important; } }

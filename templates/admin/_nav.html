@@ -15,11 +15,11 @@
             {'href': '/admin/groups', 'label': 'Gruppen', 'key': 'groups', 'show': admin_permissions.groups},
             {'href': '/admin/roles', 'label': 'Rollen', 'key': 'roles', 'show': admin_permissions.roles},
             {'href': '/admin/permissions', 'label': 'Berechtigungen', 'key': 'permissions', 'show': admin_permissions.roles},
-            {'href': '/admin/companies', 'label': 'Firmen', 'key': 'companies', 'show': admin_permissions.companies and license_features.orders},
+            {'href': '/admin/companies', 'label': 'Firmen & Standorte', 'key': 'companies', 'show': admin_permissions.companies and license_features.orders},
         ],
     },
     {
-        'id': 'time', 'label': 'Zeiterfassung', 'show': admin_permissions.holidays or admin_permissions.approvals or admin_permissions.reports or admin_permissions.integrations,
+        'id': 'time', 'label': 'Zeiterfassung', 'show': admin_permissions.holidays or admin_permissions.approvals or admin_permissions.approvals_sync or admin_permissions.vacation_overview or admin_permissions.reports or admin_permissions.integrations,
         'items': [
             {'href': '/admin/holidays', 'label': 'Feiertage', 'key': 'holidays', 'show': admin_permissions.holidays},
             {'href': '/admin/approvals', 'label': 'Freigaben', 'key': 'approvals', 'show': admin_permissions.approvals},
@@ -105,7 +105,7 @@
                 <div class="adminnav__links">
                     {% for item in group['items'] %}
                         {% if item.show %}
-                            <a href="{{ item.href }}" class="adminnav__link {% if admin_active == item.key %}is-active{% endif %}">{{ item.label }}</a>
+                            <a href="{{ item.href }}" class="adminnav__link {% if admin_active == item.key %}is-active{% endif %}"{% if admin_active == item.key %} aria-current="page"{% endif %}>{{ item.label }}</a>
                         {% endif %}
                     {% endfor %}
                 </div>
@@ -149,6 +149,24 @@
     });
     nav.addEventListener('mouseenter', () => clearTimeout(hoverTimer));
 
+    // Every desktop dropdown is also operable without a pointer. Escape returns
+    // focus to its trigger; moving outside the navigation leaves no overlay.
+    nav.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const group = event.target.closest('.adminnav__group');
+        closeAll();
+        if (group) group.querySelector('summary').focus();
+        event.preventDefault();
+    });
+    nav.addEventListener('focusout', (event) => {
+        if (desktop.matches && event.relatedTarget && !nav.contains(event.relatedTarget)) closeAll();
+    });
+    // Wait until activation has completed: collapsing an accordion on
+    // pointerdown can move a mobile button before its subsequent click.
+    document.addEventListener('click', (event) => {
+        if (!nav.contains(event.target)) closeAll();
+    });
+
     // When switching to a non-hover layout, collapse everything for a clean start.
     desktop.addEventListener('change', () => closeAll());
 
@@ -156,8 +174,9 @@
     // stays open behind it (Benutzer/Backup/… Dialoge, §0.9.6 #4).
     window.addEventListener('adminnav:close', closeAll);
     const observer = new MutationObserver(() => {
-        if (document.body.classList.contains('modal-open')) closeAll();
+        if (document.body.classList.contains('modal-open') || document.querySelector('dialog[open], .modal[aria-hidden="false"]')) closeAll();
     });
-    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class', 'open', 'aria-hidden'] });
 })();
 </script>
+{% include "admin/_interface.html" %}

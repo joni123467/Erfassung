@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Benutzerverwaltung – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'users' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -8,6 +9,7 @@
         <h1>Benutzerverwaltung</h1>
         <a href="/admin/users/new" class="button">Neuen Benutzer anlegen</a>
     </div>
+    <p class="form-hint">Ein Profil bündelt Zugang, Arbeitszeit, Urlaubsregeln und die optionale App-Anmeldung. Gruppen organisieren Personen; Rollen legen ihre Rechte fest.</p>
     <div class="table-scroll">
         <table class="striped-table">
             <thead>
@@ -57,4 +59,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

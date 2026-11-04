@@ -161,12 +161,12 @@ def _report(year: int, reference: date, user_id: int | None = None) -> dict:
 
 
 def test_version_is_0202(client):
-    assert client.app.version == "0.21.0"
-    assert client.get("/health").json()["version"] == "0.21.0"
+    assert client.app.version == "0.22.0"
+    assert client.get("/health").json()["version"] == "0.22.0"
 
 
 def test_service_worker_carries_the_version(client):
-    assert "0.21.0" in client.get("/sw.js").text
+    assert "0.22.0" in client.get("/sw.js").text
 
 
 # ── 1. Nachtarbeitsgrenze: mehr als zwei Stunden ──────────────────────────
@@ -464,8 +464,8 @@ def test_migration_23_is_the_last_entry(main):
     assert by_version[23] is db_migrations._add_planning_and_calendar
 
     version, function = db_migrations.MIGRATIONS[-1]
-    assert version == 25
-    assert function is db_migrations._add_mobile_sync_receipts
+    assert version == 26
+    assert function is db_migrations._add_user_overview_preference
 
 
 def test_columns_exist_after_startup(main):

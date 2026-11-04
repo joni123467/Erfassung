@@ -210,6 +210,8 @@ class User(Base):
     pin_code = Column(String(4), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=True)
     must_change_password = Column(Boolean, default=True)
+    # Persönliche Startansicht für Web und PWA; gilt unabhängig vom Gerät.
+    overview_preference = Column(String(8), nullable=False, default="day", server_default="day")
     # Nur noch für Altbestände/Backups: die Zugehörigkeit steht in user_groups.
     group_id = Column(Integer, ForeignKey("groups.id"))
     time_account_enabled = Column(Boolean, default=False)
@@ -559,6 +561,10 @@ class TimeEntry(Base):
         Anwendung hier mit „ab sechs Stunden" und verlangte eine Pause zu früh.
         """
         duration = self.gross_minutes
+        if (self.break_rule or BreakRule.ACTUAL) != BreakRule.LEGACY_AUTO:
+            # Statutory thresholds refer to actual work, excluding recorded
+            # pauses. Preserve the historical automatic policy for old rows.
+            duration = max(duration - self.total_break_minutes, 0)
         if duration > 9 * 60:
             return 45
         if duration > 6 * 60:
@@ -825,10 +831,26 @@ def _sync_time_entry_stamps(mapper, connection, target: "TimeEntry") -> None:
             return getattr(target, field, None) is not None
         return bool(state.attrs[field].history.has_changes())
 
-    local_changed = is_insert or any(
-        state.attrs[field].history.has_changes() for field in _LOCAL_TIME_FIELDS
+    start_changed = is_insert or any(
+        state.attrs[field].history.has_changes()
+        for field in ("work_date", "start_time", "tz_name")
     )
-    if not local_changed:
+    end_changed = is_insert or any(
+        state.attrs[field].history.has_changes()
+        for field in ("work_date", "end_time", "is_open", "tz_name")
+    )
+    if (not end_changed and state.attrs.start_time.history.has_changes()
+            and not target.is_open and target.end_time is not None):
+        # A start-only correction must retain an exact end in the second
+        # autumn hour. Recompute it only if the overnight calendar assignment
+        # really changes (or no exact end was recorded yet).
+        previous_end = worktime.from_utc_column(target.ended_at_utc)
+        end_date = target.work_date
+        if target.end_time < target.start_time:
+            end_date += timedelta(days=1)
+        end_changed = (previous_end is None or
+                       previous_end.astimezone(worktime.zone(target.tz_name)).date() != end_date)
+    if not start_changed and not end_changed:
         return
 
     if is_insert and not target.tz_name:
@@ -840,9 +862,12 @@ def _sync_time_entry_stamps(mapper, connection, target: "TimeEntry") -> None:
         target.tz_name = worktime.timezone_name()
 
     started, ended = _local_stamps(target)
-    if not _explicitly_set("started_at_utc"):
+    # SQL TIME cannot retain the fold of the repeated autumn hour. Closing a
+    # running entry changes its end, not its known start instant: recomputing
+    # both would turn a 30-minute second-hour booking into 90 minutes.
+    if start_changed and not _explicitly_set("started_at_utc"):
         target.started_at_utc = started
-    if not _explicitly_set("ended_at_utc"):
+    if end_changed and not _explicitly_set("ended_at_utc"):
         target.ended_at_utc = ended
     elif target.is_open:
         # Eine laufende Buchung hat kein Ende – ein stehengebliebener Stempel

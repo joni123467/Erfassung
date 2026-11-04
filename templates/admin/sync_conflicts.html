@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Synchronisationskonflikte – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'sync_conflicts' %}
 {% include "admin/_nav.html" %}
 <section class="card">
   <h1>Synchronisationskonflikte</h1>
-  <p>Diese Offline-Buchungen sind sicher eingegangen, konnten aber nicht automatisch verbucht werden.
+  <p class="interface-notice">Diese Offline-Buchungen sind sicher eingegangen, konnten aber nicht automatisch verbucht werden.
      Nachfolgende Buchungen bleiben auf dem Gerät gespeichert. Prüfe den ursprünglichen Zeitpunkt und die bestehende Zeiterfassung.</p>
   {% for row in rows %}
   {% set payload = payloads[row.id] %}
@@ -24,6 +25,7 @@
       {% if row.kind == 'punch' %}
       <label>Korrigierter Zeitpunkt (optional, deutsche Ortszeit)
         <input type="datetime-local" name="event_time" step="1">
+        <small class="form-hint">Leer lassen, um den ursprünglichen Zeitpunkt erneut zu prüfen.</small>
       </label>
       {% endif %}
       <label>Begründung der Entscheidung
@@ -48,4 +50,6 @@
     </tr>{% else %}<tr><td colspan="5">Noch keine Entscheidungen.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
+
+</div>
 {% endblock %}

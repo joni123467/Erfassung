@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{% if group %}Gruppe bearbeiten{% else %}Gruppe anlegen{% endif %} – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'groups' %}
 {% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
@@ -47,4 +48,6 @@
         </form>
     {% endif %}
 </section>
+
+</div>
 {% endblock %}

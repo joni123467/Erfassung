@@ -119,9 +119,13 @@ def entry_bounds(entry: Any) -> tuple[datetime, datetime]:
     else:
         end = from_utc_column(getattr(entry, "ended_at_utc", None))
         if end is None:
-            end = from_local(datetime.combine(entry.work_date, entry.end_time), tz)
-            if end is not None and end < start:
-                end += timedelta(days=1)
+            end_local = datetime.combine(entry.work_date, entry.end_time)
+            start_local = datetime.combine(entry.work_date, entry.start_time or time(0))
+            if end_local < start_local:
+                # A local calendar day may contain 23 or 25 elapsed hours.
+                # Advance the local date before converting, not UTC by 24h.
+                end_local += timedelta(days=1)
+            end = from_local(end_local, tz)
     if end < start:
         end = start
     return start, end

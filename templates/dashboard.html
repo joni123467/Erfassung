@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_components.html" import location_toggle, location_picker, location_catalogue %}
-{% block title %}Dashboard – Erfassung{% endblock %}
+{% block title %}Übersicht – Erfassung{% endblock %}
 {% block content %}
 {{ location_catalogue(location_catalogue_data) }}
 {% set vacation_minutes = metrics.vacation_minutes %}
@@ -16,17 +16,35 @@
 {% set overtime_limit_exceeded = metrics.overtime_limit_exceeded %}
 {% set overtime_limit_remaining_minutes = metrics.overtime_limit_remaining_minutes %}
 {% set overtime_limit_excess_minutes = metrics.overtime_limit_excess_minutes %}
+{% set overview_mode = overview_mode|default('day') %}
+{% set overview_reference = overview_reference|default(today) %}
+{% set overview_entries = overview_entries|default(daily_entries) %}
+{% set overview_total_minutes = overview_total_minutes|default(daily_total_minutes) %}
+{% set daily_worked_minutes = daily_entries|sum(attribute='worked_minutes') %}
+<header class="dashboard-intro">
+    <div>
+        <p class="dashboard-eyebrow">Mein Arbeitsbereich</p>
+        <h1>Übersicht</h1>
+        <p>Arbeitszeit erfassen und den eigenen Tag im Blick behalten.</p>
+    </div>
+    {% if can_submit_manual_entries %}
+        <a class="button ghost" href="#manual-entry" data-disclose="manual-entry" aria-controls="manual-entry" aria-expanded="false">Zeit nachtragen</a>
+    {% endif %}
+</header>
 <section class="dashboard-layout">
     <div class="dashboard-layout__main">
-        <article class="card dashboard-day-card">
+        <article class="card dashboard-day-card dashboard-punch-card" aria-labelledby="punch-heading">
             <header class="dashboard-day-card__header">
                 <div>
-                    <h1 class="dashboard-heading">Heute</h1>
-                    <p class="dashboard-day-card__date">{{ today | german_date }}</p>
+                    <p class="dashboard-eyebrow">Heute · {{ today | german_date }}</p>
+                    <h2 class="dashboard-heading" id="punch-heading">{% if active_entry and active_entry.break_started_at %}Du machst gerade Pause{% elif active_entry %}Deine Arbeitszeit läuft{% else %}Bereit für deinen Arbeitstag{% endif %}</h2>
                 </div>
                 <div class="dashboard-day-card__total">
-                    <span>Gesamtzeit</span>
-                    <strong>{{ daily_total_minutes|format_minutes }} Std</strong>
+                    <span>Heute gearbeitet · netto</span>
+                    <strong data-today-worked>{{ daily_worked_minutes|format_minutes }} <small>Std</small></strong>
+                    {% if daily_total_minutes > daily_worked_minutes %}
+                        <small>Mit Feiertagsgutschrift: {{ daily_total_minutes|format_minutes }} Std</small>
+                    {% endif %}
                 </div>
             </header>
             <section class="dashboard-day-card__actions">
@@ -37,17 +55,15 @@
                         </button>
                         <span class="info-tip__bubble" role="tooltip">
                             <strong>Arbeitsschutz (ArbZG):</strong> Nach 6 Stunden Arbeit sind mindestens 30 Minuten Pause erforderlich, nach 9 Stunden mindestens 45 Minuten. Bitte stempel deine Pause entsprechend.
-                            {% if user.auto_break_deduction %}
-                                Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.
-                            {% endif %}
+                            Von der Arbeitszeit werden nur tatsächlich erfasste Pausen abgezogen.
                         </span>
                     </span>
                 </h2>
                 {% if active_entry %}
                     <div class="punch-status">
                         <p class="status-line">
-                            <span class="status-badge running">Arbeitszeit läuft</span>
-                            seit {{ active_entry.start_time.strftime('%H:%M') }} Uhr am {{ active_entry.work_date.strftime('%d.%m.%Y') }}
+                            <span class="status-badge {{ 'break' if active_entry.break_started_at else 'running' }}">{{ 'Pause läuft' if active_entry.break_started_at else 'Arbeitszeit läuft' }}</span>
+                            seit {{ (active_entry.break_started_at or active_entry.start_time).strftime('%H:%M') }} Uhr{% if not active_entry.break_started_at %} am {{ active_entry.work_date.strftime('%d.%m.%Y') }}{% endif %}
                         </p>
                         {% if active_entry.company %}
                             <p class="status-line">Firma: {{ active_entry.company.name }}</p>
@@ -63,13 +79,9 @@
                             <p class="status-line"><span class="status-badge remote">Remote</span></p>
                         {% endif %}
                         <p class="status-line">Aktuelle Arbeitszeit: {{ active_entry.worked_minutes|format_minutes }} Stunden</p>
+                        <p class="status-line">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
                         {% if active_entry.break_started_at %}
-                            <p class="status-line">
-                                <span class="status-badge break">Pause</span>
-                                seit {{ active_entry.break_started_at.strftime('%H:%M') }} Uhr
-                            </p>
-                        {% else %}
-                            <p class="status-line">Erfasste Pausen: {{ active_entry.total_break_minutes|format_minutes }} Std</p>
+                            <p class="status-line">Arbeitsbeginn: {{ active_entry.start_time.strftime('%H:%M') }} Uhr am {{ active_entry.work_date.strftime('%d.%m.%Y') }}</p>
                         {% endif %}
                     </div>
                     {# Gruppiert statt in einer Reihe: Pause und Auftrag gehören
@@ -196,10 +208,41 @@
                     </div>
                 </div>
             {% endif %}
+            <p class="dashboard-punch-hint">Stempelaktionen gelten immer für jetzt. Deine vergangenen Zeiten findest du darunter.</p>
+        </article>
+        <section class="dashboard-history" id="overview-history" aria-labelledby="overview-heading">
+            <header class="dashboard-overview-header">
+                <div>
+                    <h2 id="overview-heading">Mein Verlauf</h2>
+                    <p>{{ overview_reference | german_date }}{% if overview_reference == today %} · Heute{% endif %}</p>
+                </div>
+                <nav class="dashboard-view-switch" aria-label="Ansicht des Arbeitszeitverlaufs">
+                    <a href="/dashboard?overview=day&amp;date={{ overview_reference.isoformat() }}#overview-history" data-overview-mode="day"{% if overview_mode == 'day' %} aria-current="page"{% endif %}>Tag</a>
+                    <a href="/dashboard?overview=week&amp;date={{ overview_reference.isoformat() }}#overview-history" data-overview-mode="week"{% if overview_mode == 'week' %} aria-current="page"{% endif %}>Woche</a>
+                </nav>
+            </header>
+            <div class="dashboard-overview-toolbar">
+                <nav class="dashboard-date-navigation" aria-label="Zeitraum wechseln">
+                    {% if overview_previous is defined %}<a class="button ghost" href="/dashboard?overview={{ overview_mode }}&amp;date={{ overview_previous.isoformat() }}#overview-history" data-overview-previous aria-label="{{ 'Vorherige Woche' if overview_mode == 'week' else 'Vorheriger Tag' }}">‹</a>{% endif %}
+                    <a class="button ghost" href="/dashboard?overview={{ overview_mode }}&amp;date={{ today.isoformat() }}#overview-history" data-overview-today>Heute</a>
+                    {% if overview_next is defined %}<a class="button ghost" href="/dashboard?overview={{ overview_mode }}&amp;date={{ overview_next.isoformat() }}#overview-history" data-overview-next aria-label="{{ 'Nächste Woche' if overview_mode == 'week' else 'Nächster Tag' }}">›</a>{% endif %}
+                </nav>
+                <form method="get" action="/dashboard#overview-history" class="dashboard-date-picker">
+                    <input type="hidden" name="overview" value="{{ overview_mode }}">
+                    <label for="overview-date">Datum wählen</label>
+                    <input id="overview-date" type="date" name="date" value="{{ overview_reference.isoformat() }}" required>
+                    <button class="button ghost" type="submit">Anzeigen</button>
+                </form>
+            </div>
+            {% if overview_mode == 'day' %}
+            <article class="card dashboard-day-overview" aria-labelledby="day-overview-heading">
             <section class="dashboard-day-card__timeline">
-                <h2 class="dashboard-section-heading">Arbeitszeitverlauf</h2>
+                <div class="dashboard-timeline-heading">
+                    <h3 class="dashboard-section-heading" id="day-overview-heading">Arbeitszeitverlauf</h3>
+                    <p>{{ overview_total_minutes|format_minutes }} Std <span>inklusive Gutschriften</span></p>
+                </div>
                 <ul class="dashboard-timeline">
-                    {% for entry in daily_entries %}
+                    {% for entry in overview_entries %}
                         {% set break_is_short = entry.total_break_minutes < entry.required_break_minutes %}
                         <li class="dashboard-timeline__item {% if entry.is_open %}is-active{% endif %}">
                             <div class="dashboard-timeline__time">
@@ -241,16 +284,17 @@
                         </li>
                     {% else %}
                         <li class="dashboard-timeline__item is-empty">
-                            <p>Keine Einträge für heute.</p>
+                            <p>Keine Arbeitszeitbuchungen am {{ overview_reference | german_date }}.</p>
                         </li>
                     {% endfor %}
                 </ul>
             </section>
         </article>
-        <article class="card dashboard-week-card">
+            {% else %}
+        <article class="card dashboard-week-card" aria-labelledby="week-overview-heading">
             <header class="dashboard-week-card__header">
                 <div>
-                    <h2>Woche im Blick</h2>
+                    <h3 id="week-overview-heading">Woche im Blick</h3>
                     <p class="dashboard-week-card__period">{{ weekly_summary.week_start.strftime('%d.%m.') }} – {{ weekly_summary.week_end.strftime('%d.%m.%Y') }}</p>
                 </div>
                 <div class="dashboard-week-card__total">
@@ -286,7 +330,7 @@
             <ul class="dashboard-week-card__days">
                 {% for day in weekly_summary.days %}
                     <li class="dashboard-week-card__day {% if day.is_today %}is-today{% endif %}">
-                        <span class="dashboard-week-card__day-label">{{ day.date | weekday_short }}, {{ day.date.strftime('%d.%m.') }}</span>
+                        <a class="dashboard-week-card__day-label" href="/dashboard?overview=day&amp;date={{ day.date.isoformat() }}#overview-history" aria-label="{{ day.date | german_date }} in der Tagesansicht öffnen">{{ day.date | weekday_short }}, {{ day.date.strftime('%d.%m.') }}</a>
                         <span class="dashboard-week-card__day-actual">
                             {{ day.minutes|format_minutes }} Std
                             {% if day.vacation_minutes %}
@@ -314,8 +358,10 @@
                 {% endif %}
             </p>
         </article>
+            {% endif %}
+        </section>
     </div>
-    <aside class="dashboard-layout__aside">
+    <aside class="dashboard-layout__aside" aria-label="Konten und Feiertage">
         <section class="card dashboard-metrics-card">
             <div class="dashboard-metrics-card__section dashboard-metrics-card__section--hours">
                 <header class="dashboard-summary-card__header">
@@ -427,9 +473,10 @@
 </section>
 
 {% if can_submit_manual_entries %}
-<section class="card">
+<details class="card dashboard-manual-entry" id="manual-entry">
+    <summary><span>Zeit nachtragen</span><span class="dashboard-manual-entry__hint">Vergangene Arbeitszeit ergänzen</span></summary>
     <h2>Manuelle Buchung</h2>
-    <form method="post" action="/time" class="form-grid">
+    <form method="post" action="/time" class="form-grid" id="manual-time-entry">
         <input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}">
         <input type="hidden" name="next_url" value="/dashboard">
         <label>
@@ -440,10 +487,17 @@
             Startzeit
             <input type="time" name="start_time" required>
         </label>
-        <label>
-            Endzeit
-            <input type="time" name="end_time" required>
-        </label>
+        <div class="dashboard-end-time">
+            <label>
+                Endzeit
+                <input type="time" name="end_time" aria-describedby="manual-next-day-hint" required>
+            </label>
+            <label class="checkbox dashboard-next-day">
+                <input type="checkbox" name="ends_next_day" value="1" aria-describedby="manual-next-day-hint">
+                <span>Ende am Folgetag</span>
+            </label>
+            <p class="form-hint" id="manual-next-day-hint">Für Arbeit über Mitternacht, z. B. 22:00–06:00 Uhr. Die Endzeit muss dann vor der Startzeit liegen; das Datum bleibt der Tag des Arbeitsbeginns.</p>
+        </div>
         <label>
             Pause (Minuten)
             <input type="number" name="break_minutes" value="0" min="0">
@@ -481,13 +535,11 @@
     </form>
     <p class="form-hint">Manuelle Buchungen werden erst nach Freigabe durch die Administration wirksam.</p>
     <p class="form-hint">Fällt der Zeitraum in die laufende Arbeitszeit, wird diese automatisch geteilt und läuft nach dem Nachtrag weiter.</p>
-    {% if user.auto_break_deduction %}
-        <p class="form-hint">Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.</p>
-    {% endif %}
+    <p class="form-hint">Trage die tatsächlich genommene Pause ein. Fehlende gesetzliche Pausen werden als Hinweis angezeigt und nicht automatisch abgezogen.</p>
     <p><a class="button" href="/records">Zu meinen Buchungen wechseln</a></p>
-</section>
+</details>
 {% else %}
-<section class="card">
+<section class="card dashboard-manual-entry">
     <h2>Manuelle Buchung</h2>
     <p class="form-hint">Deine Gruppe darf keine manuellen Zeitbuchungen nachtragen.</p>
     <p><a class="button" href="/records">Zu meinen Buchungen wechseln</a></p>

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Buchungshistorie – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'reports' %}
 {% include "admin/_nav.html" %}
 
@@ -84,4 +85,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

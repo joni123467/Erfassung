@@ -1,0 +1,142 @@
+/* Administration and records share the application tokens. Every existing
+   action remains available, with record cards on narrow screens. */
+.management-interface {
+    min-width: 0;
+    display: grid;
+    gap: var(--space-6, 1.5rem);
+}
+.management-interface > script { display: none; }
+.management-interface > .card { margin: 0; min-width: 0; }
+.management-interface .card-header { align-items: flex-start; gap: var(--space-4, 1rem); flex-wrap: wrap; }
+.management-interface .card-header > div { min-width: 0; }
+.management-interface h1 { font-size: clamp(1.35rem, 2.2vw, 1.85rem); letter-spacing: -.035em; line-height: 1.25; }
+.management-interface h2 { font-size: 1.2rem; letter-spacing: -.025em; }
+.management-interface h3 { font-size: 1rem; }
+.management-interface :is(h1, h2, h3, p, dd, td, th, code, summary, label) { overflow-wrap: anywhere; }
+.management-interface :is(.card-header__hint, .form-hint, .muted) { color: var(--text-muted); line-height: 1.6; }
+.management-interface .card-header__actions { display: flex; flex-wrap: wrap; gap: var(--space-2, .5rem); }
+.management-interface :is(.form-grid, .settings-grid, .user-form__columns, .user-form__column) { min-width: 0; }
+.management-interface :is(.card-body, .user-form-layout, .user-form-aside, .user-form, .user-form label) { min-width: 0; }
+.management-interface .user-form__columns { grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); }
+.management-interface .user-form__section--stacked { grid-template-columns: repeat(auto-fit, minmax(min(100%, 16.25rem), 1fr)); }
+.management-interface .user-form__section > * { min-width: 0; max-width: 100%; }
+.management-interface .user-form :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { width: 100%; }
+.management-interface .user-form input:is([type=checkbox], [type=radio]) { flex-shrink: 0; }
+.management-interface .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5, 1.25rem); }
+.management-interface :is(.form-grid, .settings-grid) > * { min-width: 0; }
+.management-interface :is(input, select, textarea) { max-width: 100%; min-width: 0; }
+.management-interface :is(input[type=date], input[type=time], input[type=datetime-local], input[type=month]) { -webkit-appearance: none; appearance: none; }
+.management-interface :is(.form-grid, .settings-grid) label:not(.checkbox):not(.checkbox-inline) { display: flex; flex-direction: column; gap: var(--space-2, .5rem); align-items: stretch; }
+.management-interface :is(.filter-bar, .filter-inline, .calendar-toolbar) { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--space-3, .75rem); padding: var(--space-4, 1rem); background: var(--surface-muted); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.management-interface :is(.filter-bar, .filter-inline) label { flex: 1 1 9rem; min-width: 0; }
+.management-interface :is(.filter-bar, .filter-inline) label > :is(input, select) { width: 100%; }
+.management-interface .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3, .75rem); padding-top: var(--space-3, .75rem); }
+.management-interface .form-grid > .interface-form-section { grid-column: 1 / -1; border: 1px solid var(--border); padding: var(--space-5, 1.25rem); border-radius: var(--radius-lg); background: var(--surface-muted); }
+.management-interface .interface-form-section legend { font-weight: 650; padding: 0 var(--space-2, .5rem); }
+.management-interface .interface-break-section { margin-top: var(--space-8, 2rem); padding-top: var(--space-6, 1.5rem); border-top: 1px solid var(--border); }
+.management-interface .interface-break-form { margin-top: var(--space-4, 1rem); }
+.management-interface input[readonly] { background: var(--surface-muted); color: var(--text-muted); }
+.management-interface .interface-section-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4, 1rem); }
+.management-interface :is(.user-form__section, .permission-section, .settings-section) { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: var(--space-5, 1.25rem); }
+.management-interface :is(.user-form__section, .permission-section, .settings-section) legend { color: var(--text); font-weight: 650; padding: 0 var(--space-2, .5rem); }
+.management-interface .permission-row { gap: var(--space-4, 1rem); }
+.management-interface .permission-row__text { min-width: 0; }
+.management-interface .permission-row--scoped select { flex: 0 1 12rem; }
+.management-interface .table-scroll { max-width: 100%; min-width: 0; overflow: auto; overscroll-behavior-x: contain; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.management-interface .table-scroll:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.management-interface .striped-table { margin: 0; }
+.management-interface .striped-table th { font-size: .75rem; font-weight: 650; color: var(--text-muted); background: var(--surface-muted); padding: var(--space-3, .75rem) var(--space-4, 1rem); }
+.management-interface .striped-table td { padding: var(--space-4, 1rem); vertical-align: top; line-height: 1.55; }
+.management-interface .striped-table tbody tr:hover { background: var(--hover); }
+.management-interface .striped-table :is(.button, input, select, textarea) { font-size: .875rem; }
+.management-interface .striped-table .actions { white-space: normal; }
+.management-interface .striped-table .actions .button { margin: var(--space-1, .25rem); }
+.management-interface :is(.approval-form, .period-actions) { min-width: 0; display: flex; flex-wrap: wrap; gap: var(--space-2, .5rem); }
+.management-interface .approval-form__reason { width: 100%; min-width: 10rem; }
+.management-interface .approval-form__actions { display: flex; flex-wrap: wrap; gap: var(--space-2, .5rem); }
+.management-interface .dashboard-summary-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--space-3, .75rem); }
+.management-interface .dashboard-summary-list__item { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4, 1rem); background: var(--surface-muted); }
+.management-interface .dashboard-summary-list__item dd { font-size: 1.5rem; font-weight: 650; letter-spacing: -.035em; margin-top: var(--space-2, .5rem); }
+.management-interface .interface-notice { padding: var(--space-4, 1rem); border: 1px solid var(--border); border-inline-start: 3px solid var(--brand); border-radius: var(--radius-md); background: var(--surface-muted); line-height: 1.6; }
+.management-interface .interface-notice--warning { border-inline-start-color: var(--warning); background: var(--warning-soft); }
+.management-interface .danger-zone { border: 1px solid var(--danger); border-radius: var(--radius-lg); padding: var(--space-5, 1.25rem); margin-top: var(--space-6, 1.5rem); }
+.management-interface .revision-changes { display: grid; gap: var(--space-3, .75rem); padding-left: var(--space-4, 1rem); }
+.management-interface .revision-changes li { min-width: 0; }
+.management-interface .revision-changes :is(.revision-changes__old, .revision-changes__new) { display: block; padding: var(--space-2, .5rem); border-radius: var(--radius-sm); overflow-wrap: anywhere; white-space: pre-wrap; }
+.management-interface .revision-changes__old { color: var(--text-muted); background: var(--surface-muted); text-decoration: none; }
+.management-interface .revision-changes__new { color: var(--text); background: var(--accent-soft); }
+.management-interface .revision-changes__old::before { content: 'Vorher: '; font-weight: 650; }
+.management-interface .revision-changes__new::before { content: 'Nachher: '; font-weight: 650; }
+.management-interface .overwrite-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4, 1rem); }
+.management-interface .overwrite-summary > div { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4, 1rem); background: var(--surface-muted); }
+.management-interface .overwrite-summary dt { color: var(--text-muted); font-size: .875rem; }
+.management-interface .overwrite-summary dd { margin: var(--space-2, .5rem) 0 0; font-weight: 650; }
+.management-interface .sync-conflict { margin-top: var(--space-5, 1.25rem); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-5, 1.25rem); }
+.management-interface .user-qr { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-muted); padding: var(--space-5, 1.25rem); }
+.management-interface .admin-user-qr { max-width: none; width: 4rem; height: 4rem; border-radius: var(--radius-sm); }
+.management-interface :is(.feed-list, .calendar-legend) { flex-wrap: wrap; }
+.management-interface .feed-management form { display: flex; flex-wrap: wrap; gap: var(--space-3, .75rem); align-items: flex-end; }
+.management-interface .feed-management label { display: grid; gap: var(--space-2, .5rem); min-width: 0; }
+.management-interface .feed-management input[readonly] { width: 100%; }
+.management-interface .calendar-grid { min-width: 0; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.management-interface .calendar-scroll { min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.management-interface .calendar-day { min-width: 0; }
+.management-interface .calendar-event { white-space: normal; overflow-wrap: anywhere; }
+.management-interface .vacation-tabs { display: flex; flex-wrap: wrap; gap: var(--space-2, .5rem); margin: 0; }
+.management-interface .vacation-tabs a { min-height: var(--control-h); display: inline-flex; align-items: center; }
+.management-interface :is(.adminnav, .timetac-subnav) { margin: 0; gap: var(--space-2, .5rem); }
+.management-interface .adminnav__summary { min-height: var(--control-h); font-size: .9rem; }
+.management-interface .adminnav__links { border-radius: var(--radius-lg); }
+.management-interface .adminnav__link { min-height: var(--control-h); display: flex; align-items: center; white-space: normal; }
+.management-interface .adminnav__link[aria-current=page] { font-weight: 650; }
+.management-interface :is(button, a.button, summary):focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+
+@media (min-width: 769px) {
+    .management-interface .adminnav { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-1, .25rem); }
+    .management-interface .adminnav__group { flex: 1 1 0; }
+    .management-interface .adminnav__summary { justify-content: center; border-radius: var(--radius-sm); }
+    .management-interface .adminnav__group.is-active > .adminnav__summary { background: var(--accent-soft); border-bottom-color: transparent; }
+    .management-interface .adminnav__links { top: calc(100% + var(--space-2, .5rem)); min-width: 15rem; max-width: min(24rem, 80vw); padding: var(--space-2, .5rem); }
+    .management-interface .adminnav__group:last-child .adminnav__links { left: auto; right: 0; }
+}
+@media (max-width: 768px) {
+    .management-interface { gap: var(--space-4, 1rem); }
+    .management-interface .adminnav { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: var(--space-2, .5rem); }
+    .management-interface .adminnav__summary { padding: var(--space-3, .75rem); }
+    .management-interface .adminnav__group:last-child { border-bottom: 0; }
+    .management-interface .adminnav__links { padding: var(--space-2, .5rem); }
+    .management-interface .card-header { flex-direction: column; align-items: stretch; }
+    .management-interface :is(.form-grid, .settings-grid, .interface-section-body, .overwrite-summary) { grid-template-columns: minmax(0, 1fr); }
+    .management-interface :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { font-size: 1rem; min-height: 2.75rem; width: 100%; }
+    .management-interface :is(button, a.button, summary) { min-height: 2.75rem; }
+    .management-interface .button { white-space: normal; text-align: center; }
+    .management-interface :is(.filter-bar, .filter-inline, .calendar-toolbar) { align-items: stretch; }
+    .management-interface :is(.filter-bar, .filter-inline) label { flex-basis: 100%; }
+    .management-interface .permission-row--scoped { flex-wrap: wrap; }
+    .management-interface .permission-row--scoped select { flex-basis: 100%; }
+    .management-interface .table-scroll:has(> .responsive-records) { border: 0; border-radius: 0; overflow: visible; }
+    .management-interface table.responsive-records { display: block; min-width: 0; width: 100%; border: 0; }
+    .management-interface .responsive-records thead { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .management-interface .responsive-records tbody { display: grid; gap: var(--space-4, 1rem); min-width: 0; }
+    .management-interface .responsive-records tbody tr { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; padding: var(--space-3, .75rem); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    .management-interface .responsive-records tbody td { display: block; min-width: 0; width: auto; padding: var(--space-2, .5rem); border: 0; white-space: normal; }
+    .management-interface .responsive-records tbody td[data-label]::before { content: attr(data-label); display: block; font-size: .75rem; font-weight: 650; color: var(--text-muted); line-height: 1.4; margin-bottom: var(--space-1, .25rem); }
+    .management-interface .responsive-records tbody td[data-label='']::before { content: none; }
+    .management-interface .responsive-records tbody td:first-child { font-weight: 650; }
+    .management-interface .responsive-records :is(.actions, .entry-note__row, .period-actions) { display: flex; flex-wrap: wrap; gap: var(--space-2, .5rem); }
+    .management-interface .responsive-records .entry-note__row input { flex: 1 1 100%; }
+    .management-interface .responsive-records td .button { max-width: 100%; margin: 0; }
+    .management-interface .responsive-records .record-full-row { grid-column: 1 / -1; text-align: center; }
+    .management-interface .responsive-records tfoot { display: block; margin-top: var(--space-3, .75rem); }
+    .management-interface .responsive-records tfoot tr { display: block; }
+    .management-interface .responsive-records tfoot td { display: inline-block; white-space: normal; }
+    .management-interface .calendar-scroll { overflow: hidden; }
+    .management-interface .calendar-grid { gap: var(--space-1, .25rem); }
+    .management-interface .calendar-day { padding: var(--space-1, .25rem); min-height: 5rem; }
+    .management-interface .calendar-event { font-size: .625rem; line-height: 1.4; padding: var(--space-1, .25rem); }
+    .management-interface .calendar-weekday { font-size: .75rem; padding: var(--space-2, .5rem) 0; }
+    .management-interface .calendar-list--alternative { display: block; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .management-interface * { scroll-behavior: auto; }
+}

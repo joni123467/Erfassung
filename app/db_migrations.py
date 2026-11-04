@@ -17,7 +17,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
-from sqlalchemy import text
+from sqlalchemy import Boolean, inspect, select, text
 from sqlalchemy.engine import Engine
 
 from . import database, db_schema
@@ -89,6 +89,22 @@ def _legacy_groups_present(engine: Engine) -> bool:
     return db_schema.has_column(engine, "groups", "is_admin")
 
 
+def _legacy_group_flag_literal(engine: Engine, column: str, enabled: bool) -> str:
+    """Alte Gruppenflags können BOOLEAN oder historische INTEGER sein.
+
+    PostgreSQL erlaubt weder einen Integer als Boolean-Zuweisung noch den
+    umgekehrten Fall. Die gespeicherte Spaltenart entscheidet deshalb über
+    das Literal; Namen stammen ausschließlich aus dieser Migration.
+    """
+    column_type = next(
+        item["type"] for item in inspect(engine).get_columns("groups")
+        if item["name"] == column
+    )
+    if isinstance(column_type, Boolean):
+        return "TRUE" if enabled else "FALSE"
+    return "1" if enabled else "0"
+
+
 def _add_group_time_report_permission(engine: Engine) -> None:
     if not _legacy_groups_present(engine):
         return
@@ -99,7 +115,8 @@ def _add_group_time_report_permission(engine: Engine) -> None:
             from sqlalchemy import text
 
             connection.execute(
-                text("UPDATE groups SET can_view_time_reports = 1 WHERE is_admin = 1")
+                text("UPDATE groups SET can_view_time_reports = 1 WHERE is_admin = "
+                     + _legacy_group_flag_literal(engine, "is_admin", True))
             )
 
 
@@ -113,7 +130,7 @@ def _add_user_auto_break_deduction(engine: Engine) -> None:
     # Vorgabe 1 erhält das bisherige Verhalten – gesetzliche Pausen werden
     # abgezogen – für jeden Benutzer, den es vor dieser Migration schon gab.
     db_schema.add_column(
-        engine, "users", "auto_break_deduction", "BOOLEAN", default="1", backfill_null_to="1"
+        engine, "users", "auto_break_deduction", "BOOLEAN", default="TRUE", backfill_null_to="TRUE"
     )
 
 
@@ -275,17 +292,18 @@ def _add_group_permission_overhaul(engine: Engine) -> None:
         return
 
     if db_schema.add_column(
-        engine, "groups", "can_manage_companies", "BOOLEAN", default="0", backfill_null_to="0"
+        engine, "groups", "can_manage_companies", "BOOLEAN", default="FALSE", backfill_null_to="FALSE"
     ):
         with engine.begin() as connection:
             from sqlalchemy import text
 
             connection.execute(
-                text("UPDATE groups SET can_manage_companies = 1 WHERE is_admin = 1")
+                text("UPDATE groups SET can_manage_companies = TRUE WHERE is_admin = "
+                     + _legacy_group_flag_literal(engine, "is_admin", True))
             )
     for column_name in ("can_manual_time_entries", "can_edit_own_notes", "can_request_vacations"):
         db_schema.add_column(
-            engine, "groups", column_name, "BOOLEAN", default="1", backfill_null_to="1"
+            engine, "groups", column_name, "BOOLEAN", default="TRUE", backfill_null_to="TRUE"
         )
 
 
@@ -335,10 +353,10 @@ def _add_remote_location_flags(engine: Engine) -> None:
     """
 
     db_schema.add_column(
-        engine, "users", "remote_flag_enabled", "BOOLEAN", default="0", backfill_null_to="0"
+        engine, "users", "remote_flag_enabled", "BOOLEAN", default="FALSE", backfill_null_to="FALSE"
     )
     db_schema.add_column(
-        engine, "time_entries", "is_remote", "BOOLEAN", default="0", backfill_null_to="0"
+        engine, "time_entries", "is_remote", "BOOLEAN", default="FALSE", backfill_null_to="FALSE"
     )
 
 
@@ -381,9 +399,9 @@ def _ensure_system_roles(connection) -> dict[str, int]:
             connection.execute(
                 text(
                     "INSERT INTO roles (name, description, is_system, is_active) "
-                    "VALUES (:name, :description, 1, 1)"
+                    "VALUES (:name, :description, :is_system, :is_active)"
                 ),
-                {"name": name, "description": description},
+                {"name": name, "description": description, "is_system": True, "is_active": True},
             )
             role_id = int(
                 connection.execute(
@@ -542,10 +560,12 @@ def _migrate_groups_to_roles(engine: Engine) -> None:
                 connection.execute(
                     text(
                         "INSERT INTO roles (name, description, is_system, is_active) "
-                        "VALUES (:name, :description, 0, 1)"
+                        "VALUES (:name, :description, :is_system, :is_active)"
                     ),
                     {
                         "name": role_name,
+                        "is_system": False,
+                        "is_active": True,
                         "description": (
                             f"Automatisch aus den Berechtigungen der Gruppe "
                             f"„{group['name']}“ erzeugt (Umstellung auf Rollen)."
@@ -570,9 +590,11 @@ def _migrate_groups_to_roles(engine: Engine) -> None:
 
         # 5. Rechte aus den Gruppen entfernen.
         for column in legacy_columns:
-            connection.execute(text(f"UPDATE groups SET {column} = 0"))
+            disabled = _legacy_group_flag_literal(engine, column, False)
+            connection.execute(text(f"UPDATE groups SET {column} = {disabled}"))
         if has_is_admin:
-            connection.execute(text("UPDATE groups SET is_admin = 0"))
+            disabled = _legacy_group_flag_literal(engine, "is_admin", False)
+            connection.execute(text(f"UPDATE groups SET is_admin = {disabled}"))
 
 
 def _add_half_vacation_days(engine: Engine) -> None:
@@ -583,11 +605,11 @@ def _add_half_vacation_days(engine: Engine) -> None:
     """
     db_schema.add_column(
         engine, "vacation_requests", "half_day_start", "BOOLEAN",
-        default="0", backfill_null_to="0",
+        default="FALSE", backfill_null_to="FALSE",
     )
     db_schema.add_column(
         engine, "vacation_requests", "half_day_end", "BOOLEAN",
-        default="0", backfill_null_to="0",
+        default="FALSE", backfill_null_to="FALSE",
     )
 
 
@@ -603,7 +625,7 @@ def _add_company_locations(engine: Engine) -> None:
         models.Base.metadata.tables["company_locations"].create(bind=engine, checkfirst=True)
 
     db_schema.add_column(
-        engine, "companies", "is_internal", "BOOLEAN", default="0", backfill_null_to="0"
+        engine, "companies", "is_internal", "BOOLEAN", default="FALSE", backfill_null_to="FALSE"
     )
     db_schema.add_column(engine, "time_entries", "location_id", "INTEGER")
     db_schema.add_column(
@@ -875,7 +897,7 @@ def _add_user_deactivation(engine: Engine) -> None:
         return
     db_schema.add_column(
         engine, "users", "is_active", "BOOLEAN NOT NULL",
-        default="1", backfill_null_to="1",
+        default="TRUE", backfill_null_to="TRUE",
     )
     db_schema.add_column(engine, "users", "deactivated_at", "DATETIME")
     db_schema.add_column(engine, "users", "deactivation_reason", "VARCHAR(500)")
@@ -929,18 +951,18 @@ def _add_planning_and_calendar(engine: Engine) -> None:
         ("parental", "Elternzeit", 1, 0, 0, 0, 1),
         ("unpaid", "Unbezahlte Freistellung", 1, 0, 0, 0, 0),
     )
+    absence_types = models.AbsenceType.__table__
     with engine.begin() as connection:
         for row in defaults:
             exists = connection.execute(
-                text("SELECT 1 FROM absence_types WHERE key = :key"), {"key": row[0]}
+                select(absence_types.c.key).where(absence_types.c.key == row[0])
             ).first()
             if not exists:
-                connection.execute(text(
-                    "INSERT INTO absence_types (key,label,requires_approval,deducts_vacation,"
-                    "deducts_overtime,credits_target_time,confidential,active) "
-                    "VALUES (:key,:label,:approval,:vacation,:overtime,:credit,:confidential,1)"
-                ), dict(key=row[0], label=row[1], approval=row[2], vacation=row[3],
-                        overtime=row[4], credit=row[5], confidential=row[6]))
+                connection.execute(absence_types.insert().values(
+                    key=row[0], label=row[1], requires_approval=bool(row[2]),
+                    deducts_vacation=bool(row[3]), deducts_overtime=bool(row[4]),
+                    credits_target_time=bool(row[5]), confidential=bool(row[6]), active=True,
+                ))
 
 
 def _repair_time_entry_utc_stamps(engine: Engine) -> None:
@@ -1014,6 +1036,12 @@ def _add_mobile_sync_receipts(engine: Engine) -> None:
     models.MobileSyncReceipt.__table__.create(bind=engine, checkfirst=True)
 
 
+def _add_user_overview_preference(engine: Engine) -> None:
+    from .account_ui import ensure_overview_preference
+
+    ensure_overview_preference(engine)
+
+
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _baseline),
     (2, _add_group_time_report_permission),
@@ -1040,6 +1068,7 @@ MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (23, _add_planning_and_calendar),
     (24, _repair_time_entry_utc_stamps),
     (25, _add_mobile_sync_receipts),
+    (26, _add_user_overview_preference),
 ]
 
 

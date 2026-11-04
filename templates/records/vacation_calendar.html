@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Abwesenheitskalender – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--records">
 {% set records_active = 'vacations' %}{% include "records/_nav.html" %}
 {% set vacation_tab = scope %}{% set can_team_calendar = can_team %}{% include "records/_vacation_tabs.html" %}
 <section class="card vacation-calendar">
@@ -20,7 +21,7 @@
   <form method="get" class="calendar-toolbar" aria-label="Kalender steuern">
     <input type="hidden" name="scope" value="{{ scope }}">
     <div class="segmented" aria-label="Ansicht">
-      {% for key, label in [('month','Monat'),('week','Woche'),('list','Liste')] %}<a class="{% if view == key %}is-active{% endif %}" href="?scope={{ scope }}&view={{ key }}&month={{ month }}">{{ label }}</a>{% endfor %}
+      {% for key, label in [('month','Monat'),('week','Woche'),('list','Liste')] %}<a class="{% if view == key %}is-active{% endif %}"{% if view == key %} aria-current="page"{% endif %} href="?scope={{ scope }}&view={{ key }}&month={{ month }}">{{ label }}</a>{% endfor %}
     </div>
     <label>Monat <input type="month" name="month" value="{{ month }}" aria-label="Kalendermonat"></label>
     <input type="hidden" name="view" value="{{ view }}"><noscript><button class="button">Anzeigen</button></noscript>
@@ -34,7 +35,7 @@
   </form>
   <div class="calendar-legend"><span><i class="approved"></i> Genehmigt</span><span><i class="pending"></i> Offen</span><span><i class="holiday"></i> Feiertag</span><span>½ Halber Tag</span></div>
   {% if view != 'list' %}
-  <div class="calendar-scroll" tabindex="0" aria-label="Grafischer Kalender, horizontal scrollbar">
+  <div class="calendar-scroll" tabindex="0" aria-label="Kalender mit sieben Wochentagen; vollständige Einträge stehen auch in der Listenansicht darunter">
     <div class="calendar-grid" role="grid">
       {% for weekday in ['Mo','Di','Mi','Do','Fr','Sa','So'] %}<div class="calendar-weekday" role="columnheader">{{ weekday }}</div>{% endfor %}
       {% for day in days %}<div class="calendar-day {% if not day.in_period %}is-outside{% endif %} {% if day.is_today %}is-today{% endif %}" role="gridcell" aria-label="{{ day.date|german_date }}">
@@ -60,4 +61,6 @@
 {% if feed_url %}<label>Neue Feed-Adresse<input readonly value="{{ feed_url }}" onclick="this.select()"></label>{% endif %}
 <form method="post" action="/records/vacations/calendar/feed"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><label>Umfang <select name="scope"><option value="self">Mein Kalender</option>{% if can_team_feed %}<option value="team">Mein Team</option>{% endif %}</select></label><button class="button primary">Feed-Adresse erzeugen</button></form>
 {% if feeds %}<ul class="feed-list">{% for feed in feeds %}<li><span>{{ 'Team' if feed.scope == 'team' else 'Persönlich' }} · {{ feed.created_at }}</span><form class="inline-form" method="post" action="/records/vacations/calendar/feed/{{ feed.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><button class="button danger small">Widerrufen</button></form></li>{% endfor %}</ul>{% endif %}</section>{% endif %}
+
+</div>
 {% endblock %}

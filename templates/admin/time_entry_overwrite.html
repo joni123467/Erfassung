@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Buchung überschreiben – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = active_tab %}
 {% set admin_nav_collapse = true %}
 {% include "admin/_nav.html" %}
@@ -10,22 +11,23 @@
         <a href="{{ next_url }}" class="button ghost">Abbrechen</a>
     </div>
 
-    <p class="form-hint">
+    <p class="interface-notice interface-notice--warning">
         Die geänderte Buchung überschneidet sich mit {{ overwrite_plan|length }}
         bestehende{{ 'n' if overwrite_plan|length == 1 else '' }} Buchung{{ 'en' if overwrite_plan|length != 1 else '' }}.
         Beim Speichern {{ 'wird diese' if overwrite_plan|length == 1 else 'werden diese' }} wie folgt angepasst:
     </p>
+    <p class="form-hint">Noch wurde nichts geändert. Prüfe die einzelnen Folgen unten. Mit „Zurück zum Bearbeiten“ kannst du die Korrektur anpassen.</p>
 
     <dl class="overwrite-summary">
         <div>
-            <dt>Neue Zeiten</dt>
+            <dt>Nach der Bestätigung</dt>
             <dd>
                 {{ form_values.work_date.strftime('%d.%m.%Y') }},
                 {{ form_values.start_time.strftime('%H:%M') }}–{{ form_values.end_time.strftime('%H:%M') }} Uhr
             </dd>
         </div>
         <div>
-            <dt>Bisher</dt>
+            <dt>Bisherige Buchung</dt>
             <dd>
                 {{ entry.work_date.strftime('%d.%m.%Y') }},
                 {{ entry.start_time.strftime('%H:%M') }}–{% if entry.is_open %}läuft{% else %}{{ entry.end_time.strftime('%H:%M') }}{% endif %} Uhr
@@ -54,7 +56,8 @@
                             {% if item.entry.is_open %}
                                 <span class="permission-badge">Läuft ab {{ form_values.end_time.strftime('%H:%M') }} Uhr weiter</span>
                             {% else %}
-                                <span class="permission-badge permission-badge--none">Wird gelöscht</span>
+                                <span class="permission-badge permission-badge--none">Wird storniert und vollständig ersetzt</span>
+                                <p class="form-hint">Diese Zeit zählt danach nicht zusätzlich. Original und Änderung bleiben in der Historie.</p>
                             {% endif %}
                         {% elif item.action == 'shorten' %}
                             <span class="permission-badge">Wird gekürzt auf {{ item.result[0].strftime('%H:%M') }}–{{ item.result[1].strftime('%H:%M') }} Uhr</span>
@@ -86,7 +89,9 @@
         <input type="hidden" name="next_url" value="{{ next_url }}">
         <input type="hidden" name="confirm_overwrite" value="1">
         <a href="/admin/time-entries/{{ entry_id }}/edit?next={{ next_url | urlencode }}&user={{ redirect_user }}" class="button ghost">Zurück zum Bearbeiten</a>
-        <button type="submit" class="button danger">Überschreiben und speichern</button>
+        <button type="submit" class="button danger">Auswirkungen bestätigen und speichern</button>
     </form>
 </section>
+
+</div>
 {% endblock %}

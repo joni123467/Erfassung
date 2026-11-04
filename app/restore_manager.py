@@ -21,7 +21,7 @@ import subprocess
 import tempfile
 import zipfile
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 from sqlalchemy.engine import make_url
@@ -102,13 +102,40 @@ def _restore_mysql(archive_path: Path) -> None:
     database.engine.dispose()
 
 
+# Nur Anwendungseinstellungen zurückspielen. Verbindungs- und Deployment-
+# konfiguration bleiben beim Zielsystem; weitere Dateien dürfen weiterhin im
+# Backup archiviert sein, werden aber nicht ungeprüft aktiviert.
+_RESTORABLE_CONFIG_FILES = frozenset({
+    "system.json", "logging.json", "backup.json", "retention.json",
+    "license.json", "timemoto.json",
+})
+
+
 def _restore_config(archive_path: Path) -> int:
+    """Anwendungseinstellungen ohne Wechsel der aktiven Infrastruktur lesen."""
     restored = 0
+    config_root = paths.CONFIG_DIR.resolve()
     with zipfile.ZipFile(archive_path) as archive:
         for member in archive.namelist():
-            if member.startswith("config/") and not member.endswith("/"):
-                if _safe_extract_member(archive, member, paths.CONFIG_DIR):
-                    restored += 1
+            relative = PurePosixPath(member)
+            # PurePosixPath normalisiert insbesondere config/./database.json.
+            # Elternsegmente und Unterverzeichnisse sind keine freigegebenen
+            # Anwendungseinstellungen und werden ebenfalls ausgeschlossen.
+            if (
+                member.endswith("/") or len(relative.parts) != 2
+                or relative.parts[0] != "config"
+                or relative.name not in _RESTORABLE_CONFIG_FILES
+            ):
+                continue
+            target = config_root / relative.name
+            # Eine vorhandene Verknüpfung darf einen freigegebenen Dateinamen
+            # nicht auf database.json oder Dateien außerhalb des Volumes lenken.
+            if target.resolve() != target:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member) as src, target.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+            restored += 1
     _harden_restored_secrets()
     return restored
 

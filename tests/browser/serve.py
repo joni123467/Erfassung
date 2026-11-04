@@ -1,7 +1,17 @@
 import runtime
+import os
 import uvicorn
 from app import main
 from fastapi.responses import Response
+import sys
+from pathlib import Path
+
+# Only this disposable E2E instance receives a locally signed test licence.
+# runtime has already redirected all three volumes beneath ERFASSUNG_E2E_ROOT.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import licensed_env
+
+licensed_env.activate()
 
 @main.app.middleware('http')
 async def worker_release(request, call_next):
@@ -40,4 +50,4 @@ async def browser_test_app(scope, receive, send):
     raise ConnectionResetError('Intentional browser test disconnect after server commit')
 
 
-uvicorn.run(browser_test_app,host='127.0.0.1',port=8765)
+uvicorn.run(browser_test_app,host='127.0.0.1',port=int(os.environ.get('ERFASSUNG_E2E_PORT', '8765')))

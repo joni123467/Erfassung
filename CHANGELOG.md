@@ -1,5 +1,91 @@
 # Changelog
 
+## [0.22.0] – 2026-11-04
+
+### Hinzugefügt
+- Persönlicher Bereich **Mein Konto** mit Kontodaten, Tages-/Wochenstandard,
+  Kennwortzugang und eigenem QR-Code für die optionale mobile Anmeldung.
+  Der QR-Code wird lokal erzeugt und nur für das angemeldete Konto ausgeliefert;
+  Konto- und QR-Antworten werden nicht gemeinsam oder offline zwischengespeichert.
+- Benutzerbezogene Startansicht **Tag** oder **Woche** für Web und PWA.
+  Vorübergehende Ansichts- und Datumswechsel verändern den Standard nicht.
+- Ausdrückliche Auswahl **Ende am Folgetag** für manuelle Nachträge über
+  Mitternacht, einschließlich Prüfung beider betroffener Abrechnungsperioden.
+- Administratives Korrekturformular für vorhandene Pausenintervalle mit
+  Pflichtbegründung, `Time.Edit`-Zuständigkeit, Periodensperre und Historie.
+
+### Geändert
+- Webnavigation als Seitenleiste mit Übersicht, eigenen Zeiten, Urlaub,
+  persönlichem Konto und berechtigungsabhängiger Administration; auf schmalen
+  Bildschirmen über **Menü** erreichbar.
+- Administration mit den fünf Bereichen **Benutzer**, **Zeiterfassung**,
+  **Sicherung**, **System** und **Einstellungen**, einheitlichen Formularen,
+  Tabellen und Dialogen.
+- PWA mit den unteren Bereichen **Übersicht**, **Meine Zeiten**, **Urlaub** und
+  **Mehr**; vorhandene Konto-, Salden-, Offline- und Synchronisationsfunktionen
+  bleiben erreichbar. Lizenzabhängige Bereiche bleiben entsprechend begrenzt.
+- Dashboard mit heutiger Nettoarbeitszeit, getrennten Feiertagsgutschriften,
+  Tages-/Wochenverlauf und aufklappbarem vollständigem Nachtrag. Stempelaktionen
+  beziehen sich auch bei historischer Ansicht auf den aktuellen Zeitpunkt.
+- Bestehende Firmenanlage beim Auftragsstart, Standorte, Originalformulare,
+  Rollen/Geltungsbereiche, Exporte, Backups, Wiederherstellung und
+  Synchronisationsabläufe bleiben erhalten. Neue Darstellungsassets werden
+  versionsgebunden geladen und vom Service Worker berücksichtigt.
+
+### Fehlerbehebungen
+- Beim Teilen oder überschreibenden Korrigieren einer Buchung werden erfasste
+  Pausen den passenden Zeitabschnitten zugeordnet; Metadaten und Änderungen
+  bleiben nachvollziehbar erhalten.
+- Storno und Ersatzbuchung werden gemeinsam gespeichert. Scheitert der Ersatz,
+  bleibt die ursprüngliche Buchung bestehen.
+- Nachträge innerhalb abgeschlossener Nachtschichten berücksichtigen das Datum
+  des Folgetags, auch für Teilabschnitte nach Mitternacht.
+- UTC-Zeitpunkte und die wiederholte Stunde bei der Herbstzeitumstellung bleiben
+  bei Stempel-, Teilungs- und Abschlussvorgängen erhalten. Für Nachtgrenzen wird
+  der lokale Folgetag vor der UTC-Umrechnung bestimmt.
+- Pausenkorrekturen verhindern Überschneidungen, Änderungen laufender Pausen und
+  Intervalle außerhalb der Buchung; eine reine Änderung der Pausensumme ersetzt
+  keine erfassten Intervalle.
+- Veraltete Hinweise auf automatischen Abzug nicht genommener Pausen entfernt.
+  Gesetzliche Mindestpausen bleiben als Hinweise sichtbar.
+- Der Status laufender Arbeitszeit zeigt das gespeicherte Arbeitsdatum statt
+  des Datumsplatzhalters eines reinen Uhrzeitfelds.
+- Schmale Web-/PWA-Ansichten, lange Inhalte, Dialoge und Kalender so angepasst,
+  dass die Oberfläche nicht seitlich verschoben werden muss.
+- Eine Prüfung mit echtem PostgreSQL deckte numerische SQL-Literale für
+  Boolean-Spalten in älteren Migrationen auf. Passende Boolean-Bindings und
+  Standardwerte beheben diese Fehler bei Neuaufbau und Upgrade; historische
+  INTEGER-Gruppenflags werden weiterhin entsprechend ihrem Spaltentyp behandelt.
+
+- Online-Stempelungen ohne gültige Gerätezeit verwenden auch auf UTC-Servern
+  die Betriebszeitzone.
+- Die Pausenwarnung neuer Buchungen verwendet Nettoarbeitszeit; die historische
+  automatische Regel bleibt erhalten.
+- Migrationen quotieren reservierte Spaltennamen für MySQL/MariaDB korrekt.
+- Wiederherstellungen behalten die aktive Datenbank- und Deploymentkonfiguration.
+  Nur Anwendungseinstellungen werden übernommen; auch normalisierte Archivpfade
+  dürfen die Zielkonfiguration nicht überschreiben.
+
+### Datenbankänderungen
+- Migration **26** ergänzt `users.overview_preference`: `VARCHAR(8) NOT NULL`,
+  Standard `day`; das ORM verwendet `String(8)`.
+- `ensure_schema()` und der versionierte Runner ergänzen das Feld idempotent,
+  füllen fehlende Werte und erhalten vorhandene Einstellungen. Keine neue
+  Buchungs- oder Pausentabelle erforderlich.
+- Vorhandene Migrationsnummern bleiben unverändert; ausschließlich Eintrag 26
+  kommt hinzu. Die Portabilitätskorrekturen gelten auch für ältere Schritte.
+
+### Migrationshinweise
+- Bestehende config-, data- und logs-Volumes weiterverwenden. Bestandskonten
+  erhalten zunächst die Tagesansicht.
+- Keine PWA-Neuinstallation und kein Löschen lokaler Buchungen erforderlich.
+  Den kontrollierten Updateablauf verwenden; ältere App-Fenster gegebenenfalls
+  schließen und wieder öffnen.
+- QR-Tokenformat und Gültigkeit bleiben unverändert. Ein neu erzeugter Code
+  widerruft ältere gültige Codes nicht.
+- Details: [Release Notes](docs/RELEASE_NOTES_0.22.0.md) und
+  [Prüfbericht](docs/QA_0.22.0.md).
+
 ## [0.21.0] – 2026-11-02
 
 ### Fehlerbehebungen

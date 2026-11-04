@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Historie der Kennzeichnung – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'compliance' %}
 {% include "admin/_nav.html" %}
 
@@ -69,4 +70,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

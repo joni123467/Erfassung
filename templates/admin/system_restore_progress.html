@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Wiederherstellung läuft – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_restore' %}
 {% include "admin/_nav.html" %}
 <section class="card restore-progress" id="restore-progress"
@@ -155,4 +156,6 @@
     poll();
 })();
 </script>
+
+</div>
 {% endblock %}

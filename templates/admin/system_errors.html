@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Fehlerübersicht – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_errors' %}
 {% include "admin/_nav.html" %}
 <section class="card">
@@ -57,4 +58,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

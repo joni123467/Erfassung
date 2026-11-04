@@ -29,6 +29,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
 from . import (
+    account_ui,
     app_config,
     backup_manager,
     backup_scheduler,
@@ -527,6 +528,9 @@ def _should_force_password_change(path: str) -> bool:
 
 def ensure_schema() -> None:
     models.MobileSyncReceipt.__table__.create(bind=database.engine, checkfirst=True)
+    # Die persönliche Startansicht wird auf allen unterstützten Backends
+    # ergänzt, auch wenn der alte SQLite-Helfer darunter früh zurückkehrt.
+    account_ui.ensure_overview_preference(database.engine)
     # ``ensure_schema()`` ist die alte SQLite-Aufrüsthilfe und benutzt
     # SQLite-eigenes SQL (PRAGMA, „CREATE UNIQUE INDEX IF NOT EXISTS", VARCHAR
     # ohne Längenangabe). Auf MySQL/MariaDB und PostgreSQL entsteht das
@@ -1785,6 +1789,129 @@ def account_password_page(request: Request, db: Session = Depends(database.get_d
     )
 
 
+def _account_page(request: Request, user: models.User, *, error: str | None = None, status_code: int = 200):
+    """Persönliche Daten und QR nur online und ohne gemeinsam nutzbaren Cache."""
+    return templates.TemplateResponse(
+        "account/overview.html",
+        {
+            "request": request, "user": user, "error": error,
+            "message": request.query_params.get("msg"),
+            "overview_preference": account_ui.overview_preference(user),
+            "can_access_admin": permission_service.has_admin_access(user),
+            "can_access_account": True,
+            "qr_nonce": secrets.token_hex(8),
+            "qr_valid_days": MOBILE_AUTOLOGIN_TTL_SECONDS // (24 * 60 * 60),
+        },
+        status_code=status_code,
+        headers={"Cache-Control": "private, no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer"},
+    )
+
+
+@app.get("/account", response_class=HTMLResponse)
+def account_overview(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return _account_page(request, user)
+
+
+def _account_preferences_payload(user: models.User) -> dict[str, object]:
+    return {"user_id": user.id, "overview_preference": account_ui.overview_preference(user)}
+
+
+def _save_account_preference(db: Session, user: models.User, value: str) -> None:
+    if account_ui.overview_preference(user) == value:
+        return
+    user.overview_preference = value
+    db.commit()
+    logging_setup.log_audit("Persönliche Startansicht geändert", user=user, detail=value)
+
+
+@app.get("/api/account/preferences")
+def account_preferences_get(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user or user.must_change_password:
+        raise HTTPException(status_code=401, detail="Bitte anmelden und gegebenenfalls das Kennwort ändern.")
+    return JSONResponse(_account_preferences_payload(user), headers={"Cache-Control": "private, no-store"})
+
+
+@app.post("/api/account/preferences")
+def account_preferences_update(
+    request: Request, preferences: account_ui.AccountPreferences,
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or user.must_change_password:
+        raise HTTPException(status_code=401, detail="Bitte anmelden und gegebenenfalls das Kennwort ändern.")
+    # CSRFMiddleware prüft den Sitzungsheader x-csrf-token vor dieser Route.
+    if preferences.user_id is not None and preferences.user_id != user.id:
+        raise HTTPException(status_code=409, detail="Das angemeldete Konto hat gewechselt. Bitte die eigene Ansicht neu laden.")
+    _save_account_preference(db, user, preferences.overview_preference)
+    return JSONResponse(_account_preferences_payload(user), headers={"Cache-Control": "private, no-store"})
+
+
+@app.post("/account/preferences")
+def account_preferences_form(
+    request: Request, overview_preference: str = Form(...),
+    user_id: int | None = Form(None),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if user_id is not None and user_id != user.id:
+        return _account_page(request, user, error="Das angemeldete Konto hat gewechselt. Bitte die eigene Ansicht neu laden.", status_code=409)
+    if overview_preference not in {"day", "week"}:
+        return _account_page(request, user, error="Bitte Tages- oder Wochenansicht auswählen.", status_code=400)
+    _save_account_preference(db, user, overview_preference)
+    return RedirectResponse(url="/account?msg=Startansicht+gespeichert#preferences", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _mobile_qr_response(request: Request, user_id: int, size: int, download: bool) -> Response:
+    """Bestehendes Tokenformat und dessen Gültigkeit unverändert verwenden."""
+    login_url = f"{request.url_for('mobile_quick_login')}?token={_create_mobile_autologin_token(user_id)}"
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=4)
+    qr.add_data(login_url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    requested = min(max(size, 96), 800)
+    if image.width != requested:
+        image = image.resize((requested, requested), resample=0)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    headers = {"Cache-Control": "no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="erfassung-login-{user_id}.png"'
+    return Response(output.getvalue(), media_type="image/png", headers=headers)
+
+
+@app.get("/account/mobile-qr.png")
+def account_mobile_qr(
+    request: Request, size: int = 224, download: bool = False,
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user or user.must_change_password:
+        raise HTTPException(status_code=401, detail="Bitte anmelden, um deinen QR-Code anzuzeigen.")
+    # Kein Zielkonto aus Pfad, Query oder Formular: immer der Sitzungsbenutzer.
+    return _mobile_qr_response(request, user.id, size, download)
+
+
+@app.post("/account/mobile-qr/regenerate")
+def account_mobile_qr_regenerate(request: Request, db: Session = Depends(database.get_db)):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    logging_setup.log_security("Persönlicher Anmelde-QR neu angefordert", user=user)
+    # Wie beim vorhandenen Admin-QR entsteht ein neuer zeitlich begrenzter
+    # Code. Bereits ausgegebene Codes werden dadurch nicht widerrufen.
+    return RedirectResponse(
+        url=f"/account?qr={secrets.token_hex(8)}#mobile-login",
+        status_code=status.HTTP_303_SEE_OTHER,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/account/password")
 def account_password_update(
     request: Request,
@@ -2001,6 +2128,9 @@ def _build_dashboard_context(db: Session, user: models.User):
         "can_submit_manual_entries": _can_submit_manual_entries(user),
         "can_edit_own_notes": _can_edit_own_notes(user),
         "can_request_vacations": _can_request_vacations(user),
+        "overview_preference": account_ui.overview_preference(user),
+        "can_access_account": True,
+        "can_access_admin": permission_service.has_admin_access(user),
         "vacations": vacations,
         "pending_vacations": sum(
             1
@@ -2044,15 +2174,40 @@ def dashboard(request: Request, db: Session = Depends(database.get_db)):
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     context = _build_dashboard_context(db, user)
+    overview_mode = request.query_params.get("overview", context["overview_preference"])
+    if overview_mode not in {"day", "week"}:
+        overview_mode = context["overview_preference"]
+    reference_date = _overview_reference_date(request, context["today"])
+    reference_day = _build_daily_overview(db, user.id, reference_date)
+    step = timedelta(days=7 if overview_mode == "week" else 1)
     context.update(
         {
             "request": request,
             "user": user,
             "message": request.query_params.get("msg"),
             "error": request.query_params.get("error"),
+            "overview_mode": overview_mode,
+            "overview_reference": reference_date,
+            "overview_reference_date": reference_date,
+            "overview_previous": reference_date - step,
+            "overview_next": reference_date + step,
+            "overview_entries": reference_day["entries"],
+            "overview_total_minutes": reference_day["total_minutes"],
+            "weekly_summary": _build_weekly_overview(db, user, reference_date, today=context["today"]),
         }
     )
     return templates.TemplateResponse("dashboard.html", context)
+
+
+def _overview_reference_date(request: Request, today: date) -> date:
+    try:
+        selected = date.fromisoformat(request.query_params.get("date", ""))
+    except (TypeError, ValueError):
+        return today
+    # Auch an den Grenzen des Datentyps müssen vorige/nächste Woche darstellbar bleiben.
+    if not date.min + timedelta(days=7) <= selected <= date.max - timedelta(days=7):
+        return today
+    return selected
 
 
 @app.get("/mobile", response_class=HTMLResponse)
@@ -2071,21 +2226,13 @@ def mobile_dashboard(request: Request, db: Session = Depends(database.get_db)):
             last_finished_entry = None
     context["last_finished_entry"] = last_finished_entry
     tab_param = request.query_params.get("tab", "buchung").lower()
-    if tab_param not in {"buchung", "uebersicht", "salden", "urlaub"}:
+    if tab_param not in {"buchung", "uebersicht", "salden", "urlaub", "einstellungen"}:
         tab_param = "buchung"
 
-    overview_mode = request.query_params.get("overview", "day").lower()
+    overview_mode = request.query_params.get("overview", context["overview_preference"]).lower()
     if overview_mode not in {"day", "week"}:
-        overview_mode = "day"
-    reference_param = request.query_params.get("date")
-    reference_date: Optional[date] = None
-    if reference_param:
-        try:
-            reference_date = date.fromisoformat(reference_param)
-        except ValueError:
-            reference_date = None
-    if reference_date is None:
-        reference_date = context["today"]
+        overview_mode = context["overview_preference"]
+    reference_date = _overview_reference_date(request, context["today"])
 
     overview_context: dict[str, object] = {
         "overview_mode": overview_mode,
@@ -2157,6 +2304,7 @@ def submit_time_entry(
     work_date: date = Form(...),
     start_time: time = Form(...),
     end_time: time = Form(...),
+    ends_next_day: bool = Form(False),
     break_minutes: int = Form(0),
     notes: str = Form(""),
     company_id: Optional[str] = Form(None),
@@ -2180,8 +2328,31 @@ def submit_time_entry(
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     if break_minutes < 0:
         break_minutes = 0
-    if end_time <= start_time:
-        redirect = _build_redirect(_sanitize_next(next_url), error="Endzeit muss nach der Startzeit liegen")
+    if (
+        end_time == start_time
+        or (end_time < start_time and not ends_next_day)
+        or (ends_next_day and end_time > start_time)
+    ):
+        error_message = (
+            "Bei einem Nachtrag über Mitternacht bitte bestätigen: Ende liegt am Folgetag."
+            if end_time < start_time
+            else (
+                "Bei Ende am Folgetag muss die Endzeit vor der Startzeit liegen; ein Nachtrag muss kürzer als 24 Stunden sein."
+                if ends_next_day and end_time > start_time
+                else "Endzeit und Startzeit dürfen nicht gleich sein."
+            )
+        )
+        redirect = _build_redirect(_sanitize_next(next_url), error=error_message)
+        return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        crud.ensure_period_open(db, work_date)
+        if ends_next_day:
+            crud.ensure_period_open(db, work_date + timedelta(days=1))
+    except (crud.PeriodLocked, OverflowError) as exc:
+        error_message = (
+            str(exc) if isinstance(exc, crud.PeriodLocked) else "Das Enddatum liegt außerhalb des gültigen Datumsbereichs."
+        )
+        redirect = _build_redirect(_sanitize_next(next_url), error=error_message)
         return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
     new_company_value = (new_company_name or "").strip()
     company_value: Optional[int] = None
@@ -2231,10 +2402,12 @@ def submit_time_entry(
             is_remote=remote_value,
             location_id=location_value,
         )
-        _, split_performed = crud.create_manual_time_entry(db, entry)
+        _, split_performed = crud.create_manual_time_entry(db, entry, actor=user)
     except ValueError as exc:
         error_message = "Ungültige Zeiteingabe"
-        if str(exc) == "OVERLAPPING_TIME_ENTRY":
+        if isinstance(exc, crud.PeriodLocked):
+            error_message = str(exc)
+        elif str(exc) == "OVERLAPPING_TIME_ENTRY":
             error_message = "Zeit überschneidet sich mit einer bestehenden Buchung"
         elif str(exc) == "BREAK_RUNNING":
             error_message = (
@@ -2246,7 +2419,7 @@ def submit_time_entry(
     if split_performed:
         success_message = (
             "Zeitbuchung eingereicht und wartet auf Freigabe – "
-            "die laufende Arbeitszeit wurde entsprechend geteilt und läuft weiter"
+            "die bestehende Arbeitszeit wurde entsprechend aufgeteilt"
         )
     redirect = _build_redirect(_sanitize_next(next_url), msg=success_message)
     return RedirectResponse(url=redirect, status_code=status.HTTP_303_SEE_OTHER)
@@ -2342,6 +2515,9 @@ def mobile_sync_data(
             "id": user.id,
             "full_name": user.full_name,
             "group": ", ".join(user.group_names),
+            "group_names": user.group_names,
+            "overview_preference": account_ui.overview_preference(user),
+            "overtime_vacation_enabled": bool(user.overtime_vacation_enabled),
             "daily_target_minutes": int(round(user.daily_target_minutes or 0)),
             "weekly_target_minutes": int(round(user.weekly_target_minutes or 0)),
         },
@@ -2391,6 +2567,8 @@ def mobile_sync_data(
         # Berechtigungen für die mobile App / Offline-Shell, damit die UI
         # nicht erlaubte Aktionen gar nicht erst anbietet.
         "permissions": {
+            "account_access": True,
+            "admin_access": permission_service.has_admin_access(user),
             "create_companies": _can_create_companies(user),
             "manual_time_entries": _can_submit_manual_entries(user),
             "edit_own_notes": _can_edit_own_notes(user),
@@ -2435,10 +2613,10 @@ def _parse_event_time(value: Optional[str]) -> datetime:
     unplausibel, gilt die Serveruhr.
 
     Das Gerät schickt eine lokale Zeit ohne Zonenangabe
-    („JJJJ-MM-TTTHH:MM:SS") – genauso hält der Server eine Online-Stempelung
-    über ``datetime.now()`` fest. Ein angehängtes „Z" oder ein ausdrücklicher
-    Versatz wird herausgerechnet. Werte weit außerhalb eines vernünftigen
-    Fensters werden abgewiesen; sonst schlüge eine grob falsch gestellte
+    („JJJJ-MM-TTTHH:MM:SS") – eine Online-Stempelung ohne Gerätezeit wird
+    entsprechend in der Betriebszeitzone erfasst. Ein angehängtes „Z" oder
+    ein ausdrücklicher Versatz wird in diese Zone umgerechnet. Werte weit
+    außerhalb eines vernünftigen Fensters werden abgewiesen; sonst schlüge eine grob falsch gestellte
     Geräteuhr voll durch.
     """
     if value:
@@ -2455,7 +2633,7 @@ def _parse_event_time(value: Optional[str]) -> datetime:
             server_now = datetime.now(worktime.zone()).replace(tzinfo=None)
             if server_now - timedelta(days=400) <= parsed <= server_now + timedelta(days=1):
                 return parsed
-    return datetime.now()
+    return datetime.now(worktime.zone()).replace(tzinfo=None)
 
 
 def _wants_json(request: Request) -> bool:
@@ -4276,23 +4454,7 @@ def admin_user_mobile_qr(
         raise HTTPException(status_code=403)
     if not _user_in_permission_scope(db, actor, "User.View", user_id) or not crud.get_user(db, user_id):
         raise HTTPException(status_code=404)
-    login_url = f"{request.url_for('mobile_quick_login')}?token={_create_mobile_autologin_token(user_id)}"
-    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=4)
-    qr.add_data(login_url)
-    qr.make(fit=True)
-    image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-    headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
-    if download:
-        headers["Content-Disposition"] = f'attachment; filename="erfassung-login-{user_id}.png"'
-    # QR bleibt rastergenau; ``size`` begrenzt nur die gewünschte Ausgabekante.
-    requested = min(max(size, 96), 800)
-    if image.width != requested:
-        image = image.resize((requested, requested), resample=0)
-        output = io.BytesIO()
-        image.save(output, format="PNG")
-    return Response(output.getvalue(), media_type="image/png", headers=headers)
+    return _mobile_qr_response(request, user_id, size, download)
 
 
 @app.post("/admin/users/{user_id}/work-schedules")
@@ -6314,6 +6476,24 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
         active_tab = "reports"
     else:
         active_tab = "users"
+    pause_zone = worktime.zone(entry.tz_name)
+    period_locked = False
+    try:
+        crud.ensure_period_open(db, entry.work_date)
+    except crud.PeriodLocked:
+        period_locked = True
+    break_edit_rows = [
+        {
+            "interval": interval,
+            "started_local": worktime.from_utc_column(interval.started_at_utc).astimezone(pause_zone).strftime("%Y-%m-%dT%H:%M:%S"),
+            "ended_local": (
+                worktime.from_utc_column(interval.ended_at_utc).astimezone(pause_zone).strftime("%Y-%m-%dT%H:%M:%S")
+                if interval.ended_at_utc else ""
+            ),
+            "can_edit": not interval.is_running and not period_locked,
+        }
+        for interval in entry.breaks
+    ]
     return _admin_template(
         "admin/time_entry_form.html",
         request,
@@ -6325,6 +6505,63 @@ def edit_time_entry_page(request: Request, entry_id: int, db: Session = Depends(
         active_tab=active_tab,
         location_catalogue_data=_location_catalogue(db),
         entry_locations=_locations_of(db, entry.company_id),
+        break_edit_rows=break_edit_rows,
+        break_timezone=pause_zone.key,
+        message=request.query_params.get("msg"),
+        error=request.query_params.get("error"),
+    )
+
+
+@app.post("/admin/time-entries/{entry_id}/breaks/{break_id}")
+def update_break_interval_html(
+    request: Request, entry_id: int, break_id: int,
+    started_at: datetime = Form(...), ended_at: datetime = Form(...),
+    change_reason: str = Form(..., max_length=500),
+    next_url: str = Form("/admin/reports/time"),
+    redirect_user: str | None = Form(None),
+    db: Session = Depends(database.get_db),
+):
+    user = get_logged_in_user(request, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not _can_edit_time_entries(user):
+        raise HTTPException(status_code=403, detail="Das Recht zum Bearbeiten von Zeitbuchungen fehlt.")
+    entry = crud.get_time_entry(db, entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Buchung nicht gefunden.")
+    if not _user_in_permission_scope(db, user, "Time.Edit", entry.user_id):
+        raise HTTPException(status_code=403, detail="Diese Buchung liegt außerhalb deiner Zuständigkeit.")
+    edit_url = _build_redirect(
+        f"/admin/time-entries/{entry_id}/edit",
+        next=_sanitize_next(next_url, "/admin/reports/time"), user=str(entry.user_id),
+    )
+    try:
+        interval = crud.correct_break(
+            db, break_id, entry_id=entry_id, actor=user, reason=change_reason,
+            started_at=started_at, ended_at=ended_at,
+        )
+    except crud.PeriodLocked as exc:
+        message = str(exc)
+    except revisions.ReasonRequired:
+        message = "Bitte eine Begründung für die Pausenkorrektur angeben."
+    except ValueError as exc:
+        message = {
+            "BREAK_RUNNING": "Bitte zuerst die laufende Pause beenden.",
+            "OVERLAPPING_BREAK_INTERVAL": "Die Pause überschneidet sich mit einer anderen Pause.",
+            "INVALID_BREAK_INTERVAL": "Beginn und Ende müssen innerhalb der Buchung liegen; das Ende muss nach dem Beginn liegen.",
+        }.get(str(exc), "Die Pausenzeiten sind ungültig.")
+    else:
+        if interval is None:
+            raise HTTPException(status_code=404, detail="Pause gehört nicht zu dieser Buchung.")
+        logging_setup.log_audit("Pausenintervall korrigiert", user=user, detail=f"Buchung {entry_id}, Pause {break_id}")
+        return RedirectResponse(
+            url=_build_redirect_with_next(edit_url, edit_url, msg="Pausenkorrektur gespeichert") + "#break-intervals",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    db.rollback()
+    return RedirectResponse(
+        url=_build_redirect_with_next(edit_url, edit_url, error=message) + "#break-intervals",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
@@ -6460,6 +6697,12 @@ def update_time_entry_html(
             _, _, detail = exc_text.partition(":")
             if detail:
                 error_message = f"{error_message}: {detail}"
+        elif exc_text == "BREAK_RUNNING":
+            error_message = "Bitte zuerst die laufende Pause beenden, bevor du diese Buchung überschreibst."
+        elif exc_text == "BREAK_INTERVALS_REQUIRE_EDIT":
+            error_message = "Gestempelte Pausen bitte über ihre Beginn- und Endzeiten korrigieren."
+        elif exc_text == "BREAK_OUTSIDE_ENTRY":
+            error_message = "Eine erfasste Pause liegt außerhalb der neuen Buchungszeiten. Bitte zuerst die Pausenzeiten korrigieren."
         redirect = _build_redirect_with_next(
             "/admin/users", next_url, error=error_message, user=redirect_user
         )

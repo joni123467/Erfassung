@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Datenbankmigration läuft – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'system_database' %}
 {% include "admin/_nav.html" %}
 <section class="card restore-progress" id="db-progress"
@@ -129,4 +130,6 @@
     poll();
 })();
 </script>
+
+</div>
 {% endblock %}

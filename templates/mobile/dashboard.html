@@ -4,9 +4,11 @@
 {% block content %}
 {{ location_catalogue(location_catalogue_data) }}
 <section
-    class="mobile-dashboard"
+    class="mobile-dashboard pwa-interface"
     aria-label="Mobile Zeiterfassung"
     data-mobile-state="true"
+    data-user-id="{{ user.id }}"
+    data-overview-preference="{{ user.overview_preference }}"
     data-state-running="{{ 'true' if active_entry else 'false' }}"
     data-state-break="{{ 'true' if active_entry and active_entry.break_started_at else 'false' }}"
     data-state-company="{{ 'true' if active_entry and active_entry.company_id is not none else 'false' }}"
@@ -23,11 +25,11 @@
 >
     <header class="mobile-dashboard__header">
         <div>
-            <h1 class="mobile-dashboard__title">Mobile Erfassung</h1>
+            <p class="mobile-eyebrow">Erfassung</p><h1 class="mobile-dashboard__title">Mein Tag</h1>
             <p class="mobile-dashboard__date">{{ today | german_date }}</p>
         </div>
         <p class="mobile-dashboard__status" data-state="active" {% if not active_entry %}hidden{% endif %}>
-            <span class="mobile-badge mobile-badge--running">Arbeitszeit läuft</span>
+            <span class="mobile-badge mobile-badge--running" data-field="work-status">Arbeitszeit läuft</span>
             <span class="mobile-badge mobile-badge--mode" data-field="booking-mode">{{ 'Auftrag läuft' if active_entry and active_entry.company_id is not none else 'Nur Arbeitszeit' }}</span>
             seit <span data-field="header-start">{{ active_entry.start_time.strftime('%H:%M') if active_entry else '' }}</span> Uhr
         </p>
@@ -44,60 +46,26 @@
     </div>
 
     {% set tab = active_tab or 'buchung' %}
-    <nav class="mobile-tabs" role="tablist" aria-label="Bereiche">
-        <a
-            href="#buchung"
-            class="mobile-tab {% if tab == 'buchung' %}is-active{% endif %}"
-            data-tab="buchung"
-            id="mobile-tab-buchung"
-            aria-controls="mobile-panel-buchung"
-            aria-selected="{{ 'true' if tab == 'buchung' else 'false' }}"
-            role="tab"
-        >Buchung</a>
-        <a
-            href="#uebersicht"
-            class="mobile-tab {% if tab == 'uebersicht' %}is-active{% endif %}"
-            data-tab="uebersicht"
-            id="mobile-tab-uebersicht"
-            aria-controls="mobile-panel-uebersicht"
-            aria-selected="{{ 'true' if tab == 'uebersicht' else 'false' }}"
-            role="tab"
-        >Übersicht</a>
-        <a
-            href="#salden"
-            class="mobile-tab {% if tab == 'salden' %}is-active{% endif %}"
-            data-tab="salden"
-            id="mobile-tab-salden"
-            aria-controls="mobile-panel-salden"
-            aria-selected="{{ 'true' if tab == 'salden' else 'false' }}"
-            role="tab"
-        >Salden</a>
-        {% if has_license_feature('vacation') %}
-        <a
-            href="#urlaub"
-            class="mobile-tab {% if tab == 'urlaub' %}is-active{% endif %}"
-            data-tab="urlaub"
-            id="mobile-tab-urlaub"
-            aria-controls="mobile-panel-urlaub"
-            aria-selected="{{ 'true' if tab == 'urlaub' else 'false' }}"
-            role="tab"
-        >Urlaub</a>
-        {% endif %}
-    </nav>
+<nav class="mobile-tabs mobile-bottom-nav" role="tablist" aria-label="Meine Erfassung">
+<a href="#buchung" class="mobile-tab {% if tab == 'buchung' %}is-active{% endif %}" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="{{ 'true' if tab == 'buchung' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Übersicht</span></a>
+<a href="#uebersicht" class="mobile-tab {% if tab == 'uebersicht' %}is-active{% endif %}" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="{{ 'true' if tab == 'uebersicht' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v4m8-4v4M4 10h16"/><rect x="4" y="5" width="16" height="16" rx="2"/></svg><span>Meine Zeiten</span></a>
+{% if has_license_feature('vacation') %}
+<a href="#urlaub" class="mobile-tab {% if tab == 'urlaub' %}is-active{% endif %}" data-tab="urlaub" id="mobile-tab-urlaub" aria-controls="mobile-panel-urlaub" aria-selected="{{ 'true' if tab == 'urlaub' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0c-2-2-4-2-5 0-2-2-4-2-6 0-1-2-3-2-5 0Z"/><path d="M12 13v6a2 2 0 0 0 4 0M12 3v2"/></svg><span>Urlaub</span></a>
+{% endif %}
+<a href="#einstellungen" class="mobile-tab {% if tab == 'einstellungen' %}is-active{% endif %}" data-tab="einstellungen" id="mobile-tab-einstellungen" aria-controls="mobile-panel-einstellungen" aria-selected="{{ 'true' if tab == 'einstellungen' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg><span>Mehr</span></a>
+</nav>
 
     <div class="mobile-panels">
         <section class="mobile-panel {% if tab == 'buchung' %}is-active{% endif %}" id="mobile-panel-buchung" data-tab-panel="buchung" role="tabpanel" aria-labelledby="mobile-tab-buchung" {% if tab != 'buchung' %}hidden{% endif %}>
-            <div class="mobile-card">
-                <h2 class="mobile-card__title">Schnell stempeln
+            <div class="mobile-card mobile-stamp-card">
+                <h2 class="mobile-card__title">Deine Zeiterfassung
                     <span class="info-tip">
                         <button type="button" class="info-tip__trigger" aria-expanded="false" aria-label="Hinweis zum Arbeitsschutz anzeigen">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
                         </button>
                         <span class="info-tip__bubble" role="tooltip">
                             <strong>Arbeitsschutz (ArbZG):</strong> Nach 6 Stunden Arbeit mindestens 30 Minuten Pause einlegen, nach 9 Stunden mindestens 45 Minuten.
-                            {% if user.auto_break_deduction %}
-                                Werden keine Pausen gestempelt, werden automatisch gesetzliche Pausen von der Arbeitszeit abgezogen.
-                            {% endif %}
+                            Es werden nur erfasste Pausen abgezogen. Fehlende Pausen werden als Hinweis ausgewiesen.
                         </span>
                     </span>
                 </h2>
@@ -117,7 +85,7 @@
                             <span class="mobile-badge mobile-badge--remote">Remote</span>
                         </p>
                     {% endif %}
-                    <p class="mobile-card__text">Aktuelle Arbeitszeit: <span data-field="worked-duration">{{ active_entry.worked_minutes|format_minutes if active_entry else '0:00' }}</span> Std</p>
+                    <p class="mobile-timer"><span class="mobile-timer__label">Laufender Abschnitt · netto</span><span data-field="worked-duration">{{ active_entry.worked_minutes|format_minutes if active_entry else '0:00' }}</span><small> Stunden</small></p>
                     <p class="mobile-card__text" data-state="break-active" {% if not (active_entry and active_entry.break_started_at) %}hidden{% endif %}>
                         <span class="mobile-badge mobile-badge--break">Pause läuft</span>
                         seit <span data-field="break-start">{{ active_entry.break_started_at.strftime('%H:%M') if active_entry and active_entry.break_started_at else '' }}</span> Uhr
@@ -291,11 +259,36 @@
         </section>
 
         <section class="mobile-panel {% if tab == 'salden' %}is-active{% endif %}" id="mobile-panel-salden" data-tab-panel="salden" role="tabpanel" aria-labelledby="mobile-tab-salden" {% if tab != 'salden' %}hidden{% endif %}>
-            <div class="mobile-card" id="salden-card">
+            <a href="#einstellungen" class="mobile-back-link" data-mobile-open="einstellungen">← Zurück zu Mehr</a>
+<div class="mobile-card" id="salden-card">
                 <p class="mobile-empty-state">Wird geladen …</p>
             </div>
         </section>
         <section class="mobile-panel {% if tab == 'einstellungen' %}is-active{% endif %}" id="mobile-panel-einstellungen" data-tab-panel="einstellungen" role="tabpanel" aria-labelledby="mobile-tab-einstellungen" {% if tab != 'einstellungen' %}hidden{% endif %}>
+<div class="mobile-card mobile-account-card">
+ <div class="mobile-section-heading"><div><p class="mobile-eyebrow">Mein Konto</p><h2 class="mobile-card__title" data-mobile-account-name>{{ user.full_name }}</h2><p class="mobile-card__text" data-mobile-account-group>{{ user.group_names | join(', ') or 'ohne Gruppe' }}</p></div><button type="button" class="theme-toggle" data-theme-toggle aria-label="Dunkles Design umschalten" title="Hell / Dunkel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z"/></svg></button></div>
+ <nav class="mobile-more-links" aria-label="Weitere Bereiche">
+  <a href="/account" data-mobile-online><span>Konto &amp; App-Anmeldung</span><small>Eigener QR-Code und persönliche Einstellungen</small></a>
+  <a href="#salden" class="mobile-tab" data-tab="salden" id="mobile-tab-salden" role="tab" aria-controls="mobile-panel-salden" aria-selected="false"><span>Mein Zeitkonto</span><small>Monatswerte und Urlaubssaldo</small></a>
+  <a href="/records" data-mobile-online><span>Alle Buchungen</span><small>Monat, Filter und Export</small></a>
+  <a href="/dashboard#manual-time-entry" data-mobile-manual data-mobile-online {% if not can_submit_manual_entries %}hidden{% endif %}><span>Zeit nachtragen</span><small>Fehlende Buchung ergänzen</small></a>
+  <a href="/records/vacations/calendar" data-mobile-online><span>Urlaubskalender</span><small>Eigene Planung und Teamübersicht</small></a>
+  <a href="/admin" data-mobile-admin data-mobile-online {% if not has_admin_access(user) %}hidden{% endif %}><span>Administration</span><small>Verwaltung nach deiner Berechtigung</small></a>
+  <a href="/account/password" data-mobile-online><span>Kennwort ändern</span></a>
+ </nav>
+ <a href="/logout" class="mobile-link-button mobile-signout" data-mobile-online>Abmelden</a>
+</div>
+<div class="mobile-card">
+ <h2 class="mobile-card__title">Meine Darstellung</h2>
+ <form id="mobile-preference-form" class="mobile-preference-form">
+  <label for="mobile-setting-default-view">Startansicht meiner Zeiten</label>
+  <select id="mobile-setting-default-view" name="overview_preference"><option value="day">Tag</option><option value="week">Woche</option></select>
+  <p class="form-hint">Diese persönliche Einstellung gilt für Web und PWA. Du kannst beim Ansehen jederzeit zwischen Tag und Woche wechseln.</p>
+  <button type="submit" class="mobile-button">Startansicht speichern</button>
+  <p id="mobile-preference-feedback" class="form-hint" role="status" aria-live="polite"></p>
+ </form>
+</div>
+
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Synchronisation</h2>
                 <aside class="mobile-queue" aria-live="polite">

@@ -547,7 +547,7 @@ def test_migration_ist_versioniert(main):
 
     assert (24, db_migrations._repair_time_entry_utc_stamps) in db_migrations.MIGRATIONS
     # Bestehende Nummern bleiben, wo sie sind.
-    assert [number for number, _ in db_migrations.MIGRATIONS] == list(range(1, 26))
+    assert [number for number, _ in db_migrations.MIGRATIONS] == list(range(1, 27))
 
 
 # ---------------------------------------------------------------------------
@@ -610,8 +610,8 @@ def test_buchungsliste_und_summe_stimmen_ueberein(client):
 
 
 def test_version_ist_gepflegt(main):
-    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.21.0"
-    assert main.APP_VERSION == "0.21.0"
+    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.22.0"
+    assert main.APP_VERSION == "0.22.0"
 
 
 def test_changelog_und_release_notes(main):

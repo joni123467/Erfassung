@@ -394,7 +394,9 @@ def test_vacation_request_denied_without_permission(client):
         follow_redirects=False,
     )
     assert response.json()["ok"] is False
-    assert "darf keine Urlaubsanträge stellen" in client.get("/records/vacations").text
+    html = client.get("/records/vacations").text
+    assert "Rollen erlauben keine Urlaubsanträge" in html
+    assert 'action="/vacations"' not in html
 
 
 def test_sync_data_contains_permissions(client):

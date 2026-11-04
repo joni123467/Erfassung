@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Rollen – Erfassung{% endblock %}
 {% block content %}
+<div class="management-interface management-interface--admin">
 {% set admin_active = 'roles' %}
 {% include "admin/_nav.html" %}
+<p class="interface-notice">Rechte werden je Rolle und Geltungsbereich vergeben. Bei mehreren Rollen gilt je Recht der weiteste Bereich. Geschützte Systemrollen bleiben unveränderbar.</p>
 <section class="card">
     <div class="card-header">
         <h1>Rollen</h1>
@@ -67,4 +69,6 @@
         </table>
     </div>
 </section>
+
+</div>
 {% endblock %}

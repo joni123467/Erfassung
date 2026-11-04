@@ -75,7 +75,7 @@ def login(client, username="admin", password="Admin!0000"):
 # --- Version ---------------------------------------------------------------
 
 def test_version_is_090(client):
-    assert client.main.APP_VERSION == "0.21.0"
+    assert client.main.APP_VERSION == "0.22.0"
 
 
 def test_health_check(client):
@@ -83,7 +83,7 @@ def test_health_check(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["version"] == "0.21.0"
+    assert body["version"] == "0.22.0"
     assert body["checks"]["database"] is True
     assert body["checks"]["volumes"] is True
 
@@ -299,8 +299,10 @@ def test_dashboard_single_holiday_block_and_hint(client):
     # Feiertage should appear exactly once as a heading.
     assert html.count("Feiertagsübersicht") == 1
     assert "Nächste Feiertage" not in html
-    # auto break enabled by default -> pause hint visible
-    assert "automatisch gesetzliche Pausen" in html
+    # New entries always deduct actual pauses; the legacy user flag must not
+    # advertise an automatic deduction for new bookings.
+    assert "nicht automatisch abgezogen" in html
+    assert "automatisch gesetzliche Pausen" not in html
 
     db = database.SessionLocal()
     try:
@@ -310,5 +312,6 @@ def test_dashboard_single_holiday_block_and_hint(client):
     finally:
         db.close()
     html_disabled = client.get("/dashboard").text
+    assert "nicht automatisch abgezogen" in html_disabled
     assert "automatisch gesetzliche Pausen" not in html_disabled
     assert "nach Freigabe durch die Administration" in html_disabled
