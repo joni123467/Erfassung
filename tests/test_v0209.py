@@ -610,8 +610,8 @@ def test_buchungsliste_und_summe_stimmen_ueberein(client):
 
 
 def test_version_ist_gepflegt(main):
-    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.22.0"
-    assert main.APP_VERSION == "0.22.0"
+    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.22.1"
+    assert main.APP_VERSION == "0.22.1"
 
 
 def test_changelog_und_release_notes(main):

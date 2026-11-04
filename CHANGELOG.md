@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.22.1] – 2026-11-05
+
+### Fehlerbehebungen
+- Web-/PWA-Übersicht und Stempelungen verwenden dieselbe konfigurierte
+  Betriebszeitzone. Auf UTC-Servern zeigt die Übersicht nach deutscher
+  Mitternacht den richtigen Tag; der Kommentarzugang für die zuletzt
+  beendete Buchung bleibt sichtbar.
+- Monats-/Wochen-/Zeitraumvorgaben und mobile Synchronisationsdaten verwenden
+  ebenfalls das Betriebsdatum, einschließlich Monats- und Jahreswechsel.
+- Das Nachtragsformular schlägt denselben Tag wie die Übersicht vor.
+- Nachtragstests über Mitternacht setzen die erforderliche Bestätigung
+  „Ende am Folgetag“ und prüfen feste Tages-/Nachtzeiten. Die fachliche
+  Prüfung im Formular bleibt unverändert.
+
+### Geändert
+- Compose- und README-Beispiele verweisen auf das Release-Image
+  `ghcr.io/joni123467/erfassung:0.22.1`.
+- Regressionstests simulieren UTC-Server mit Winter-/Sommerzeit sowie
+  Tages-, Wochen-, Monats- und Jahreswechsel, unabhängig von der Testlaufzeit.
+
+### Datenbankänderungen und Migration
+- Keine Schemaänderung; Schema 26 bleibt bestehen. Gespeicherte Buchungen,
+  Konfiguration und Berechtigungen werden nicht verändert.
+- Das Image wird erst nach erfolgreichem Merge-Test und Container-Publishing
+  auf `main` verfügbar. Ein fehlgeschlagener Prüflauf veröffentlicht kein Image.
+
 ## [0.22.0] – 2026-11-04
 
 ### Hinzugefügt

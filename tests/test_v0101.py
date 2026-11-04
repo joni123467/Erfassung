@@ -110,8 +110,8 @@ def _open_entry():
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.22.0"
-    assert client.get("/health").json()["version"] == "0.22.0"
+    assert client.main.APP_VERSION == "0.22.1"
+    assert client.get("/health").json()["version"] == "0.22.1"
 
 
 # --- der eigentliche Fehler ------------------------------------------------------

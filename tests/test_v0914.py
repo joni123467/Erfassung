@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
@@ -142,8 +142,8 @@ def _entries_for(user_id: int):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.22.0"
-    assert client.get("/health").json()["version"] == "0.22.0"
+    assert client.main.APP_VERSION == "0.22.1"
+    assert client.get("/health").json()["version"] == "0.22.1"
 
 
 # --- split behaviour --------------------------------------------------------------
@@ -349,10 +349,32 @@ def test_manual_entry_outside_running_entry_no_split(client):
 
 # --- /time route -------------------------------------------------------------------
 
-def test_time_route_splits_and_reports_message(client):
+@pytest.fixture(params=[time(13, 45), time(0, 45), time(0, 55)],
+                ids=["daytime", "midnight-30-minutes", "midnight-15-minutes"])
+def route_now(client, monkeypatch, request):
+    from app import crud, worktime
+
+    local = datetime.combine(date(2026, 11, 5), request.param)
+    instant = local.replace(tzinfo=worktime.zone()).astimezone(timezone.utc)
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return instant.replace(tzinfo=None)
+
+    for module in (client.main, crud, worktime):
+        monkeypatch.setattr(module, "datetime", Frozen)
+    return local
+
+
+def test_time_route_splits_and_reports_message(client, route_now):
     login(client)
     uid = _admin_id()
-    now = _business_now()
+    now = route_now
     _start_running_entry(uid, now - timedelta(hours=3))
     token = _csrf(client, "/dashboard")
     call_start = (now - timedelta(hours=1)).replace(second=0, microsecond=0)
@@ -364,6 +386,7 @@ def test_time_route_splits_and_reports_message(client):
             "work_date": call_start.date().isoformat(),
             "start_time": call_start.strftime("%H:%M"),
             "end_time": call_end.strftime("%H:%M"),
+            "ends_next_day": call_end.date() > call_start.date(),
             "break_minutes": "0",
             "notes": "Telefonat Kunde X",
             "next_url": "/dashboard",
@@ -378,12 +401,12 @@ def test_time_route_splits_and_reports_message(client):
     assert any(e.is_manual and e.notes == "Telefonat Kunde X" for e in entries)
 
 
-def test_time_route_break_running_message(client):
+def test_time_route_break_running_message(client, route_now):
     from app import crud, database
 
     login(client)
     uid = _admin_id()
-    now = _business_now()
+    now = route_now
     _start_running_entry(uid, now - timedelta(hours=2))
     db = database.SessionLocal()
     try:
@@ -392,13 +415,15 @@ def test_time_route_break_running_message(client):
         db.close()
     token = _csrf(client, "/dashboard")
     call_start = (now - timedelta(hours=1)).replace(second=0, microsecond=0)
+    call_end = call_start + timedelta(minutes=15)
     response = client.post(
         "/time",
         data={
             "csrf_token": token,
             "work_date": call_start.date().isoformat(),
             "start_time": call_start.strftime("%H:%M"),
-            "end_time": (call_start + timedelta(minutes=15)).strftime("%H:%M"),
+            "end_time": call_end.strftime("%H:%M"),
+            "ends_next_day": call_end.date() > call_start.date(),
             "break_minutes": "0",
             "next_url": "/dashboard",
         },

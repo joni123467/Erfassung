@@ -2,7 +2,13 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.22.0`
+**Version:** `0.22.1`
+
+> Seit 0.22.1: **Tagesansicht und Stempelungen verwenden dieselbe Betriebszeitzone.**
+> Auf UTC-Servern bleiben nach deutscher Mitternacht die aktuellen Buchungen
+> und der Kommentarzugang sichtbar. Monats-/Wochenvorgaben und mobile
+> Synchronisationsdaten folgen ebenfalls dem Betriebsdatum.
+> [Release Notes](docs/RELEASE_NOTES_0.22.1.md).
 
 > Seit 0.22.0: **Überarbeitete Oberfläche für Web, Administration und PWA.**
 > Tages- oder Wochenansicht lässt sich pro Benutzer speichern; das eigene Konto
@@ -449,13 +455,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.10.1 .
+docker build -t erfassung:0.22.1 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.10.1
+  erfassung:0.22.1
 ```
 
 ## GHCR & GitHub Actions
@@ -465,22 +471,25 @@ Der Workflow liegt unter `.github/workflows/container-publish.yml` und veröffen
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.10.1`)
+- Push von Tags `v*` (z. B. `v0.22.1`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.10.1`)
+- Versions-Tag aus `VERSION` (hier `0.22.1`)
 - `latest` auf `main`
-- Git-Tag (`v0.10.1`)
+- Git-Tag (`v0.22.1`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/OWNER/erfassung:0.10.1`
+`ghcr.io/joni123467/erfassung:0.22.1`
 
-`OWNER` ist der GitHub-Owner (User oder Organisation) des Repositories.
+Bei einem eigenen Fork `joni123467` durch dessen GitHub-Owner ersetzen.
+Das versionierte Image ist erst nach erfolgreichem Veröffentlichungsworkflow
+auf `main` verfügbar. Ein fehlgeschlagener Test verhindert den Image-Build;
+`not found` in Portainer kann daher einen noch nicht veröffentlichten Tag bedeuten.
 
 ## Deployment mit Portainer
 
@@ -491,7 +500,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.1
+    image: ghcr.io/joni123467/erfassung:0.22.1
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -1725,7 +1734,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.1
+    image: ghcr.io/joni123467/erfassung:0.22.1
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -1760,7 +1769,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.1
+    image: ghcr.io/joni123467/erfassung:0.22.1
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -1796,7 +1805,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.1
+    image: ghcr.io/joni123467/erfassung:0.22.1
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -1832,7 +1841,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/OWNER/erfassung:0.10.1
+    image: ghcr.io/joni123467/erfassung:0.22.1
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -1916,8 +1925,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- `OWNER` im Image-Namen (`ghcr.io/OWNER/erfassung:0.10.1`)
-- optional Image-Name/Tag (`erfassung`, `0.10.1`, `latest`)
+- Bei eigenen Forks den Owner im Image-Namen (`ghcr.io/joni123467/erfassung:0.22.1`)
+- optional Image-Name/Tag (`erfassung`, `0.22.1`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 
