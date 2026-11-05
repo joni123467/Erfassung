@@ -2,6 +2,7 @@ const {test:base,expect}=require('@playwright/test');
 const {execFileSync}=require('node:child_process');
 const {randomUUID}=require('node:crypto');
 const fs=require('node:fs'),path=require('node:path');
+const {RECOVERY_TIMEOUT,RECOVERY_TEST_TIMEOUT,waitForRecoveredSync}=require('./sync-recovery.cjs');
 const test=base.extend({
   account:async({},use)=>{
     const username=`pwa-${randomUUID().slice(0,10)}`;
@@ -9,20 +10,21 @@ const test=base.extend({
     await use(username);
   },
 });
-async function login(page,account){
+async function login(page,account,{recovery=false}={}){
+  const options=recovery?{timeout:RECOVERY_TIMEOUT}:{};
   await page.goto('/login');
   await page.locator('[name=username]').fill(account);
   await page.locator('[name=password]').fill('Browser!12345');
   await Promise.all([page.waitForURL('**/dashboard'),page.locator('button[type=submit]').click()]);
   await page.goto('/mobile');
-  await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+  await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert',options);
   // Wait for control without aborting a startup/resume sync with an artificial
   // reload. Reload/restart behavior is exercised explicitly by the relevant tests.
   await page.evaluate(async()=>{
     await navigator.serviceWorker.ready;
     if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));
   });
-  await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+  await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert',options);
 }
 async function pending(page){return page.evaluate(async()=>{const s=new ErfassungSync.MobileStore();try{return await s.pending();}finally{s.close();}});}
 async function queue(page,action='start_work',eventTime){return page.evaluate(async({action,eventTime})=>{const s=new ErfassungSync.MobileStore();try{return await s.enqueue('punch',{action,event_time:eventTime||new Date().toISOString()});}finally{s.close();}},{action,eventTime});}
@@ -54,7 +56,7 @@ test('offline stamp survives page close and seven-day-old events sync in order',
   // A closed page may retain its 30-second ownership lease until expiry.
   // Allow that lease plus the existing 15-second visible-client retry, without
   // weakening ownership or adding global retries to the suite.
-  test.setTimeout(75000);
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
   await login(page,account);
   await context.setOffline(true);
   const day=new Date(Date.now()-7*86400000);day.setUTCHours(8,0,0,0);
@@ -68,8 +70,7 @@ test('offline stamp survives page close and seven-day-old events sync in order',
   const resumed=await context.newPage();await resumed.goto('/mobile');
   await expect(resumed.locator('#sync-status')).toBeVisible();await count(resumed,4);
   await context.setOffline(false);await sync(resumed);
-  await expect.poll(async()=>(await pending(resumed)).length,{timeout:50000}).toBe(0);
-  await expect(resumed.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+  await waitForRecoveredSync(resumed);
   const response=await resumed.request.get('/mobile/sync-data');
   const saved=await response.json();
   expect(saved.active_entry).toBeNull();
@@ -85,16 +86,18 @@ test('offline stamp survives page close and seven-day-old events sync in order',
 });
 
 test('expired login preserves events and re-login continues',async({page,account,context})=>{
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
   await login(page,account);await context.setOffline(true);await queue(page);await count(page,1);
   await context.clearCookies();await context.setOffline(false);await sync(page);
   await expect(page.locator('[data-sync-label]')).toHaveText('Anmeldung erforderlich');await count(page,1);
-  await login(page,account);await count(page,0);
+  await login(page,account,{recovery:true});await waitForRecoveredSync(page);
 });
 
 test('server rejection stays visible until reviewed',async({page,account})=>{
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
   await login(page,account);await queue(page,'end_work');await sync(page);
   await expect(page.locator('[data-sync-label]')).toHaveText('Freigabe erforderlich');await count(page,1);
-  await page.reload();await expect(page.locator('[data-sync-label]')).toHaveText('Freigabe erforderlich');await count(page,1);
+  await page.reload();await expect(page.locator('[data-sync-label]')).toHaveText('Freigabe erforderlich',{timeout:RECOVERY_TIMEOUT});await count(page,1);
 });
 
 test('manual cache recovery preserves offline outbox',async({page,account,context})=>{
@@ -193,19 +196,44 @@ test('update waits for acceptance and preserves pending events across worker cha
 });
 
 test('confirmed running work is available for clock-out after offline restart',async({page,context,account})=>{
-  await login(page,account);await queue(page);await sync(page);await count(page,0);
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
+  await login(page,account);const startId=await queue(page);await sync(page);await count(page,0);
   await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
   await context.setOffline(true);await page.reload();
   const end=page.locator('form[data-offline="punch"]').filter({has:page.locator('input[name=action][value=end_work]')}).locator('button[type=submit]');
   await expect(end).toBeVisible();await end.click();await count(page,1);
-  expect((await pending(page))[0].payload.action).toBe('end_work');
-  await context.setOffline(false);await count(page,0);
+  const stop=(await pending(page))[0];
+  expect(stop.payload.action).toBe('end_work');
+  // Reproduce a terminated tab's still-valid lock, rather than depending on
+  // whether a startup/resume request happens to overlap the page reload.
+  await page.evaluate(async()=>{
+    const store=new ErfassungSync.MobileStore();
+    try{await store.put('meta',{key:'outboxLease',owner:'terminated-tab',until:Date.now()+30000});}
+    finally{store.close();}
+  });
+  await context.setOffline(false);
+  await expect(page.locator('[data-sync-message]')).toContainText('anderes Erfassung-Fenster');
+  expect((await pending(page))[0].clientActionId).toBe(stop.clientActionId);
+  await waitForRecoveredSync(page);
+  const saved=await(await page.request.get('/mobile/sync-data')).json();
+  expect(saved.active_entry).toBeNull();
+  expect(saved.entries).toHaveLength(1);
+  expect(saved.entries[0]).toMatchObject({is_open:false,status:'approved'});
+  const receipts=await page.evaluate(async()=>{
+    const store=new ErfassungSync.MobileStore();
+    try{return(await store.all('mobileData')).filter(row=>row.key.startsWith('receipt:')).map(row=>row.receipt);}
+    finally{store.close();}
+  });
+  expect(receipts).toHaveLength(2);
+  expect(receipts.map(receipt=>receipt.client_action_id).sort()).toEqual([startId,stop.clientActionId].sort());
+  expect(new Set(receipts.map(receipt=>receipt.receipt_id)).size).toBe(2);
+  for(const receipt of receipts)expect(receipt).toMatchObject({owner_id:saved.user.id,received:true,status:'applied'});
 });
 
 test('outbox survives a complete browser process restart',async({playwright,browserName,account})=>{
   // A terminated browser cannot release its 30-second ownership lease.
   // Wait for lease expiry plus the existing 15-second retry in this case only.
-  test.setTimeout(75000);
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'erfassung-browser-'));
   const options={headless:true,baseURL:`http://127.0.0.1:${process.env.ERFASSUNG_E2E_PORT||8765}`,viewport:{width:390,height:844}};
@@ -220,8 +248,7 @@ test('outbox survives a complete browser process restart',async({playwright,brow
     await expect(page.locator('#sync-status')).toBeVisible();await count(page,1);
     expect((await pending(page))[0].clientActionId).toBe(id);
     await context.setOffline(false);
-    await expect.poll(async()=>(await pending(page)).length,{timeout:50000}).toBe(0);
-    await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+    await waitForRecoveredSync(page);
     const saved=await (await page.request.get('/mobile/sync-data')).json();
     expect(saved.entries).toHaveLength(1);
     expect(saved.active_entry).toMatchObject({id:saved.entries[0].id,status:'approved',is_open:true});
@@ -238,6 +265,7 @@ test('outbox survives a complete browser process restart',async({playwright,brow
 });
 
 test('a full offline working week uploads all fourteen stamps',async({page,account,context})=>{
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
   await login(page,account);await context.setOffline(true);
   for(let days=7;days>=1;days--){
     const start=new Date(Date.now()-days*86400000);
@@ -245,12 +273,13 @@ test('a full offline working week uploads all fourteen stamps',async({page,accou
     await queue(page,'end_work',new Date(start.getTime()+8*3600000).toISOString());
   }
   await count(page,14);await page.reload();await count(page,14);
-  await context.setOffline(false);await count(page,0);
+  await context.setOffline(false);await waitForRecoveredSync(page);
   const receipts=await page.evaluate(async()=>{const s=new ErfassungSync.MobileStore();try{return(await s.all('mobileData')).filter(row=>row.key.startsWith('receipt:'));}finally{s.close();}});
   expect(receipts.length).toBe(14);expect(receipts.every(row=>row.receipt.status==='applied')).toBe(true);
 });
 
 test('a display failure after saving still reports the durable local booking',async({page,account,context})=>{
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
   await login(page,account);await context.setOffline(true);
   await page.evaluate(()=>{
     const proto=ErfassungSync.MobileStore.prototype,enqueue=proto.enqueue,pending=proto.pending;
@@ -261,5 +290,5 @@ test('a display failure after saving still reports the durable local booking',as
   await page.locator('form[data-offline="punch"]').filter({has:page.locator('input[name=action][value=start_work]')}).locator('button[type=submit]').click();
   await expect(page.locator('[data-sync-message]')).toContainText('Buchung lokal gespeichert. Anzeige konnte nicht aktualisiert werden');
   await count(page,1);await page.reload();await count(page,1);
-  await context.setOffline(false);await count(page,0);
+  await context.setOffline(false);await waitForRecoveredSync(page);
 });

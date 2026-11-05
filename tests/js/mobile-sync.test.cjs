@@ -114,6 +114,74 @@ test('server 500 has persisted backoff; force retry preserves the same action ID
   assert.equal(await engine.run(true),true);assert.equal(attempts,2);store.close();
 });
 
+test('manual retry during an existing session request bypasses pending backoff',async () => {
+  const store=await fixture(),id=await store.enqueue('punch',{action:'end_work'});
+  await store.put('pendingActions',{...(await store.pending())[0],status:'retry',retryAt:Date.now()+60000});
+  let entered,release,sent=0;
+  const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  const engine=new SyncEngine(store,{fetch:async(url,options)=>{
+    if(url.endsWith('/session')){entered();await gate;return json(session);}
+    sent++;
+    const body=JSON.parse(options.body);
+    assert.equal(body.client_action_id,id);
+    return json({protocol:1,received:true,owner_id:7,client_action_id:id,receipt_id:1,status:'applied'});
+  }});
+  try{
+    const automatic=engine.run();await started;
+    const manual=engine.run(true);release();
+    assert.equal(await automatic,true);
+    assert.equal(await manual,true);
+    assert.equal(sent,1);assert.equal((await store.pending()).length,0);
+  }finally{release();store.close();}
+});
+
+test('manual retry during a snapshot is retained by the follow-up run',{timeout:5000},async () => {
+  const store=await fixture();
+  let entered,release,acknowledged,sent=0;
+  const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  const saved=new Promise(resolve=>acknowledged=resolve);
+  const engine=new SyncEngine(store,{
+    snapshot:async()=>{entered();await gate;},
+    fetch:goodTransport(body=>{
+      sent++;acknowledged();
+      return {protocol:1,received:true,owner_id:7,client_action_id:body.client_action_id,receipt_id:1,status:'applied'};
+    }),
+  });
+  try{
+    const automatic=engine.run();await started;
+    const id=await store.enqueue('punch',{action:'end_work'});
+    await store.put('pendingActions',{...(await store.pending())[0],status:'retry',retryAt:Date.now()+60000});
+    engine.run(true);release();await automatic;
+    await saved;await engine.running;
+    assert.equal(sent,1);assert.equal((await store.pending()).length,0);
+    assert.equal((await store.get('mobileData',`receipt:${id}`)).receipt.client_action_id,id);
+  }finally{release();store.close();}
+});
+
+test('manual retry while the previous run releases its lease is retained',{timeout:5000},async () => {
+  const store=await fixture(),id=await store.enqueue('punch',{action:'end_work'});
+  await store.put('pendingActions',{...(await store.pending())[0],status:'retry',retryAt:Date.now()+60000});
+  let entered,release,acknowledged,sent=0,hold=true;
+  const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  const saved=new Promise(resolve=>acknowledged=resolve),lease=store.lease.bind(store);
+  store.lease=async(owner,releasing=false)=>{
+    if(releasing&&hold){hold=false;entered();await gate;}
+    return lease(owner,releasing);
+  };
+  const engine=new SyncEngine(store,{fetch:goodTransport(body=>{
+    sent++;acknowledged();
+    return {protocol:1,received:true,owner_id:7,client_action_id:body.client_action_id,receipt_id:1,status:'applied'};
+  })});
+  try{
+    const automatic=engine.run();await started;
+    engine.run(true);assert.equal(sent,0);release();
+    assert.equal(await automatic,false);
+    await saved;await engine.running;
+    assert.equal(sent,1);assert.equal((await store.pending()).length,0);
+    assert.equal((await store.get('mobileData',`receipt:${id}`)).receipt.client_action_id,id);
+  }finally{release();store.close();}
+});
+
 test('HTML, retryable conflicts and blocked dependency chain never appear synced',async () => {
   const store=await fixture();await store.enqueue('punch',{action:'start_work'});await store.enqueue('punch',{action:'end_work'});
   let sent=0;

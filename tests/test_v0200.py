@@ -52,7 +52,7 @@ def _entry(main, day, start, end):
 
 
 def test_version(main):
-    assert main.APP_VERSION == "0.22.1"
+    assert main.APP_VERSION == "0.22.2"
 
 
 def test_night_work_over_eight_hours_is_flagged(main):

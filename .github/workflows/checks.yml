@@ -2,8 +2,8 @@ name: Tests and container validation
 
 on:
   pull_request:
-  push:
-    branches: ['version-*']
+  # Every PR update is checked here; publication calls the same complete suite.
+  # A second branch-push run would cancel its identical PR run (or vice versa).
   workflow_call:
 
 permissions:
