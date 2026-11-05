@@ -3,10 +3,15 @@ body.is-mobile .page { padding: 0; }
 .pwa-interface {
     max-width: 48rem;
     margin-inline: auto;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
     gap: var(--space-4);
     padding: calc(var(--space-6) + env(safe-area-inset-top, 0px)) calc(var(--space-4) + env(safe-area-inset-right, 0px)) calc(6rem + env(safe-area-inset-bottom, 0px)) calc(var(--space-4) + env(safe-area-inset-left, 0px));
 }
 .pwa-interface *, .pwa-interface .mobile-panels, .pwa-interface .mobile-card { min-inline-size: 0; }
+.pwa-interface .mobile-panel { padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .pwa-interface .mobile-dashboard__header { padding: var(--space-2) 0; border: 0; background: transparent; box-shadow: none; flex-wrap: wrap; gap: var(--space-4); }
 .pwa-interface .mobile-dashboard__title { font-size: clamp(1.65rem, 6vw, 2.2rem); letter-spacing: -.035em; line-height: 1.15; }
 .pwa-interface .mobile-eyebrow { margin: 0 0 var(--space-2); font-size: .75rem; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); }
@@ -40,6 +45,8 @@ body.is-mobile .page { padding: 0; }
 .pwa-interface[data-work-state="pause"] .mobile-stamp-card { border-top-color: var(--warning); }
 .pwa-interface .mobile-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); align-items: end; }
 .pwa-interface .mobile-action-grid form { gap: var(--space-3); }
+.pwa-interface .location-toggle__face { flex-wrap: wrap; white-space: normal; gap: var(--space-1) var(--space-2); }
+.pwa-interface .location-toggle__caption, .pwa-interface .location-toggle__value { flex-shrink: 0; }
 .pwa-interface .mobile-button, .pwa-interface .mobile-link-button { min-height: 44px; font-size: .875rem; line-height: 1.5; padding: var(--space-3) var(--space-4); }
 .pwa-interface .mobile-button.primary { background: var(--brand); color: var(--brand-contrast); }
 .pwa-interface .mobile-button.danger { background: var(--danger-soft); color: var(--danger); }
@@ -54,7 +61,16 @@ body.is-mobile .page { padding: 0; }
 .pwa-interface .mobile-signout { align-self: start; padding-inline: 0; color: var(--text-muted); }
 .pwa-interface .mobile-preference-form { display: grid; gap: var(--space-3); }
 .pwa-interface .mobile-preference-form label { font-size: .9rem; font-weight: 600; }
-.pwa-interface input:not([type="checkbox"]):not([type="hidden"]), .pwa-interface select, .pwa-interface textarea { min-height: 44px; max-width: 100%; font-size: 1rem; }
+.pwa-interface input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), .pwa-interface select, .pwa-interface textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; max-width: 100%; font-size: 1rem; }
+/* iOS date controls otherwise retain a native intrinsic width, especially
+   after a date is selected. Keep the native picker with a sized CSS field. */
+.pwa-interface input:is([type="date"], [type="time"], [type="datetime-local"]) { -webkit-appearance: none; appearance: none; }
+.pwa-interface input::-webkit-date-and-time-value { text-align: start; }
+.pwa-interface .mobile-form { grid-template-columns: minmax(0, 1fr); }
+.pwa-interface .mobile-form label.mobile-checkbox { flex-direction: row; align-items: flex-start; }
+.pwa-interface .mobile-form input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+.pwa-interface .mobile-form__actions { flex-wrap: wrap; }
+.pwa-interface .mobile-form__actions .mobile-button { width: 100%; }
 .pwa-interface input[type="file"] { font-size: .8rem; }
 .pwa-interface .form-hint { margin: 0; line-height: 1.6; font-size: .8rem; }
 .pwa-interface #mobile-preference-feedback:empty { display: none; }

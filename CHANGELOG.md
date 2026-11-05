@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.22.3] – 2026-11-05
+
+### Geändert
+- In der PWA steht die Synchronisationsbox mit „Jetzt abgleichen“ und
+  „Details & Sicherung“ unter dem aktiven Seiteninhalt. Die Stempelaktionen
+  erscheinen direkt nach der Überschrift, auch beim Offline-Start.
+- „Details & Sicherung“ öffnet die Synchronisationsdetails im Bereich „Mehr“
+  und setzt den Tastaturfokus auf deren Überschrift.
+
+### Fehlerbehebungen
+- Datumsfelder verwenden in der PWA eine begrenzte CSS-Breite statt der
+  intrinsischen iOS-Darstellung. Die native Datumsauswahl bleibt verfügbar.
+- Formularspalten, Auswahl- und Textfelder bleiben innerhalb ihrer Karten.
+  Die Überstunden-Checkbox im Urlaubsantrag erhält ihre normale Breite;
+  Beschriftung und Absenden-Schaltfläche passen auch auf schmale Geräte.
+- Online- und Offline-Urlaubsformular verwenden dieselbe Aktionsanordnung.
+- Zusätzliche Rahmen und Innenabstände um die PWA-Karten entfallen. Das gibt
+  Formularen mehr Platz; „Vor Ort / Remote“ kann ohne Textüberlappung umbrechen.
+- Browserprüfungen kontrollieren zusätzlich die Grenzen einzelner Felder
+  innerhalb ihrer Labels, Formulare und Karten sowie ausgefüllte PWA-Formulare.
+
+### Datenbankänderungen und Migration
+- Keine Schemaänderung; Schema 26 bleibt bestehen. Buchungen, Berechtigungen,
+  Zeitberechnung und gespeicherte Synchronisationsdaten bleiben unverändert.
+- Versionierte Assets übernehmen die Änderung nach dem regulären PWA-Update;
+  eine Neuinstallation oder Löschung lokaler Daten ist nicht erforderlich.
+
 ## [0.22.2] – 2026-11-05
 
 ### Fehlerbehebungen

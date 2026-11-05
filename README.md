@@ -2,7 +2,13 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.22.2`
+**Version:** `0.22.3`
+
+> Seit 0.22.3: **Stempeln steht in der PWA vor der Synchronisationsanzeige.**
+> „Jetzt abgleichen“ und „Details & Sicherung“ stehen unter dem Seiteninhalt.
+> Die Datumsfelder im Urlaubsantrag sind für iOS begrenzt; Formularfelder,
+> Auftragsdialog und Einstellungen werden auch auf schmalen Geräten geprüft.
+> [Release Notes](docs/RELEASE_NOTES_0.22.3.md).
 
 > Seit 0.22.2: **Erneute Sync-Anforderungen bleiben während eines laufenden
 > Abgleichs erhalten.** Manuelles Wiederholen und Wiederverbindung übernehmen
@@ -462,13 +468,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.22.2 .
+docker build -t erfassung:0.22.3 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.22.2
+  erfassung:0.22.3
 ```
 
 ## GHCR & GitHub Actions
@@ -483,20 +489,20 @@ ohne Pull Request wird nicht gestartet.
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.22.2`)
+- Push von Tags `v*` (z. B. `v0.22.3`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.22.2`)
+- Versions-Tag aus `VERSION` (hier `0.22.3`)
 - `latest` auf `main`
-- Git-Tag (`v0.22.2`)
+- Git-Tag (`v0.22.3`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/joni123467/erfassung:0.22.2`
+`ghcr.io/joni123467/erfassung:0.22.3`
 
 Bei einem eigenen Fork `joni123467` durch dessen GitHub-Owner ersetzen.
 Das versionierte Image ist erst nach erfolgreichem Veröffentlichungsworkflow
@@ -512,7 +518,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.2
+    image: ghcr.io/joni123467/erfassung:0.22.3
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -1746,7 +1752,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.2
+    image: ghcr.io/joni123467/erfassung:0.22.3
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -1781,7 +1787,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.2
+    image: ghcr.io/joni123467/erfassung:0.22.3
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -1817,7 +1823,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.2
+    image: ghcr.io/joni123467/erfassung:0.22.3
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -1853,7 +1859,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.2
+    image: ghcr.io/joni123467/erfassung:0.22.3
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -1937,8 +1943,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- Bei eigenen Forks den Owner im Image-Namen (`ghcr.io/joni123467/erfassung:0.22.2`)
-- optional Image-Name/Tag (`erfassung`, `0.22.2`, `latest`)
+- Bei eigenen Forks den Owner im Image-Namen (`ghcr.io/joni123467/erfassung:0.22.3`)
+- optional Image-Name/Tag (`erfassung`, `0.22.3`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

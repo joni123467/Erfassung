@@ -141,8 +141,8 @@ def _picker(html: str) -> str:
 
 
 def test_version_is_0201(client):
-    assert client.app.version == "0.22.2"
-    assert client.get("/health").json()["version"] == "0.22.2"
+    assert client.app.version == "0.22.3"
+    assert client.get("/health").json()["version"] == "0.22.3"
 
 
 # ── 1. „Remote" steht wieder zur Wahl ─────────────────────────────────────

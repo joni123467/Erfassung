@@ -117,8 +117,8 @@ def _admin_id(client) -> int:
 # --- version -----------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.22.2"
-    assert client.get("/health").json()["version"] == "0.22.2"
+    assert client.main.APP_VERSION == "0.22.3"
+    assert client.get("/health").json()["version"] == "0.22.3"
 
 
 # --- start_company: company_name fallback (mobile search fix) -----------------

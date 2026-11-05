@@ -199,8 +199,8 @@ def dept(client):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.22.2"
-    assert client.get("/health").json()["version"] == "0.22.2"
+    assert client.main.APP_VERSION == "0.22.3"
+    assert client.get("/health").json()["version"] == "0.22.3"
 
 
 # --- Teil 1: Administrationszugang für Abteilungsadmins --------------------------
