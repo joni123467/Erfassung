@@ -173,7 +173,8 @@
   class SyncEngine {
     constructor(store, { fetch: fetcher = root.fetch.bind(root), notify = () => {}, snapshot = async () => {} } = {}) {
       this.store = store; this.fetcher = fetcher; this.notify = notify; this.snapshot = snapshot;
-      this.running = null; this.requested = false; this.leaseId = root.crypto.randomUUID();
+      this.running = null; this.requested = false; this.forceRequested = false;
+      this.leaseId = root.crypto.randomUUID();
     }
     async request(url, options = {}, timeout = 10000) {
       const controller = new AbortController();
@@ -201,10 +202,18 @@
       return session;
     }
     run(force = false) {
-      if (this.running) { this.requested = true; return this.running; }
+      if (this.running) {
+        this.requested = true;
+        this.forceRequested ||= force;
+        return this.running;
+      }
       this.running = this.drain(force).finally(() => {
         this.running = null;
-        if (this.requested) { this.requested = false; setTimeout(() => this.run(), 0); }
+        if (this.requested) {
+          const nextForce = this.forceRequested;
+          this.requested = false; this.forceRequested = false;
+          setTimeout(() => this.run(nextForce), 0);
+        }
       });
       return this.running;
     }
@@ -222,9 +231,16 @@
         this.notify('syncing', 'Buchungen werden abgeglichen …');
         const session = await this.connect();
         do {
+          // A manual/reconnect request can arrive while connect() is pending.
+          // Preserve its backoff override when coalescing it into this run.
+          force ||= this.forceRequested;
+          this.forceRequested = false;
           this.requested = false;
           const pending = await this.store.pending();
           for (const entry of pending) {
+            // pending() and each request above are asynchronous too.
+            force ||= this.forceRequested;
+            this.forceRequested = false;
             if (entry.retryAt > Date.now() && !force) {
               report(entry.status === 'conflict' ? 'conflict' : entry.status === 'auth' ? 'auth' : 'queue',
                 entry.status === 'conflict' ? 'Buchung wartet auf Freigabe; Original bleibt erhalten.' : entry.message || 'Erneuter Versuch folgt automatisch.');

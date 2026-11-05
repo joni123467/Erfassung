@@ -1,4 +1,5 @@
 const {test: base, expect} = require('@playwright/test');
+const {RECOVERY_TEST_TIMEOUT,waitForRecoveredSync}=require('./sync-recovery.cjs');
 const {execFileSync} = require('node:child_process');
 const {randomUUID} = require('node:crypto');
 
@@ -217,6 +218,7 @@ test('PWA order and pause controls persist a real server booking and respect com
 });
 
 test('all original PWA areas and settings remain reachable in the offline shell', async ({page, context, accounts}) => {
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
   await page.setViewportSize({width:390, height:844});
   await login(page, accounts);
   await mobile(page);
@@ -243,7 +245,7 @@ test('all original PWA areas and settings remain reachable in the offline shell'
     try { return (await store.pending()).length; } finally { store.close(); }
   })).toBe(1);
   await context.setOffline(false);
-  await expect(page.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+  await waitForRecoveredSync(page);
   await expect.poll(async () => (await snapshot(page)).active_entry).toBeTruthy();
 });
 

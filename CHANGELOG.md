@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.22.2] – 2026-11-05
+
+### Fehlerbehebungen
+- Trifft manuelles Wiederholen oder eine Wiederverbindung während eines
+  laufenden Abgleichs ein, bleibt die Aufforderung zum sofortigen Versuch
+  erhalten. Sie wirkt im aktuellen Durchlauf oder dessen Folgelauf, auch
+  während Sitzungsabfrage, Übersichtsladen und Freigabe der Synchronisationssperre.
+- Browserprüfungen für Neuladen, erneute Anmeldung und Prozessneustart
+  berücksichtigen die vorhandene 30-Sekunden-Sperre und das
+  15-Sekunden-Wiederholungsintervall. Die bisherigen zwölf Sekunden waren
+  dafür zu kurz und konnten die Image-Veröffentlichung zufällig blockieren.
+
+### Geändert
+- Ein deterministischer Browsertest hinterlässt gezielt eine verwaiste Sperre
+  und prüft die automatische Übertragung ohne manuellen Hilfsklick: genau eine
+  geschlossene Buchung und zwei zugeordnete Empfangsbestätigungen.
+- Gemeinsame Wiederanlaufprüfung mit Warteschlangen-/Sperrdiagnose bei Fehlern;
+  normale Online-Prüfungen behalten ihre kurzen Zeitlimits. Keine globalen
+  Testwiederholungen oder ausgelassenen Prüfungen.
+- Drei gezielte JavaScript-Regressionen prüfen die erneute Anforderung während
+  einer laufenden Sitzungsabfrage, des Übersichtsladens und der Sperrfreigabe.
+- Docker- und Portainer-Beispiele verwenden Version 0.22.2.
+- GitHub prüft jeden Pull Request und dessen weitere Commits sowie weiterhin
+  jede Image-Veröffentlichung. Der doppelte Branch-Push-Lauf entfällt, damit
+  sich identische Prüfläufe nicht gegenseitig abbrechen.
+
+### Datenbankänderungen und Migration
+- Keine Schemaänderung; Schema 26 bleibt bestehen. Outboxformat,
+  Kontozuordnung, Empfangsbestätigungen und Sperrlaufzeiten bleiben erhalten.
+- Das neue Image entsteht erst nach Merge und erfolgreichem
+  Veröffentlichungsworkflow auf `main`.
+
 ## [0.22.1] – 2026-11-05
 
 ### Fehlerbehebungen
