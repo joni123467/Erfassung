@@ -481,7 +481,7 @@
         <input type="hidden" name="next_url" value="/dashboard">
         <label>
             Datum
-            <input type="date" name="work_date" value="{{ now().strftime('%Y-%m-%d') }}" required>
+            <input type="date" name="work_date" value="{{ today.isoformat() }}" required>
         </label>
         <label>
             Startzeit

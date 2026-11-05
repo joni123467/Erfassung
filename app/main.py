@@ -962,15 +962,20 @@ def _build_redirect_with_next(
     return base_path
 
 
+def _business_today() -> date:
+    """Dasselbe Betriebsdatum wie beim Stempeln, auch auf einem UTC-Server."""
+    return datetime.now(worktime.zone()).date()
+
+
 def _resolve_month_period(month_param: Optional[str]) -> tuple[date, date, date]:
     try:
         if month_param:
             year, month = map(int, month_param.split("-"))
             selected_month = date(year, month, 1)
         else:
-            selected_month = date.today().replace(day=1)
+            selected_month = _business_today().replace(day=1)
     except ValueError:
-        selected_month = date.today().replace(day=1)
+        selected_month = _business_today().replace(day=1)
     last_day = monthrange(selected_month.year, selected_month.month)[1]
     start_date = selected_month
     end_date = date(selected_month.year, selected_month.month, last_day)
@@ -1001,7 +1006,7 @@ def _format_week_value(moment: date) -> str:
 
 
 def _resolve_week_period(week_param: Optional[str]) -> tuple[date, date]:
-    today = date.today()
+    today = _business_today()
     if week_param:
         try:
             start = datetime.strptime(f"{week_param}-1", "%G-W%V-%u").date()
@@ -1023,7 +1028,7 @@ def _parse_date_param(value: Optional[str]) -> Optional[date]:
 
 
 def _resolve_range_period(start_param: Optional[str], end_param: Optional[str]) -> tuple[date, date]:
-    today = date.today()
+    today = _business_today()
     start = _parse_date_param(start_param) or today.replace(day=1)
     end = _parse_date_param(end_param) or start
     if end < start:
@@ -1985,7 +1990,7 @@ def _build_weekly_overview(
     reference_date: date,
     today: Optional[date] = None,
 ) -> dict[str, object]:
-    reference_today = today or date.today()
+    reference_today = today or _business_today()
     week_start = reference_date - timedelta(days=reference_date.weekday())
     week_end = week_start + timedelta(days=6)
     weekly_entries = crud.get_time_entries_for_user(db, user.id, start=week_start, end=week_end)
@@ -2097,13 +2102,13 @@ def _build_weekly_overview(
 
 
 def _build_dashboard_context(db: Session, user: models.User):
-    today = date.today()
+    today = _business_today()
     reference_month = today
     metrics = services.calculate_dashboard_metrics(db, user.id, reference_month)
     active_entry = crud.get_open_time_entry(db, user.id)
     holiday_region = crud.get_default_holiday_region(db)
     holiday_region_label = holiday_calculator.GERMAN_STATES.get(holiday_region, holiday_region)
-    holidays = crud.get_holidays_for_year(db, date.today().year, holiday_region)
+    holidays = crud.get_holidays_for_year(db, today.year, holiday_region)
     # Ohne den Baustein „orders" gibt es nichts zum Anstempeln: Ohne Firmenliste
     # und ohne Anlegeerlaubnis blenden Dashboard und Mobilansicht den ganzen
     # Auftragsteil von selbst aus (``{% if companies or can_create_companies %}``).
@@ -2487,7 +2492,7 @@ def mobile_sync_data(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
 
-    today = date.today()
+    today = _business_today()
     since_date = today - timedelta(days=days)
     until_date = today + timedelta(days=days)
 

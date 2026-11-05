@@ -5,6 +5,7 @@ import base64
 from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import pytest
 from PIL import Image
@@ -135,7 +136,7 @@ def test_dashboard_navigation_is_temporary_and_does_not_move_the_active_day(clie
     _login(client)
     from app import database, models
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Europe/Berlin")).date()
     reference = today - timedelta(days=14)
     with database.SessionLocal() as db:
         user = db.get(models.User, 1)
