@@ -1027,6 +1027,12 @@ function registerTabHandling() {
   }));
   document.querySelectorAll('[data-mobile-open]').forEach(link => link.addEventListener('click', event => {
     event.preventDefault(); activate(link.dataset.mobileOpen);
+    if (link.hasAttribute('data-sync-details')) {
+      const details = document.querySelector('#sync-status details');
+      details.open = true;
+      details.querySelector('summary').focus({ preventScroll: true });
+      details.scrollIntoView({ block: 'nearest' });
+    }
   }));
   const primaryTabs = tabs.filter(tab => tab.closest('.mobile-bottom-nav'));
   primaryTabs.forEach((tab, index) => tab.addEventListener('keydown', event => {
@@ -1772,7 +1778,7 @@ function installSyncPanel() {
       <button type="button" class="button small" data-sync-retry>Jetzt abgleichen</button>
       <a href="/login" class="button small" data-sync-login hidden>Erneut anmelden</a>
       <button type="button" class="button small" id="sync-update" hidden>Update verfügbar · jetzt laden</button>
-      <a href="#einstellungen" class="button ghost small" data-mobile-open="einstellungen">Details &amp; Sicherung</a>
+      <a href="#einstellungen" class="button ghost small" data-mobile-open="einstellungen" data-sync-details>Details &amp; Sicherung</a>
     </div>
     <details><summary>Buchungen und Synchronisationsdetails</summary>
       <p data-sync-owner></p><p data-sync-count></p><p data-sync-last></p>
@@ -1785,7 +1791,8 @@ function installSyncPanel() {
       <p class="muted">Ausstehende Buchungen bleiben bis zur Bestätigung erhalten. Bei Problemen die App nicht löschen.
       Safari/iOS kann Website-Daten entfernen; die Sicherung enthält deine lokalen Buchungen.</p>
     </details>`;
-  container.querySelector('header')?.after(panel);
+  // Keep stamping and the active tab first in both online and offline shells.
+  container.append(panel);
   panel.querySelector('[data-sync-retry]').addEventListener('click', () => performReconnectSync('manual'));
   panel.querySelector('details').addEventListener('toggle', () => renderSyncDetails().catch(error => dispatchSyncStatus(error.message, 'storage')));
   panel.querySelector('[data-sync-export]').addEventListener('click', async () => {

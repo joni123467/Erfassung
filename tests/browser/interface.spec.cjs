@@ -51,15 +51,31 @@ async function assertFits(page) {
       const style = getComputedStyle(element), rect = element.getBoundingClientRect();
       return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
     };
-    const selectors = '.page,.mobile-dashboard,.mobile-panel,.card,.modal[aria-hidden="false"] .modal__dialog,.management-interface';
+    const selectors = '.page,.mobile-dashboard,.mobile-panel,.mobile-card,.card,.modal[aria-hidden="false"] .modal__dialog,.management-interface';
     const inner = [...document.querySelectorAll(selectors)].filter(visible).filter(element =>
       element.scrollWidth > element.clientWidth + 2 || element.getBoundingClientRect().right > innerWidth + 2
     ).map(element => ({tag: element.tagName, id: element.id, classes: element.className,
       width: element.clientWidth, content: element.scrollWidth, right: element.getBoundingClientRect().right}));
-    return {route: location.pathname, document: document.documentElement.scrollWidth, viewport: innerWidth, inner};
+    const fields = [...document.querySelectorAll('input:not([type=checkbox]):not([type=radio]),select,textarea')]
+      .filter(visible).flatMap(field => {
+        const rect = field.getBoundingClientRect();
+        // Check the actual control against its label, form and card, including
+        // padding. Document overflow alone misses a field protruding into a card.
+        const containers = [field.closest('label'), field.closest('form'), field.closest('.mobile-card,.card,.modal__dialog')];
+        return [...new Set(containers)].filter(element => element && visible(element)).flatMap(element => {
+          const bounds = element.getBoundingClientRect(), style = getComputedStyle(element);
+          const left = bounds.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+          const right = bounds.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+          return rect.left < left - 2 || rect.right > right + 2
+            ? [{field: field.name || field.id || field.type, container: element.className || element.tagName,
+              left: rect.left, right: rect.right, allowedLeft: left, allowedRight: right}] : [];
+        });
+      });
+    return {route: location.pathname, document: document.documentElement.scrollWidth, viewport: innerWidth, inner, fields};
   });
   expect(result.document, JSON.stringify(result)).toBeLessThanOrEqual(result.viewport + 1);
   expect(result.inner, JSON.stringify(result)).toEqual([]);
+  expect(result.fields, JSON.stringify(result)).toEqual([]);
 }
 async function openTab(page, tab) {
   await page.locator(`[data-tab="${tab}"]`).filter({visible: true}).first().click();
@@ -348,5 +364,92 @@ test('long names and original forms fit phone, tablet and landscape without hidd
     await expect(page.locator('#mobile-order-modal')).toHaveAttribute('aria-hidden', 'false');
     await assertFits(page);
     await page.locator('#mobile-order-modal button[data-close]').first().click();
+  }
+});
+
+test.describe('German PWA layouts', () => {
+  test.use({locale: 'de-DE'});
+  for (const offline of [false, true]) {
+    test(`PWA stamping precedes sync and filled forms stay inside their cards (${offline ? 'offline' : 'online'})`, async ({page, context, accounts}, testInfo) => {
+      test.setTimeout(120000);
+      page.setDefaultTimeout(12000);
+      await page.setViewportSize({width:390, height:844});
+      await login(page, accounts);
+      await mobile(page);
+      const sync = page.locator('#sync-status');
+      const stamp = page.locator('.mobile-stamp-card');
+      const start = punch(page, 'start_work', '#mobile-panel-buchung');
+      const startBounds = await start.boundingBox();
+      expect(startBounds.y + startBounds.height).toBeLessThan((await page.locator('.mobile-bottom-nav').boundingBox()).y);
+      expect((await sync.boundingBox()).y).toBeGreaterThanOrEqual((await stamp.boundingBox()).y + (await stamp.boundingBox()).height);
+      await capture(page, testInfo, 'pwa-stamping-first');
+      await start.click();
+      await waitForRecoveredSync(page);
+      if (offline) {
+        await context.setOffline(true);
+        await page.reload();
+        await expect(page.locator('[data-offline-shell]')).toBeVisible();
+        await expect(page.locator('[data-sync-label]')).toHaveText('Offline');
+      }
+      // Finish the confirmed booking in this shell so its optional notes dialog
+      // can be checked alongside the other forms, including while offline.
+      await punch(page, 'end_work', '#mobile-panel-buchung').click();
+      await expect(page.locator('#mobile-notes-modal')).toHaveAttribute('aria-hidden', 'false');
+      await page.locator('#mobile-notes-modal button[data-close]').first().click();
+      if (!offline) await waitForRecoveredSync(page);
+      await start.click();
+      await expect(punch(page, 'start_break', '#mobile-panel-buchung')).toBeVisible();
+      for (const viewport of [{width:320,height:720},{width:390,height:844},{width:768,height:1024},{width:844,height:390}]) {
+        await page.setViewportSize(viewport);
+        await openTab(page, 'buchung');
+        expect((await sync.boundingBox()).y).toBeGreaterThanOrEqual((await stamp.boundingBox()).y + (await stamp.boundingBox()).height);
+        await assertFits(page);
+        for (const dialogId of ['mobile-order-modal', 'mobile-notes-modal']) {
+          await page.locator(`[data-open="${dialogId}"]`).filter({visible:true}).first().click();
+          const dialog = page.locator(`#${dialogId}`);
+          await expect(dialog).toHaveAttribute('aria-hidden', 'false');
+          if (dialogId === 'mobile-order-modal') {
+            await dialog.locator('[name=company_id]').selectOption(String(accounts.company.id));
+            await dialog.locator('[name=new_company_name]').fill('Eine-lange-optionale-Firmenbezeichnung-für-den-Auftrag');
+          }
+          await dialog.locator('[name=notes]').fill('Ausführliche Notiz für die Prüfung auf schmalen Bildschirmen.');
+          await assertFits(page);
+          if (viewport.width === 390) await capture(page, testInfo, dialogId);
+          await dialog.locator('button[data-close]').first().click();
+        }
+        await openTab(page, 'urlaub');
+        const vacation = page.locator('form[data-offline=vacation]');
+        for (const date of ['start_date', 'end_date']) await vacation.locator(`[name=${date}]`).fill('2030-12-30');
+        await vacation.locator('[name=comment]').fill('Urlaubsplanung-mit-einem-langen-Kommentar-ohne-Leerzeichen');
+        await vacation.locator('[name=use_overtime]').check();
+        expect((await vacation.locator('[name=use_overtime]').boundingBox()).width).toBeLessThan(32);
+        await assertFits(page);
+        if (viewport.width === 390) await capture(page, testInfo, 'pwa-vacation-filled', true);
+        await openTab(page, 'uebersicht');
+        await assertFits(page);
+        await page.locator('[data-sync-details]').click();
+        await expect(page.locator('#mobile-panel-einstellungen')).toBeVisible();
+        await expect(sync.locator('details')).toHaveAttribute('open', '');
+        await expect(sync.locator('summary')).toBeFocused();
+        await expect(sync.locator('[data-sync-export]')).toBeVisible();
+        await expect(sync.locator('[data-sync-import]')).toBeVisible();
+        await assertFits(page);
+        if (viewport.width === 390) {
+          await capture(page, testInfo, 'pwa-sync-details');
+          await page.locator('[data-theme-toggle]').click();
+          await openTab(page, 'urlaub');
+          await assertFits(page);
+          await capture(page, testInfo, 'pwa-vacation-dark', true);
+          await openTab(page, 'einstellungen');
+          await page.locator('[data-theme-toggle]').click();
+        }
+        await openTab(page, 'salden');
+        await assertFits(page);
+      }
+      if (!offline) {
+        await sync.locator('[data-sync-retry]').click();
+        await expect(sync.locator('[data-sync-label]')).toHaveText('Synchronisiert');
+      }
+    });
   }
 });
