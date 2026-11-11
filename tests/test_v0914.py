@@ -17,8 +17,6 @@ from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
-import licensed_env
-
 
 def _fresh_app(tmp_path, monkeypatch, env: dict | None = None):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -35,7 +33,6 @@ def _fresh_app(tmp_path, monkeypatch, env: dict | None = None):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -142,8 +139,8 @@ def _entries_for(user_id: int):
 # --- version -------------------------------------------------------------------
 
 def test_version(client):
-    assert client.main.APP_VERSION == "0.22.4"
-    assert client.get("/health").json()["version"] == "0.22.4"
+    assert client.main.APP_VERSION == "0.23.0"
+    assert client.get("/health").json()["version"] == "0.23.0"
 
 
 # --- split behaviour --------------------------------------------------------------

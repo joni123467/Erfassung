@@ -1,4 +1,4 @@
-"""Tests für 0.11.1 – Freigaben, halbe Urlaubstage, Lizenzanfrage.
+"""Tests für 0.11.1 – Freigaben und halbe Urlaubstage.
 
 **Freigaben (Regression).** Beim Umstieg auf Rollen (0.10.0) blieben an drei
 Stellen die alten Gruppenrechte-Namen stehen
@@ -10,8 +10,6 @@ Superadministrators.
 **Halbe Urlaubstage.** Erster und letzter Tag eines Antrags lassen sich
 halbieren; ein eintägiger Antrag braucht nur ein Kennzeichen.
 
-**Lizenzanfrage.** Ein Knopf führt zum Lizenzserver und nimmt die Angaben mit,
-die der Herausgeber braucht – ohne Geheimnisse.
 """
 
 from __future__ import annotations
@@ -19,11 +17,8 @@ from __future__ import annotations
 import re
 import sys
 from datetime import date, time, timedelta
-from urllib.parse import parse_qs, urlparse
 
 import pytest
-
-import licensed_env
 
 
 def _fresh_app(tmp_path, monkeypatch):
@@ -40,7 +35,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
 
     return main
 
@@ -505,58 +499,3 @@ def test_half_days_appear_in_the_list(client):
 
     _login(client)
     assert "½" in client.get("/records/vacations").text
-
-
-# --- Lizenz beantragen -----------------------------------------------------
-
-def test_license_page_offers_a_request_link(client):
-    _login(client)
-    page = client.get("/admin/system/license")
-    assert page.status_code == 200
-    assert "Lizenz beantragen" in page.text
-    assert "lic.dh-cloud.de" in page.text
-
-
-def test_request_url_carries_context_but_no_secrets(client, main):
-    from app import database, licensing
-
-    db = database.SessionLocal()
-    try:
-        url = licensing.license_request_url(db)
-    finally:
-        db.close()
-
-    parsed = urlparse(url)
-    assert parsed.scheme == "https"
-    assert parsed.netloc == "lic.dh-cloud.de"
-    assert parsed.path == "/request"
-
-    query = parse_qs(parsed.query)
-    assert query["product_id"] == ["erfassung"]
-    assert query["deployment_id"][0].startswith("erfassung-")
-    assert query["users_in_use"][0].isdigit()
-    assert query["app_version"] == [main.APP_VERSION]
-    # Nichts Geheimes und nichts Personenbezogenes.
-    for forbidden in ("activation_key", "signature", "username", "email"):
-        assert forbidden not in parsed.query
-
-
-def test_request_url_uses_the_configured_server(client):
-    from app import database, licensing
-
-    config = licensing.load_config()
-    config.server_url = "https://lizenz.intern.example"
-    licensing.save_config(config)
-
-    db = database.SessionLocal()
-    try:
-        url = licensing.license_request_url(db)
-    finally:
-        db.close()
-    assert url.startswith("https://lizenz.intern.example/request?")
-
-
-def test_activation_form_is_prefilled_with_the_default_server(client):
-    _login(client)
-    page = client.get("/admin/system/license")
-    assert 'value="https://lic.dh-cloud.de"' in page.text

@@ -23,8 +23,6 @@ from datetime import date, datetime, time, timedelta
 
 import pytest
 
-import licensed_env
-
 
 def _fresh_app(tmp_path, monkeypatch):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -40,7 +38,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -169,8 +166,8 @@ def _entry(*, work_date: date, start: time, end: time, user_id: int | None = Non
 
 
 def test_version_is_0141(client):
-    assert client.app.version == "0.22.4"
-    assert client.get("/health").json()["version"] == "0.22.4"
+    assert client.app.version == "0.23.0"
+    assert client.get("/health").json()["version"] == "0.23.0"
 
 
 # ── Einsatzort hängt nicht am Remote-Kennzeichen ──────────────────────────

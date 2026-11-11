@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.23.0] – 2026-11-11
+
+### Hinzugefügt
+- Keine neuen Fachfunktionen; vorhandene Funktionen benötigen keine Aktivierung mehr.
+
+### Geändert
+- Lizenzierung vollständig entfernt: keine Aktivierung, Signaturprüfung,
+  Lizenzverwaltung, Lizenz-API, Funktionsbausteinsperren oder Benutzerlimits.
+- Lizenzserver-Anbindung und regelmäßige Hintergrundprüfungen entfernt.
+  Aufträge, Standorte, Urlaub, Auswertungen, Terminals und Kalenderfeeds sind
+  auf Web und PWA gemäß den bestehenden Rollenrechten verfügbar.
+- Lizenz-Logging und zugehörige Einstellungen entfernt. Tests arbeiten ohne
+  Testlizenz; historische Lizenztests entfallen.
+- Versionsangaben und Container-Beispiele auf 0.23.0 angehoben.
+
+### Fehlerbehebungen
+- Fehlende, abgelaufene oder gesperrte Alt-Lizenzen verhindern keine
+  Benutzeranlage und keine mobilen Urlaubs- oder Auftragsbuchungen mehr.
+- Alte Backups spielen keine ausgedienten Lizenzschlüssel zurück.
+
+### Datenbankänderungen und Migration
+- Keine Schemaänderung; Schema 26 bleibt bestehen. Benutzer, Rollen,
+  Buchungen, Freigaben und ausstehende PWA-Ereignisse bleiben erhalten.
+- Vorhandene Lizenzdateien und alte Lizenz-Umgebungsvariablen werden ignoriert.
+  Der separate Lizenzserver kann nach Umstellung aller abhängigen Installationen
+  abgeschaltet werden; sein Deployment wird durch dieses Update nicht verändert.
+
 ## [0.22.4] – 2026-11-11
 
 ### Hinzugefügt

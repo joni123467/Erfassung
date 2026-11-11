@@ -7,8 +7,6 @@ from datetime import date, time
 
 import pytest
 
-import licensed_env
-
 
 @pytest.fixture()
 def main(tmp_path, monkeypatch):
@@ -24,7 +22,6 @@ def main(tmp_path, monkeypatch):
     for name in [name for name in sys.modules if name.startswith("app")]:
         del sys.modules[name]
     import app.main as module
-    licensed_env.activate()
     from fastapi.testclient import TestClient
     with TestClient(module.app):
         pass
@@ -52,7 +49,7 @@ def _entry(main, day, start, end):
 
 
 def test_version(main):
-    assert main.APP_VERSION == "0.22.4"
+    assert main.APP_VERSION == "0.23.0"
 
 
 def test_night_work_over_eight_hours_is_flagged(main):

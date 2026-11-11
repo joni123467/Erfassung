@@ -14,7 +14,7 @@
                 {{ entry.start_time.strftime('%H:%M') }}–{{ entry.end_time.strftime('%H:%M') }} Uhr
                 · {{ entry.user.full_name if entry.user else '–' }}
                 {% if entry.is_cancelled %}
-                    <span class="license-state license-state--invalid">storniert</span>
+                    <span class="status-badge status-badge--danger">storniert</span>
                 {% endif %}
             </p>
         </div>

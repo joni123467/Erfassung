@@ -3,7 +3,6 @@
 from datetime import date
 import sys
 import pytest
-import licensed_env
 
 
 @pytest.fixture()
@@ -17,7 +16,6 @@ def main(tmp_path, monkeypatch):
     for name in [name for name in sys.modules if name.startswith("app")]:
         del sys.modules[name]
     import app.main as module
-    licensed_env.activate()
     return module
 
 

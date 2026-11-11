@@ -31,7 +31,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import licensed_env
 
 ROOT = Path(__file__).resolve().parent.parent
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -52,7 +51,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -157,8 +155,8 @@ def _entry(day: date, start: time, end: time, *, user_id: int | None = None):
 
 
 def test_version_is_0207(client):
-    assert client.app.version == "0.22.4"
-    assert client.get("/health").json()["version"] == "0.22.4"
+    assert client.app.version == "0.23.0"
+    assert client.get("/health").json()["version"] == "0.23.0"
 
 
 # ── 1. Reiter des Urlaubsbereichs auf jeder Seite ─────────────────────────

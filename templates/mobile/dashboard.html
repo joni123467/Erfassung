@@ -49,9 +49,7 @@
 <nav class="mobile-tabs mobile-bottom-nav" role="tablist" aria-label="Meine Erfassung">
 <a href="#buchung" class="mobile-tab {% if tab == 'buchung' %}is-active{% endif %}" data-tab="buchung" id="mobile-tab-buchung" aria-controls="mobile-panel-buchung" aria-selected="{{ 'true' if tab == 'buchung' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Übersicht</span></a>
 <a href="#uebersicht" class="mobile-tab {% if tab == 'uebersicht' %}is-active{% endif %}" data-tab="uebersicht" id="mobile-tab-uebersicht" aria-controls="mobile-panel-uebersicht" aria-selected="{{ 'true' if tab == 'uebersicht' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v4m8-4v4M4 10h16"/><rect x="4" y="5" width="16" height="16" rx="2"/></svg><span>Meine Zeiten</span></a>
-{% if has_license_feature('vacation') %}
 <a href="#urlaub" class="mobile-tab {% if tab == 'urlaub' %}is-active{% endif %}" data-tab="urlaub" id="mobile-tab-urlaub" aria-controls="mobile-panel-urlaub" aria-selected="{{ 'true' if tab == 'urlaub' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0c-2-2-4-2-5 0-2-2-4-2-6 0-1-2-3-2-5 0Z"/><path d="M12 13v6a2 2 0 0 0 4 0M12 3v2"/></svg><span>Urlaub</span></a>
-{% endif %}
 <a href="#einstellungen" class="mobile-tab {% if tab == 'einstellungen' %}is-active{% endif %}" data-tab="einstellungen" id="mobile-tab-einstellungen" aria-controls="mobile-panel-einstellungen" aria-selected="{{ 'true' if tab == 'einstellungen' else 'false' }}" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg><span>Mehr</span></a>
 </nav>
 
@@ -332,7 +330,6 @@
             </div>
         </section>
 
-        {% if has_license_feature('vacation') %}
         <section class="mobile-panel {% if tab == 'urlaub' %}is-active{% endif %}" id="mobile-panel-urlaub" data-tab-panel="urlaub" role="tabpanel" aria-labelledby="mobile-tab-urlaub" {% if tab != 'urlaub' %}hidden{% endif %}>
             <div class="mobile-card">
                 <h2 class="mobile-card__title">Urlaub beantragen</h2>
@@ -441,7 +438,6 @@
                 <p class="mobile-empty-state" data-vacation-empty {% if vacation_items %}hidden{% endif %}>Bisher keine Urlaubsanträge erstellt.</p>
             </div>
         </section>
-        {% endif %}
     </div>
 </section>
 

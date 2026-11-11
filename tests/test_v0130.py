@@ -24,8 +24,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-import licensed_env
-
 
 def _fresh_app(tmp_path, monkeypatch):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -41,7 +39,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
 
     return main
 
@@ -653,46 +650,3 @@ def test_the_booking_list_shows_the_location_name(client):
     client.post("/punch", data={"action": "end_work", "csrf_token": token,
                                 "next_url": "/dashboard"}, follow_redirects=False)
     assert "Werk Nord" in client.get("/records").text
-
-
-# --- Lizenz ----------------------------------------------------------------
-
-def test_without_the_orders_module_there_are_no_locations(tmp_path, monkeypatch):
-    """Standorte hängen an Firmen und damit am Baustein ``orders``."""
-    monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("ERFASSUNG_LOGS_DIR", str(tmp_path / "logs"))
-    monkeypatch.setenv("ERFASSUNG_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("SESSION_SECRET_KEY", "test-secret")
-    monkeypatch.setenv("ERFASSUNG_DISABLE_SCHEDULER", "1")
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/erfassung.db")
-    for name in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[name]
-    import app.main as main
-
-    # Lizenz ohne „orders".
-    licensed_env.activate(features=["vacation"])
-
-    from fastapi.testclient import TestClient
-    from app import crud, database, schemas, security
-
-    with TestClient(main.app) as client:
-        db = database.SessionLocal()
-        admin = crud.get_user_by_username(db, "admin")
-        admin.password_hash = security.hash_password("Admin!0000")
-        admin.must_change_password = False
-        admin.remote_flag_enabled = True
-        company = crud.create_company(db, schemas.CompanyCreate(name="Müller GmbH"))
-        company_id = int(company.id)
-        crud.create_company_location(
-            db, company_id, schemas.CompanyLocationCreate(name="Werk Nord")
-        )
-        db.commit()
-        db.close()
-
-        _login(client)
-        page = client.get("/dashboard").text
-        assert 'name="work_location"' not in page
-        assert 'id="location-catalogue"' not in page
-        assert 'name="is_remote"' in page
-        assert main._location_catalogue(database.SessionLocal()) == {}
-        assert main._locations_of(database.SessionLocal(), company_id) == []

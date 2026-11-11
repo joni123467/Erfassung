@@ -113,8 +113,6 @@ def _apply(request: Request, action: Action, db: Session) -> dict:
             return _correct_end_work(action, current, moment, db)
         handler = main.punch_action
     else:
-        if not main.has_license_feature("vacation"):
-            raise ValueError("Urlaubsplanung ist nicht lizenziert. Antrag bleibt zur Prüfung erhalten.")
         handler = main.submit_vacation
         for key in ("start_date", "end_date"):
             try:

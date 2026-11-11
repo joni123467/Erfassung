@@ -5,7 +5,6 @@ import sys
 import re
 
 import pytest
-import licensed_env
 
 
 @pytest.fixture()
@@ -19,7 +18,6 @@ def client(tmp_path, monkeypatch):
     for name in [name for name in sys.modules if name.startswith("app")]:
         del sys.modules[name]
     import app.main as main
-    licensed_env.activate()
     from app import crud, database, security
     from fastapi.testclient import TestClient
     with TestClient(main.app) as test_client:

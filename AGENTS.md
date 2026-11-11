@@ -110,8 +110,7 @@ Benutzer aktualisieren von **beliebigen** älteren Versionen
 Seit 0.9.0 existiert ein dateibasiertes Logging-System
 (`app/logging_setup.py`) mit rotierenden Kanälen im `logs`-Volume:
 `application`, `api`, `sync`, `security`, `error`, `audit`, `backup`
-(ab 0.9.4), `database` (ab 0.9.7), `terminal` (ab 0.9.8) und `license`
-(ab 0.11.0).
+(ab 0.9.4), `database` (ab 0.9.7), `terminal` (ab 0.9.8).
 
 - **Neue Logs registrieren**: zusätzliche Kanäle ausschließlich über
   `logging_setup.CHANNELS` einführen; keine eigenen Dateipfade hartkodieren.
@@ -131,10 +130,6 @@ Persistente Einstellungen liegen als JSON im `config`-Volume
 - **Einstellungen persistent**: neue konfigurierbare Werte über `app_config`
   (Dataclass + `from_dict`/`to_dict`) ergänzen, nie nur im Speicher halten.
 - Validierung für Importe in `app_config.validate_import` ergänzen.
-- **Ausnahme `config/license.json`** (ab 0.11.0): Die Lizenzdatei wird von
-  `app/licensing.py` selbst verwaltet (Dateirechte 0600) und gehört **nicht**
-  in `app_config.export_all`/`import_all` – sie enthält den Aktivierungs-
-  schlüssel und ist installationsspezifisch.
 
 ## Volumes prüfen (verpflichtend)
 
@@ -450,11 +445,6 @@ Eintrag fehlt.
   die Beziehung `location` zugreift. Das ist Absicht – ohne diesen Vorabtest
   löst jede Buchungsliste je Zeile eine Abfrage aus, und an einer abgelösten
   Buchung (Session bereits geschlossen) schlägt der Zugriff fehl.
-- **Lizenz in Tests**: Aufträge, Urlaubsplanung, Auswertungen und Terminals
-  sind ohne gültige Lizenz gesperrt (seit 0.12.1). Jede Testdatei, die diese
-  Bereiche aufruft, ruft in ihrer App-Fixture `licensed_env.activate()` auf –
-  direkt nach `import app.main as main`. Ohne das antwortet die Anwendung mit
-  303 auf das Dashboard bzw. HTTP 402 und der Test scheitert an einer
-  Lizenzfrage statt an der Fachlogik. Ausgenommen sind die Lizenztests selbst
-  (`test_v0110.py`, `test_v0120.py`, `test_v0121.py`), die ihre Lizenzen
-  bewusst selbst anlegen.
+- **Tests ohne Aktivierung**: Alle Fachfunktionen laufen ohne Lizenzdatei.
+  Test-Fixtures benötigen keine Aktivierung; Zugriffe werden weiterhin über
+  Rollen und Geltungsbereiche abgesichert.

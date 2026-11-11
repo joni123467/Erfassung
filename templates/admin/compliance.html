@@ -54,7 +54,7 @@
                     <td>
                         {{ report.night_work_days }}
                         {% if report.night_worker_by_days %}
-                            <span class="license-state license-state--invalid">Nachtarbeitnehmer prüfen</span>
+                            <span class="status-badge status-badge--danger">Nachtarbeitnehmer prüfen</span>
                         {% endif %}
                     </td>
                     <td>
@@ -62,19 +62,19 @@
                            gibt es weder einen Verstoß noch ein positives
                            Urteil – die Datengrundlage fehlt schlicht. #}
                         {% if not report.employment_period_known %}
-                            <span class="license-state">Beschäftigungsbeginn fehlt</span>
+                            <span class="status-badge">Beschäftigungsbeginn fehlt</span>
                             <small class="text-muted">
                                 Ohne Eintrittsdatum lässt sich nicht sagen, welche Sonntage
                                 überhaupt in das Beschäftigungsverhältnis fallen.
                             </small>
                         {% elif report.sunday_rule_impossible %}
-                            <span class="license-state license-state--invalid">
+                            <span class="status-badge status-badge--danger">
                                 {{ report.required_free_sundays }} freie Sonntage nicht mehr erreichbar
                             </span>
                         {% elif report.sunday_rule_met %}
                             {# Grün, nicht gelb: Das Minimum ist erreicht, hier
                                ist nichts zu tun. Gelb hieße „aufpassen". #}
-                            <span class="license-state license-state--valid">Sonntagsminimum erfüllt</span>
+                            <span class="status-badge status-badge--success">Sonntagsminimum erfüllt</span>
                         {% else %}
                             Noch {{ report.free_sundays_missing }} freie Sonntage erforderlich;
                             {{ report.future_sundays }} Sonntage verbleiben.
@@ -121,7 +121,7 @@
                         <td>{{ flag.work_date.strftime('%d.%m.%Y') }}</td>
                         <td>{{ flag.user.full_name if flag.user else '–' }}</td>
                         <td>
-                            <span class="license-state {{ 'license-state--invalid' if flag.severity == 'critical' else '' }}">
+                            <span class="status-badge {{ 'status-badge--danger' if flag.severity == 'critical' else '' }}">
                                 {{ compliance_label(flag.code) }}
                             </span>
                             <small class="text-muted">{{ compliance_reference(flag.code) }}</small>
