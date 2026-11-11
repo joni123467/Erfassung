@@ -10,6 +10,10 @@
     constructor(message, state = 'error') { super(message); this.state = state; }
   }
 
+  function conflictMessage(message) {
+    return `${message || 'Die Buchung konnte nicht verbucht werden.'} Bitte die vorhandenen Zeiten prüfen und den Vorgang unter Administration → Zeiterfassung → Synchronisationskonflikte erneut prüfen lassen. Nachfolgende Buchungen bleiben gespeichert.`;
+  }
+
   class MobileStore {
     constructor(factory = root.indexedDB) { this.factory = factory; this.connection = null; this.opening = null; }
     async open() {
@@ -243,7 +247,7 @@
             this.forceRequested = false;
             if (entry.retryAt > Date.now() && !force) {
               report(entry.status === 'conflict' ? 'conflict' : entry.status === 'auth' ? 'auth' : 'queue',
-                entry.status === 'conflict' ? 'Buchung wartet auf Freigabe; Original bleibt erhalten.' : entry.message || 'Erneuter Versuch folgt automatisch.');
+                entry.status === 'conflict' ? conflictMessage(entry.message) : entry.message || 'Erneuter Versuch folgt automatisch.');
               return false;
             }
             if (!await this.store.lease(this.leaseId)) throw new SyncError('Abgleich wurde von einem anderen Fenster übernommen.');
@@ -261,7 +265,7 @@
               if (receipt.status === 'conflict') {
                 await this.store.put(ACTIONS, { ...entry, status: 'conflict', message: receipt.message, receipt,
                   retryAt: Date.now() + 30000 });
-                report('conflict', 'Eine Buchung wartet auf Freigabe. Nachfolgende Buchungen bleiben gespeichert.');
+                report('conflict', conflictMessage(receipt.message));
                 return false;
               }
               await this.store.acknowledge(entry, receipt);

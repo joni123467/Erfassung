@@ -17,6 +17,7 @@ async function fixture(t) {
   vm.runInContext(fs.readFileSync('static/mobile.js', 'utf8').replace("import './mobile-sync.js';", '') + `
     globalThis.testInterface = {
       store: outbox, cacheOverviewPreference, hydrateMobileInterface, loadSettings, saveSettings,
+      applyPunchActionToState, buildStateFromEntry, isLongRunning,
       mode: () => overviewMode,
       chooseMode: value => { overviewMode = value; overviewInteracted = true; },
     };
@@ -36,6 +37,24 @@ test('the saved PWA overview belongs only to its outbox owner', async t => {
   const record = await api.store.get('meta', 'overview-preference:7');
   assert.equal(record.userId, 7);
   assert.equal(record.value, 'week');
+});
+
+test('offline replay retains original start times and warns after twelve hours', async t => {
+  const api = await fixture(t);
+  const start = Date.now() - 13 * 3600000;
+  const state = api.applyPunchActionToState(api.buildStateFromEntry(null), 'start_work', {event_time: new Date(start).toISOString()});
+  assert.equal(state.startedAtMs, start);
+  assert.equal(api.isLongRunning(state), true);
+  assert.equal(api.isLongRunning({...state, startedAtMs: Date.now() - 11 * 3600000}), false);
+  const stopped = api.applyPunchActionToState(state, 'correct_end_work', {event_time: new Date(start + 8 * 3600000).toISOString()});
+  assert.equal(stopped.isWorking, false);
+  assert.equal(api.isLongRunning(stopped), false);
+});
+
+test('confirmed start uses its UTC offset instead of the device timezone', async t => {
+  const api = await fixture(t);
+  const state = api.buildStateFromEntry({is_open: true, started_at: '2026-10-25T02:30:00+01:00', work_date: '2026-10-25', start_time: '02:30:00'});
+  assert.equal(state.startedAtMs, Date.parse('2026-10-25T01:30:00Z'));
 });
 
 test('reconnecting respects a temporary view and never borrows a foreign snapshot preference', async t => {

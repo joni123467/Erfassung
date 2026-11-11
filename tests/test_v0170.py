@@ -231,8 +231,8 @@ def _entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0170(client):
-    assert client.app.version == "0.22.3"
-    assert client.get("/health").json()["version"] == "0.22.3"
+    assert client.app.version == "0.22.4"
+    assert client.get("/health").json()["version"] == "0.22.4"
 
 
 # ── 1. Ausgleich nach § 3 ArbZG: der Nenner ───────────────────────────────

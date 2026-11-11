@@ -197,6 +197,28 @@ test('rejection requires a matching durable receipt and is archived with its rea
   assert.equal((await store.all('mobileData'))[0].entry.payload.action,'end_work');store.close();
 });
 
+test('conflict reason and recovery instructions survive persisted backoff and restart',async () => {
+  const store=await fixture();
+  const id=await store.enqueue('punch',{action:'start_company',event_time:new Date().toISOString()});
+  const states=[];
+  const engine=new SyncEngine(store,{fetch:goodTransport(body=>({protocol:1,received:true,owner_id:7,
+    client_action_id:body.client_action_id,receipt_id:12,status:'conflict',message:'Zeitraum überschneidet sich mit einer vorhandenen Buchung.'})),
+    notify:(...status)=>states.push(status)});
+  await engine.run();
+  store.close();
+  const restarted=new SyncEngine(store,{fetch:goodTransport(),notify:(...status)=>states.push(status)});
+  await restarted.run();
+  const conflicts=states.filter(([state])=>state==='conflict');
+  assert.equal(conflicts.length,2);
+  for(const [,message] of conflicts){
+    assert.match(message,/Zeitraum überschneidet sich/);
+    assert.match(message,/Synchronisationskonflikte/);
+    assert.match(message,/Nachfolgende Buchungen bleiben gespeichert/);
+  }
+  assert.equal((await store.pending())[0].clientActionId,id);
+  store.close();
+});
+
 test('backup restore is additive, owner-bound and rejects changed originals atomically',async()=>{
   const store=await fixture();const id=await store.enqueue('punch',{action:'start_work',csrf_token:'must-not-be-persisted'});
   assert.equal((await store.pending())[0].payload.csrf_token,undefined);

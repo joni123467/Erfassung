@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.22.4] – 2026-11-11
+
+### Hinzugefügt
+- Ab zwölf Stunden Laufzeit erinnert die PWA an möglicherweise vergessenes
+  Ausstempeln. Vor Beenden oder Auftragswechsel wird nachgefragt: tatsächlich
+  durchgehend gearbeitet oder früheres Ende mit Begründung nachtragen.
+- Nachgetragene Enden bleiben auch offline gespeichert, beziehen sich auf den
+  ursprünglichen Beginn und werden mit Begründung historisiert. Andere oder
+  bereits beendete Buchungen, ungültige Endzeiten und spätere Pausen werden
+  nicht still verändert.
+- Handy und PC gleichen vor Online-Stempelungen den Stand ab. Hat ein anderes
+  Gerät inzwischen gestempelt, wird zuerst die Übersicht aktualisiert.
+  Serverseitig schützt ein Zustandsvergleich unter der Benutzersperre auch bei
+  gleichzeitigen Anfragen und später übertragenen Offline-Ereignissen davor,
+  versehentlich eine andere laufende Buchung zu verändern.
+
+### Fehlerbehebungen
+- JSON-Antworten für Stempelungen zeigen bei einem Fehler dessen Ursache.
+  Ein zusätzlicher Statustext wie „Auftrag läuft bereits“ verdeckt keine
+  Überschneidung oder gesperrte Abrechnungsperiode mehr. Das gilt für die PWA,
+  ältere Formular-Clients und die erneute Prüfung von Synchronisationskonflikten.
+- Regressionstests prüfen einen Auftragsstart innerhalb einer allgemeinen
+  Buchung über Nacht, gesperrte Zeiträume und einen fehlgeschlagenen
+  Auftragsabschluss. Fehlversuche erhalten Buchungen, Historie und Originaldaten.
+  Nach begründeter Korrektur der allgemeinen Buchung lassen sich der
+  Auftragsstart freigeben und die nachfolgende Endbuchung übernehmen.
+- Die PWA zeigt Konfliktgrund und Bearbeitungsweg direkt an, auch nach Neustart
+  während der Wiederholungswartezeit. Alle betroffenen Originale bleiben erhalten.
+- Lokale Wiederherstellung verwendet die ursprünglichen Stempelzeitpunkte;
+  Neuladen setzt den Beginn laufender Offline-Buchungen nicht mehr auf „jetzt“.
+  Bestätigte Beginnzeitpunkte werden einschließlich UTC-Versatz übertragen.
+
+### Geändert
+- Versionsangaben, Container-Beispiele und Versionsprüfungen auf 0.22.4 angehoben.
+
+### Datenbankänderungen und Migration
+- Keine Schemaänderung; Schema 26, Berechtigungen und Outboxformat bleiben erhalten.
+- Bestehende Konfliktmeldungen werden beim nächsten ausdrücklichen
+  „Prüfen und verbuchen“ neu ermittelt. Eine Freigabe umgeht weiterhin keine
+  Überschneidungs- oder Abrechnungssperre. Keine Neuinstallation der PWA nötig.
+
 ## [0.22.3] – 2026-11-05
 
 ### Geändert

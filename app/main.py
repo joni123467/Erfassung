@@ -2433,11 +2433,13 @@ def submit_time_entry(
 def _serialize_mobile_entry(entry: models.TimeEntry) -> dict[str, object]:
     return {
         "id": entry.id,
+        "started_at": worktime.entry_bounds(entry)[0].isoformat(),
         "work_date": entry.work_date.isoformat(),
         "start_time": entry.start_time.strftime("%H:%M:%S") if entry.start_time else "",
         "end_time": entry.end_time.strftime("%H:%M:%S") if entry.end_time else "",
         "break_minutes": entry.break_minutes,
         "break_started_at": entry.break_started_at.strftime("%H:%M:%S") if entry.break_started_at else None,
+        "break_started_at_iso": worktime.from_utc_column(entry.running_break.started_at_utc).isoformat() if entry.running_break else None,
         "is_open": bool(entry.is_open),
         "notes": entry.notes or "",
         "status": entry.status,
@@ -2696,7 +2698,10 @@ def _sync_result(
                 "ok": ok or duplicate,
                 "duplicate": duplicate,
                 "retryable": retryable,
-                "message": message or error,
+                # Fehlgeschlagene Starts können zusätzlich einen allgemeinen
+                # Statustext setzen. Die Ablehnungsursache hat Vorrang, wie
+                # bereits bei der HTML-Antwort.
+                "message": error or message,
             },
             status_code=200,
         )

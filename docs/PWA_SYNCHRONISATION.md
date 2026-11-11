@@ -89,6 +89,26 @@ vollständigen Abgleich, nicht bloß einen erfolgreichen Ping.
 
 ## Atomare Verarbeitung und Konfliktfreigabe
 
+Ab 0.22.4 gleichen PWA-Clients vor Online-Stempelungen den aktuellen Stand ab.
+Bei einer Änderung seit der Anzeige wird die Aktion noch nicht eingereiht;
+die aktualisierte Übersicht fordert zur erneuten Auswahl auf. Neue Stempelungen
+enthalten `expected_state`, `expected_started_at`, bei laufender Pause
+`expected_break_started_at` und, wenn bekannt, `expected_entry_id`.
+Der Server vergleicht sie unter derselben Benutzersperre
+wie die Buchung. Ereignisse mit veraltetem Bezug bleiben als Konflikt erhalten
+und verändern keine andere laufende Buchung. Bereits gespeicherte Ereignisse
+ohne diese Felder bleiben kompatibel.
+
+Für vergessenes Ausstempeln verwendet die PWA `correct_end_work` mit explizitem
+Endzeitpunkt, ursprünglichem Beginn und Pflichtbegründung. Diese Aktion beendet
+nur die passende offene Arbeitszeit und darf nicht vor später erfassten Pausen
+liegen. Empfang und Abschluss sind atomar; die Begründung steht in der
+Buchungshistorie. Das Geräteformular erinnert ab zwölf Stunden Laufzeit und
+erlaubt weiterhin ausdrücklich bestätigte lange Arbeit. Offline-Erfassung und
+Neustart behalten die Eingaben. Alte Server kennen diese neue Aktion nicht und
+halten sie zur Prüfung zurück; zuerst den Server und anschließend beide PWAs
+aktualisieren.
+
 Migration 25 erzeugt `mobile_sync_receipts` einschließlich Unique-Index auf
 Benutzer und Aktions-ID. Originaldaten, Payload-Hash, Status, Begründung und
 Entscheider bleiben erhalten. Existierende Erfolgsmarker werden erkannt.

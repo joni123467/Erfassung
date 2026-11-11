@@ -100,6 +100,7 @@ def _apply(request: Request, action: Action, db: Session) -> dict:
         moment = _event_time(payload)
         payload["event_time"] = moment.isoformat()
         current = crud.get_open_time_entry(db, action.owner_id)
+        _check_expected_state(payload, current)
         if current:
             started, _ = worktime.entry_bounds(current)
             if moment.astimezone(timezone.utc) < started:
@@ -108,6 +109,8 @@ def _apply(request: Request, action: Action, db: Session) -> dict:
                 raise ValueError("Es läuft bereits eine andere Arbeitszeit. Bitte den Offline-Start prüfen.")
             if payload.get("action") == "start_company" and str(current.company_id) == payload.get("company_id"):
                 raise ValueError("Dieser Auftrag läuft bereits. Bitte den Offline-Start prüfen.")
+        if payload.get("action") == "correct_end_work":
+            return _correct_end_work(action, current, moment, db)
         handler = main.punch_action
     else:
         if not main.has_license_feature("vacation"):
@@ -131,6 +134,75 @@ def _apply(request: Request, action: Action, db: Session) -> dict:
     if response.status_code != 200:
         raise ValueError("Buchung konnte nicht angewendet werden. Bitte Berechtigungen prüfen.")
     return json.loads(response.body)
+
+
+def _check_expected_state(payload: dict, current: models.TimeEntry | None) -> None:
+    """Geräte vergleichen ihren bekannten Zustand unter derselben Benutzersperre."""
+    expected_state = payload.get("expected_state")
+    if expected_state is None:
+        return  # Bereits gespeicherte Ereignisse älterer Clients bleiben lesbar.
+    if expected_state not in {"idle", "working", "break"}:
+        raise ValueError("Ungültiger Buchungsstand. Bitte die Übersicht aktualisieren.")
+    actual = "idle" if current is None else "break" if current.break_started_at else "working"
+    changed = actual != expected_state
+    if current is not None and not changed:
+        try:
+            expected = datetime.fromisoformat(payload["expected_started_at"].replace("Z", "+00:00"))
+            if expected.tzinfo is None:
+                raise ValueError
+        except (KeyError, ValueError):
+            raise ValueError("Der Bezug zur laufenden Buchung fehlt. Bitte die Übersicht aktualisieren.")
+        started, _ = worktime.entry_bounds(current)
+        changed = expected.astimezone(timezone.utc).replace(microsecond=0) != started.replace(microsecond=0)
+        expected_id = payload.get("expected_entry_id")
+        changed = changed or bool(expected_id and expected_id != str(current.id))
+        if actual == "break" and current.running_break:
+            try:
+                expected_break = datetime.fromisoformat(payload["expected_break_started_at"].replace("Z", "+00:00"))
+                if expected_break.tzinfo is None:
+                    raise ValueError
+            except (KeyError, ValueError):
+                raise ValueError("Der Bezug zur laufenden Pause fehlt. Bitte die Übersicht aktualisieren.")
+            break_start = worktime.from_utc_column(current.running_break.started_at_utc)
+            changed = changed or expected_break.astimezone(timezone.utc).replace(microsecond=0) != break_start.replace(microsecond=0)
+    if changed:
+        raise ValueError("Der Buchungsstand wurde inzwischen geändert, möglicherweise auf einem anderen Gerät. Bitte vorhandene Buchungen prüfen; diese Aktion wurde nicht auf eine andere Buchung angewendet.")
+
+
+def _correct_end_work(action: Action, current: models.TimeEntry | None, moment: datetime, db: Session) -> dict:
+    """Ein vergessenes Ende nur an der ausdrücklich geprüften offenen Buchung ergänzen."""
+    from . import compliance
+    if current is None:
+        raise ValueError("Die zu korrigierende Arbeitszeit läuft nicht mehr. Bitte vorhandene Buchungen prüfen.")
+    reason = action.payload.get("correction_reason", "").strip()
+    if not reason or len(reason) > 2000:
+        raise ValueError("Bitte eine Begründung für das nachgetragene Arbeitsende angeben (maximal 2000 Zeichen).")
+    try:
+        expected = datetime.fromisoformat(action.payload["expected_started_at"].replace("Z", "+00:00"))
+        if expected.tzinfo is None:
+            raise ValueError
+    except (KeyError, ValueError):
+        raise ValueError("Der Beginn der zu korrigierenden Arbeitszeit fehlt. Bitte Buchung prüfen.")
+    started, _ = worktime.entry_bounds(current)
+    expected_id = action.payload.get("entry_id")
+    if (expected_id and expected_id != str(current.id)) or expected.astimezone(timezone.utc).replace(microsecond=0) != started.replace(microsecond=0):
+        raise ValueError("Inzwischen läuft eine andere Buchung. Das nachgetragene Ende wird nicht darauf angewendet.")
+    ended = moment.astimezone(timezone.utc)
+    if ended <= started or ended > datetime.now(timezone.utc):
+        raise ValueError("Das tatsächliche Ende muss nach dem Beginn und darf nicht in der Zukunft liegen.")
+    for interval in current.breaks:
+        last = interval.ended_at_utc or interval.started_at_utc
+        if last and worktime.from_utc_column(last) > ended:
+            raise ValueError("Nach dem angegebenen Ende ist eine Pause erfasst. Bitte zuerst die Pausenzeiten prüfen.")
+    if current.break_started_at and not current.running_break:
+        # Altbestand ohne Pausenintervalle lässt sich hier nicht eindeutig kürzen.
+        raise ValueError("Eine laufende Pause muss vor der Korrektur geprüft werden.")
+    owner = db.get(models.User, action.owner_id)
+    crud.finish_running_entry(db, current, moment, actor=owner, reason=reason)
+    compliance.refresh_for_entry(db, current)
+    crud.create_mobile_sync_action(db, user_id=action.owner_id,
+                                  client_action_id=action.client_action_id, action="correct_end_work")
+    return {"ok": True, "message": "Arbeitszeit mit dem angegebenen tatsächlichen Ende abgeschlossen."}
 
 
 def _attempt(request: Request, action: Action, db: Session, connection) -> dict:
