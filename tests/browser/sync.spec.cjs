@@ -341,8 +341,10 @@ test('outbox survives a complete browser process restart',async({playwright,brow
     context=await playwright[browserName].launchPersistentContext(profile,options);
     let page=context.pages()[0];await login(page,account);await context.setOffline(true);
     const id=await queue(page);await count(page,1);await context.close();
-    context=await playwright[browserName].launchPersistentContext(profile,options);
-    await context.setOffline(true);page=context.pages()[0];await page.goto('/mobile');
+    // A restored service worker can synchronize during launch. Start offline
+    // atomically so this test really covers an offline process restart.
+    context=await playwright[browserName].launchPersistentContext(profile,{...options,offline:true});
+    page=context.pages()[0];await page.goto('/mobile');
     await expect(page.locator('#sync-status')).toBeVisible();await count(page,1);
     expect((await pending(page))[0].clientActionId).toBe(id);
     await context.setOffline(false);
