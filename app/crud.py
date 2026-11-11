@@ -998,6 +998,7 @@ def finish_running_entry(
     finished_at: datetime,
     *,
     actor: Optional[models.User] = None,
+    reason: str = "",
 ) -> models.TimeEntry:
     """Laufende Buchung beenden.
 
@@ -1024,6 +1025,7 @@ def finish_running_entry(
         entry,
         models.RevisionAction.CLOSED,
         actor=actor,
+        reason=reason,
         before=before,
         after=revision_log.snapshot(entry),
         source=entry.source,

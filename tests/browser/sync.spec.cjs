@@ -97,7 +97,105 @@ test('server rejection stays visible until reviewed',async({page,account})=>{
   test.setTimeout(RECOVERY_TEST_TIMEOUT);
   await login(page,account);await queue(page,'end_work');await sync(page);
   await expect(page.locator('[data-sync-label]')).toHaveText('Freigabe erforderlich');await count(page,1);
+  await expect(page.locator('[data-sync-message]')).toContainText('Keine laufende Arbeitszeit');
+  await expect(page.locator('[data-sync-message]')).toContainText('Synchronisationskonflikte');
   await page.reload();await expect(page.locator('[data-sync-label]')).toHaveText('Freigabe erforderlich',{timeout:RECOVERY_TIMEOUT});await count(page,1);
+  await expect(page.locator('[data-sync-message]')).toContainText('Keine laufende Arbeitszeit');
+});
+
+test('forgotten clock-out survives offline restart and records the chosen end',async({page,context,account})=>{
+  test.setTimeout(RECOVERY_TEST_TIMEOUT);
+  await page.setViewportSize({width:390,height:844});
+  await login(page,account);await context.setOffline(true);
+  const start=new Date(Date.now()-14*3600000);start.setSeconds(0,0);
+  const end=new Date(start.getTime()+8*3600000);
+  const startId=await queue(page,'start_work',start.toISOString());
+  await page.reload();await count(page,1);
+  const warning=page.locator('#mobile-long-running');
+  await expect(warning).toBeVisible();
+  await warning.locator('button').click();
+  const dialog=page.locator('#mobile-end-review');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('[data-end-cancel]').click();await count(page,1);
+  await warning.locator('button').click();
+  const localEnd=await page.evaluate(iso=>{
+    const d=new Date(iso),pad=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  },end.toISOString());
+  await dialog.locator('[name=actual_end]').fill(localEnd);
+  await dialog.locator('[name=correction_reason]').fill('Ausstempeln vergessen');
+  expect(await dialog.evaluate(el=>el.getBoundingClientRect().right<=innerWidth)).toBe(true);
+  await dialog.locator('button[type=submit]').click();await count(page,2);
+  const actions=await pending(page);
+  expect(actions[0].clientActionId).toBe(startId);
+  expect(actions[1].payload).toMatchObject({action:'correct_end_work',event_time:end.toISOString(),
+    expected_started_at:start.toISOString(),expected_state:'working',correction_reason:'Ausstempeln vergessen'});
+  await page.reload();await count(page,2);await expect(warning).toBeHidden();
+  await context.setOffline(false);await waitForRecoveredSync(page);
+  const saved=await(await page.request.get('/mobile/sync-data')).json();
+  expect(saved.active_entry).toBeNull();expect(saved.entries).toHaveLength(1);
+  expect(saved.entries[0]).toMatchObject({is_open:false,worked_minutes:480});
+});
+
+test('long work can be explicitly confirmed when clocking out now',async({page,account})=>{
+  await login(page,account);
+  await queue(page,'start_work',new Date(Date.now()-13*3600000).toISOString());
+  await sync(page);await count(page,0);
+  await expect(page.locator('#mobile-long-running')).toBeVisible();
+  await page.locator('.mobile-action-grid form').filter({has:page.locator('input[name=action][value=end_work]')}).locator('button[type=submit]').click();
+  await expect(page.locator('#mobile-end-review')).toBeVisible();
+  await page.locator('[data-end-continue]').click();
+  await expect.poll(async()=>(await(await page.request.get('/mobile/sync-data')).json()).active_entry).toBeNull();
+  await count(page,0);
+});
+
+test('independent phone and PC stores refresh before stamping against stale state',async({page,browser,account})=>{
+  const pcContext=await browser.newContext({baseURL:`http://127.0.0.1:${process.env.ERFASSUNG_E2E_PORT||8765}`});
+  try{
+    const pc=await pcContext.newPage();
+    await login(page,account);await login(pc,account);
+    // Keep the phone's known state offline while the PC starts work.
+    await page.context().setOffline(true);
+    await pc.locator('form[data-offline=punch]').filter({has:pc.locator('input[name=action][value=start_work]')}).locator('button[type=submit]').click();
+    await expect.poll(async()=>(await(await pc.request.get('/mobile/sync-data')).json()).active_entry).toBeTruthy();
+    await count(pc,0);
+    // Restore network without the online-event recovery so the click itself
+    // exercises the mandatory refresh of a stale, otherwise empty phone store.
+    await page.evaluate(()=>window.addEventListener('online',event=>event.stopImmediatePropagation(),{capture:true,once:true}));
+    await page.context().setOffline(false);
+    await page.locator('form[data-offline=punch]').filter({has:page.locator('input[name=action][value=start_work]')}).locator('button[type=submit]').click();
+    await expect(page.locator('#mobile-feedback')).toContainText('Buchungsstand wurde inzwischen geändert');
+    await count(page,0);
+    const phoneReceipts=await page.evaluate(async()=>{const s=new ErfassungSync.MobileStore();try{return(await s.all('mobileData')).filter(r=>r.key.startsWith('receipt:')).length;}finally{s.close();}});
+    expect(phoneReceipts).toBe(0);
+    const saved=await(await pc.request.get('/mobile/sync-data')).json();
+    expect(saved.entries).toHaveLength(1);
+    expect(saved.active_entry).toBeTruthy();
+  }finally{await pcContext.close();}
+});
+
+test('offline phone clock-out never closes the newer PC booking',async({page,context,browser,account})=>{
+  const pcContext=await browser.newContext({baseURL:`http://127.0.0.1:${process.env.ERFASSUNG_E2E_PORT||8765}`});
+  try{
+    const pc=await pcContext.newPage();await login(pc,account);
+    await queue(pc,'start_work',new Date(Date.now()-3600000).toISOString());await sync(pc);await count(pc,0);
+    await login(page,account);await context.setOffline(true);
+    await page.locator('.mobile-action-grid form').filter({has:page.locator('input[name=action][value=end_work]')}).locator('button[type=submit]').click();
+    await count(page,1);const [original]=await pending(page);
+    await page.locator('#mobile-notes-modal button[data-close]').first().click();
+    await queue(pc,'end_work',new Date(Date.now()-60000).toISOString());
+    await queue(pc,'start_work',new Date(Date.now()-30000).toISOString());
+    await sync(pc);await count(pc,0);
+    const before=await(await pc.request.get('/mobile/sync-data')).json();
+    await context.setOffline(false);await sync(page);
+    await expect(page.locator('[data-sync-label]')).toHaveText('Freigabe erforderlich');
+    await expect(page.locator('[data-sync-message]')).toContainText('anderen Gerät');
+    await count(page,1);expect((await pending(page))[0].payload).toEqual(original.payload);
+    const after=await(await pc.request.get('/mobile/sync-data')).json();
+    expect(after.entries).toHaveLength(2);
+    expect(after.active_entry.id).toBe(before.active_entry.id);
+    expect(after.active_entry.is_open).toBe(true);
+  }finally{await pcContext.close();}
 });
 
 test('manual cache recovery preserves offline outbox',async({page,account,context})=>{

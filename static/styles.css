@@ -1138,6 +1138,23 @@ body.modal-open {
     overflow: hidden;
 }
 
+.mobile-end-warning { margin-block: 1rem; }
+.mobile-end-review {
+    width: min(32rem, calc(100vw - 2rem));
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-md);
+}
+.mobile-end-review::backdrop { background: var(--backdrop); }
+.mobile-end-review label, .mobile-end-review input, .mobile-end-review textarea { min-width: 0; max-width: 100%; }
+.mobile-end-review input[type="datetime-local"] { width: 100%; box-sizing: border-box; }
+.mobile-end-review .modal__actions { flex-wrap: wrap; gap: .5rem; }
+
 .filter-inline {
     display: flex;
     flex-wrap: wrap;

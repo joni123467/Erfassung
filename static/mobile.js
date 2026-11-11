@@ -19,6 +19,8 @@ const DATA_STORE = 'mobileData';
 const META_STORE = 'meta';
 const MOBILE_STATE_STORAGE_KEY = 'erfassungMobileState';
 const SETTINGS_DEFAULT = { syncDays: 30 };
+// Erinnerung an eine mögliche vergessene Stempelung, keine Arbeitszeitgrenze.
+const LONG_RUNNING_MS = 12 * 60 * 60 * 1000;
 
 let localStorageUnavailable = false;
 let mobileState = null;
@@ -211,8 +213,8 @@ function buildStateFromEntry(entry) {
       isRemote: false,
     };
   }
-  const startIso = `${entry.work_date}T${entry.start_time}`;
-  const breakIso = entry.break_started_at ? `${entry.work_date}T${entry.break_started_at}` : null;
+  const startIso = entry.started_at || `${entry.work_date}T${entry.start_time}`;
+  const breakIso = entry.break_started_at_iso || (entry.break_started_at ? `${entry.work_date}T${entry.break_started_at}` : null);
   const startedAtMs = Date.parse(startIso);
   const breakStartedAtMs = breakIso ? Date.parse(breakIso) : null;
   const breakMinutes = Number(entry.total_break_minutes || entry.break_minutes || 0);
@@ -312,7 +314,8 @@ function validatePunchActionAgainstState(state, action, payload = {}) {
 
 function applyPunchActionToState(state, action, payload = {}) {
   const next = cloneState(state);
-  const now = Date.now();
+  const eventTime = Date.parse(payload.event_time);
+  const now = Number.isFinite(eventTime) ? eventTime : Date.now();
   if (action === 'start_work') {
     next.isWorking = true;
     next.onBreak = false;
@@ -327,7 +330,7 @@ function applyPunchActionToState(state, action, payload = {}) {
     next.entryId = null;
     next.notes = (payload.notes || '').trim();
     next.isRemote = isTruthyFlag(payload.is_remote);
-  } else if (action === 'end_work') {
+  } else if (action === 'end_work' || action === 'correct_end_work') {
     return buildStateFromEntry(null);
   } else if (action === 'start_break' && next.isWorking && !next.onBreak) {
     next.onBreak = true;
@@ -460,6 +463,110 @@ function updateWorkDuration() {
   }
   const worked = document.querySelector('[data-field="worked-duration"]');
   if (worked) worked.textContent = mobileState.workedLabel;
+  const warning = document.getElementById('mobile-long-running');
+  if (warning) {
+    warning.hidden = !isLongRunning(mobileState);
+    if (!warning.hidden) warning.querySelector('p').textContent = `Diese Buchung läuft seit ${new Date(mobileState.startedAtMs).toLocaleString('de-DE')}. Bitte prüfen, ob du das Ausstempeln vergessen hast.`;
+  }
+}
+
+function isLongRunning(state, now = Date.now()) {
+  return !!state?.isWorking && Number.isFinite(state.startedAtMs) && now - state.startedAtMs >= LONG_RUNNING_MS;
+}
+
+function stateExpectation(state) {
+  return {
+    expected_state: !state?.isWorking ? 'idle' : state.onBreak ? 'break' : 'working',
+    expected_started_at: state?.isWorking && state.startedAtMs ? new Date(state.startedAtMs).toISOString() : '',
+    expected_entry_id: state?.isWorking && state.entryId ? String(state.entryId) : '',
+    expected_break_started_at: state?.onBreak && state.breakStartedAtMs ? new Date(state.breakStartedAtMs).toISOString() : '',
+  };
+}
+
+function sameWorkingState(left, right) {
+  if (!!left?.isWorking !== !!right?.isWorking) return false;
+  if (!left?.isWorking) return true;
+  return !!left.onBreak === !!right.onBreak && !!left.hasCompany === !!right.hasCompany
+    && Math.floor(left.startedAtMs / 1000) === Math.floor(right.startedAtMs / 1000)
+    && (!left.onBreak || Math.floor(left.breakStartedAtMs / 1000) === Math.floor(right.breakStartedAtMs / 1000))
+    && (!left.entryId || !right.entryId || String(left.entryId) === String(right.entryId));
+}
+
+function localDateTimeValue(moment) {
+  const date = new Date(moment);
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function installLongRunningWarning() {
+  const card = document.querySelector('.mobile-stamp-card');
+  if (!card) return;
+  const warning = document.createElement('form');
+  warning.id = 'mobile-long-running';
+  warning.className = 'interface-notice mobile-end-warning';
+  warning.dataset.offline = 'punch';
+  warning.dataset.reviewEnd = 'true';
+  warning.hidden = true;
+  warning.innerHTML = `<strong>Ausstempeln vergessen?</strong><p></p>
+    <button type="submit" class="button small">Tatsächliches Ende eintragen</button>`;
+  card.querySelector('h2').after(warning);
+}
+
+function reviewRunningEnd() {
+  if (document.getElementById('mobile-end-review') || !mobileState?.isWorking) return Promise.resolve(null);
+  const state = cloneState(mobileState);
+  const dialog = document.createElement('dialog');
+  dialog.id = 'mobile-end-review';
+  dialog.className = 'mobile-end-review';
+  dialog.setAttribute('aria-labelledby', 'mobile-end-review-title');
+  dialog.innerHTML = `<h2 id="mobile-end-review-title">Arbeitsende prüfen</h2>
+    <p data-end-context></p>
+    <p>Hast du durchgehend gearbeitet, kannst du die gewählte Aktion jetzt ausführen. Falls du das Ausstempeln vergessen hast, trage das tatsächliche Ende ein.</p>
+    <button type="button" class="button" data-end-continue>Durchgehend gearbeitet · Aktion jetzt ausführen</button>
+    <form class="modal__form">
+      <label>Tatsächliches Arbeitsende (Ortszeit dieses Geräts)
+        <input type="datetime-local" name="actual_end" required>
+      </label>
+      <label>Begründung <textarea name="correction_reason" required maxlength="2000" rows="2"></textarea></label>
+      <p class="modal__hint">Damit beendest du die laufende Arbeitszeit. Einen neuen Auftrag danach starten. Bereits erfasste Pausen bleiben erhalten.</p>
+      <p data-end-error role="alert" hidden></p>
+      <div class="modal__actions">
+        <button type="button" class="button ghost" data-end-cancel>Abbrechen</button>
+        <button type="submit" class="button">Mit diesem Ende abschließen</button>
+      </div>
+    </form>`;
+  dialog.querySelector('[data-end-context]').textContent = `Beginn: ${new Date(state.startedAtMs).toLocaleString('de-DE')}${state.companyName ? ` · ${state.companyName}` : ''}`;
+  const form = dialog.querySelector('form');
+  const end = form.elements.actual_end;
+  end.min = localDateTimeValue(state.startedAtMs);
+  end.max = localDateTimeValue(Date.now());
+  document.querySelector('.mobile-dashboard').append(dialog);
+  return new Promise(resolve => {
+    let answer = null;
+    dialog.addEventListener('close', () => {
+      dirtyForms.delete(form);
+      dialog.remove();
+      resolve(answer);
+    }, { once: true });
+    dialog.querySelector('[data-end-cancel]').addEventListener('click', () => dialog.close());
+    dialog.querySelector('[data-end-continue]').addEventListener('click', () => { answer = { continue: true }; dialog.close(); });
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const ended = Date.parse(end.value);
+      const reason = form.elements.correction_reason.value.trim();
+      if (!reason || !Number.isFinite(ended) || ended <= state.startedAtMs || ended > Date.now() || localDateTimeValue(ended) !== end.value) {
+        const error = form.querySelector('[data-end-error]');
+        error.hidden = false;
+        error.textContent = 'Bitte ein gültiges Ende nach dem Beginn, nicht in der Zukunft, und eine Begründung eingeben.';
+        return;
+      }
+      answer = { action: 'correct_end_work', event_time: new Date(ended).toISOString(),
+        expected_started_at: new Date(state.startedAtMs).toISOString(),
+        entry_id: state.entryId ? String(state.entryId) : '', correction_reason: reason };
+      dialog.close();
+    });
+    dialog.showModal();
+  });
 }
 
 function startWorkTimer() {
@@ -850,7 +957,7 @@ const syncEngine = new SyncEngine(outbox, {
 async function performReconnectSync(trigger = 'auto') {
   if (updateQuiesced) return;
   try {
-    await syncEngine.run(['manual', 'online-event', 'resume', 'punch', 'vacation'].includes(trigger));
+    const synchronized = await syncEngine.run(['manual', 'online-event', 'resume', 'punch', 'vacation', 'before-punch'].includes(trigger));
     await recomputeEffectiveState();
     await refreshQueueIndicator();
     await updateSettingsTab();
@@ -858,12 +965,32 @@ async function performReconnectSync(trigger = 'auto') {
     renderSalden().catch(() => {});
     renderVacations().catch(() => {});
     await renderSyncDetails();
+    return synchronized;
   } catch (error) {
     dispatchSyncStatus(error.message, 'storage');
+    return false;
   }
 }
 
 async function processPunchSubmission(form, payload) {
+  if (form.dataset.reviewEnd === 'true') payload.action = 'end_work';
+  const checkState = payload.action !== 'update_notes';
+  const displayedState = cloneState(mobileState);
+  if (!payload.event_time) payload.event_time = new Date().toISOString();
+  if (checkState && navigator.onLine && await performReconnectSync('before-punch')
+      && !sameWorkingState(displayedState, mobileState)) {
+    showFeedback('Der Buchungsstand wurde inzwischen geändert, möglicherweise auf einem anderen Gerät. Die Übersicht ist aktualisiert. Bitte die gewünschte Aktion erneut auswählen.', 'info');
+    return false;
+  }
+  const expectation = stateExpectation(mobileState);
+  if ((isLongRunning(mobileState) && ['end_work', 'end_company', 'start_company'].includes(payload.action))
+      || form.dataset.reviewEnd === 'true') {
+    const answer = await reviewRunningEnd();
+    if (!answer) return false;
+    if (!answer.continue) payload = answer;
+    else payload.event_time = new Date().toISOString();
+  }
+  if (checkState) Object.assign(payload, expectation);
   payload.client_action_id = payload.client_action_id || generateClientActionId('punch');
   // Die tatsächliche Zeit **jetzt** festhalten – den Moment des Tippens. So
   // übersteht sie die Warteschlange und erreicht den Server auch dann richtig,
@@ -903,7 +1030,9 @@ async function processPunchSubmission(form, payload) {
   dispatchSyncStatus('Buchung sicher auf diesem Gerät gespeichert. Übertragung steht aus.', navigator.onLine ? 'queue' : 'offline');
   await recomputeEffectiveState();
   await refreshQueueIndicator();
-  showFeedback('Buchung lokal erfasst. Synchronisiere …', 'info');
+  showFeedback(payload.action === 'correct_end_work'
+    ? 'Tatsächliches Arbeitsende lokal gespeichert. Einen neuen Auftrag kannst du jetzt starten.'
+    : 'Buchung lokal erfasst. Synchronisiere …', 'info');
 
   if (notesFollowUp) {
     updateNotesLaunchButton(notesFollowUp.entryId, notesFollowUp.notes, notesFollowUp.isRemote);
@@ -950,7 +1079,7 @@ async function handleOfflineSubmission(event) {
   try {
     const payload = serializeFormData(form);
     if (form.dataset.offline === 'vacation') await processVacationSubmission(form, payload);
-    else await processPunchSubmission(form, payload);
+    else if (await processPunchSubmission(form, payload) === false) return;
     form.reset();
     dirtyForms.delete(form);
     const modal = form.closest('.modal');
@@ -1224,9 +1353,11 @@ function initializeServerStateFromDataset() {
   const data = root.dataset;
   const entry = data.stateRunning === 'true' ? {
     id: data.entryId ? Number(data.entryId) : null,
+    started_at: data.startTimestamp || null,
     work_date: data.startTimestamp ? data.startTimestamp.slice(0, 10) : new Date().toISOString().slice(0, 10),
     start_time: data.startLabel ? `${data.startLabel}:00` : '00:00:00',
     break_started_at: data.stateBreak === 'true' && data.breakLabel ? `${data.breakLabel}:00` : null,
+    break_started_at_iso: data.breakTimestamp || null,
     company_id: data.stateCompany === 'true' ? 1 : null,
     company_name: data.companyName || '',
     is_open: true,
@@ -1861,7 +1992,7 @@ async function renderSyncDetails() {
   for (const entry of entries) {
     const li = document.createElement('li');
     const label = ({ start_work: 'Arbeitszeit starten', end_work: 'Arbeitszeit beenden', start_break: 'Pause starten',
-      end_break: 'Pause beenden', start_company: 'Auftrag starten', end_company: 'Auftrag beenden', update_notes: 'Kommentar' })[entry.payload?.action] || 'Urlaubsantrag';
+      end_break: 'Pause beenden', start_company: 'Auftrag starten', end_company: 'Auftrag beenden', correct_end_work: 'Tatsächliches Arbeitsende', update_notes: 'Kommentar' })[entry.payload?.action] || 'Urlaubsantrag';
     li.textContent = `${label} · ${entry.payload?.event_time ? new Date(entry.payload.event_time).toLocaleString('de-DE') : new Date(entry.createdAt).toLocaleString('de-DE')} · ${entry.status === 'conflict' ? 'Wartet auf Freigabe' : 'Lokal gespeichert'}${entry.message ? `: ${entry.message}` : ''}`;
     list.appendChild(li);
   }
@@ -1886,6 +2017,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   registerMobileInterface();
   registerModalHandling();
   registerNotesModal();
+  installLongRunningWarning();
   registerOfflineForms();
   registerCompanySearch();
   setupConnectionHandlers();
