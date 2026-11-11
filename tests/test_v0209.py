@@ -37,7 +37,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import licensed_env
 
 ROOT = Path(__file__).resolve().parent.parent
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -68,7 +67,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -610,8 +608,8 @@ def test_buchungsliste_und_summe_stimmen_ueberein(client):
 
 
 def test_version_ist_gepflegt(main):
-    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.22.4"
-    assert main.APP_VERSION == "0.22.4"
+    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.23.0"
+    assert main.APP_VERSION == "0.23.0"
 
 
 def test_changelog_und_release_notes(main):

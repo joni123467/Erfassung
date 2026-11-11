@@ -2,7 +2,12 @@
 
 Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutzer-/Gruppenverwaltung, Arbeitszeitbuchungen, Urlaubsverwaltung, Feiertagssynchronisation und Exportfunktionen.
 
-**Version:** `0.22.4`
+**Version:** `0.23.0`
+
+> Seit 0.23.0: **Betrieb ohne Lizenzserver.** Aktivierung, Funktionssperren,
+> Benutzerlimit und Hintergrundprüfungen sind entfernt. Alle Funktionen stehen
+> gemäß den bestehenden Benutzerrechten bereit – auch auf Handy und PC.
+> [Release Notes](docs/RELEASE_NOTES_0.23.0.md).
 
 > Seit 0.22.4: **Geräteabgleich und Rückfrage bei vergessenem Ausstempeln.**
 > Handy und PC aktualisieren vor Online-Stempelungen den Buchungsstand;
@@ -93,8 +98,8 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 >
 > Seit 0.20.5: **grafischer Abwesenheitskalender** – persönliche Monats-,
 > Wochen- und Listenansicht, Feiertage und halbe Tage sowie ein eigener,
-> gruppenbezogen berechtigter Teamkalender. Sichere, widerrufbare iCalendar-
-> Feeds bleiben optional über den Lizenzbaustein `calendar_sync` verfügbar.
+> gruppenbezogen berechtigter Teamkalender. Sichere, widerrufbare persönliche
+> und Team-iCalendar-Feeds sind ohne Aktivierung verfügbar.
 > Details: [`docs/RELEASE_NOTES_0.20.6.md`](docs/RELEASE_NOTES_0.20.6.md).
 
 > Seit 0.20.3: **Arbeitszeit- und Abwesenheitsplanung** – versionierte
@@ -244,42 +249,10 @@ Erfassung ist eine FastAPI-basierte Zeiterfassungsanwendung (Web-App) mit Benutz
 > Standorte bleibt es beim gewohnten Umschalter „Remote / Vor Ort“. Details in
 > [`docs/RELEASE_NOTES_0.13.0.md`](docs/RELEASE_NOTES_0.13.0.md).
 
-> Seit 0.12.2: **Lizenzänderungen wirken schnell.** Die Nachfrage läuft
-> **stündlich** statt täglich und zusätzlich **bei jedem Start**; der neue
-> Knopf **„Lizenz aktualisieren"** holt den Stand sofort und nennt, was sich
-> geändert hat. Behoben: Auftragsbezogenes Stempeln lief ohne den Baustein
-> `orders` weiter – Firmen- und Auftragsauswahl sind jetzt gesperrt, „Auftrag
-> beenden" und das reine Stempeln bleiben offen. Ein unerreichbarer
-> Lizenzserver nimmt weiterhin **nichts** weg. Details in
-> [`docs/RELEASE_NOTES_0.12.2.md`](docs/RELEASE_NOTES_0.12.2.md).
-
-> Seit 0.12.1: **Ohne Lizenz keine zubuchbare Funktion.** 0.12.0 hatte eine
-> unlizenzierte Installation offen gelassen – damit war die Lizenz folgenlos,
-> denn *keine* Lizenz gab mehr Rechte als eine ohne Bausteine. Jetzt schaltet
-> ausschließlich das Lizenzdokument frei, und ohne gültige Lizenz lassen sich
-> auch keine neuen Benutzer anlegen. Die Basis – Stempeln, eigene
-> Zeitübersicht, vorhandene Benutzer, Sicherungen – bleibt in jedem Fall offen.
-> Details in [`docs/RELEASE_NOTES_0.12.1.md`](docs/RELEASE_NOTES_0.12.1.md).
-
-> Seit 0.12.0: **Funktionsbausteine und regelmäßige Lizenzprüfung** – eine
-> Lizenz schaltet `orders`, `vacation`, `reports` und `terminals` frei;
-> Stempeln bleibt immer enthalten. Die Installation fragt täglich beim
-> Lizenzserver nach. Ein unerreichbarer Server sperrt **nie**; eine gemeldete
-> Sperre wirkt erst nach 14 Tagen Übergangsfrist. Details unter
-> [„Funktionsbausteine"](#funktionsbausteine).
-
 > Seit 0.11.1: **Halbe Urlaubstage** – erster und letzter Tag eines Antrags
-> lassen sich einzeln halbieren (0,5 Urlaubstage, halbe Tagessollzeit). Dazu
-> ein Knopf „Lizenz beantragen/erweitern" auf der Lizenzseite. Behoben: Das
+> lassen sich einzeln halbieren (0,5 Urlaubstage, halbe Tagessollzeit). Behoben: Das
 > Freigeben von Buchungen und Urlaub war seit 0.10.0 vollständig gesperrt –
 > Details in [`docs/RELEASE_NOTES_0.11.1.md`](docs/RELEASE_NOTES_0.11.1.md).
-
-> Seit 0.11.0: **Lizenzierung** – eine Installation lässt sich einmalig gegen
-> den [Erfassung-Lizenzserver](https://github.com/joni123467/Erfassung_Lizenzserver)
-> aktivieren und prüft ihre Lizenz danach **offline**. Durchgesetzt werden die
-> lizenzierte Benutzerzahl und das Ablaufdatum; ohne Lizenz läuft die Anwendung
-> unverändert weiter und zeigt nur einen Hinweis. Details unter
-> [„Lizenzierung"](#lizenzierung).
 
 > Seit 0.10.0: **Rollenbasierte Rechteverwaltung (RBAC)** – Berechtigungen
 > kommen ausschließlich über **Rollen**; Gruppen sind reine Organisation, und
@@ -361,12 +334,11 @@ Die Weboberfläche führt über die Seitenleiste zu **Übersicht**, **Meine Zeit
 **Administration**. Auf schmalen Bildschirmen öffnet die Schaltfläche **Menü**
 diese Navigation. Die Administration bündelt ihre bestehenden Funktionen in
 **Benutzer**, **Zeiterfassung**, **Sicherung**, **System** und **Einstellungen**.
-Rollen, Gruppenzuständigkeiten und Lizenzbausteine bestimmen weiterhin die
+Rollen und Gruppenzuständigkeiten bestimmen die
 sichtbaren Bereiche und die erlaubten Aktionen.
 
 Die PWA verwendet unten die Bereiche **Übersicht**, **Meine Zeiten**, **Urlaub**
-und **Mehr**; Urlaub erscheint bei freigeschaltetem Lizenzbaustein. Unter
-**Mehr** liegen Zeitkonto, Kontozugang, Darstellung, Offline-Datenzeitraum und
+und **Mehr**. Unter **Mehr** liegen Zeitkonto, Kontozugang, Darstellung, Offline-Datenzeitraum und
 Synchronisation. Berechtigte Personen erreichen dort auch die Administration.
 Web und PWA verwenden gemeinsame Farben und Bedienelemente für helles und
 dunkles Design; Formulare und lange Inhalte sind für schmale Ansichten angepasst.
@@ -476,13 +448,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ## Docker (lokal)
 
 ```bash
-docker build -t erfassung:0.22.4 .
+docker build -t erfassung:0.23.0 .
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL=sqlite:////app/data/erfassung.db \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
-  erfassung:0.22.4
+  erfassung:0.23.0
 ```
 
 ## GHCR & GitHub Actions
@@ -497,20 +469,20 @@ ohne Pull Request wird nicht gestartet.
 ### Trigger
 
 - Push auf `main`
-- Push von Tags `v*` (z. B. `v0.22.4`)
+- Push von Tags `v*` (z. B. `v0.23.0`)
 - Manuell über `workflow_dispatch`
 
 ### Tags
 
-- Versions-Tag aus `VERSION` (hier `0.22.4`)
+- Versions-Tag aus `VERSION` (hier `0.23.0`)
 - `latest` auf `main`
-- Git-Tag (`v0.22.4`)
+- Git-Tag (`v0.23.0`)
 
 ### Erwartetes Image
 
 Beispiel:
 
-`ghcr.io/joni123467/erfassung:0.22.4`
+`ghcr.io/joni123467/erfassung:0.23.0`
 
 Bei einem eigenen Fork `joni123467` durch dessen GitHub-Owner ersetzen.
 Das versionierte Image ist erst nach erfolgreichem Veröffentlichungsworkflow
@@ -526,7 +498,7 @@ Für Portainer ist die bereitgestellte `compose.yaml` gedacht. Sie referenziert 
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.4
+    image: ghcr.io/joni123467/erfassung:0.23.0
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -745,7 +717,6 @@ curl -b cookies.txt https://host/api/users
 | angemeldet, Recht fehlt | **403** `Keine Berechtigung` |
 | Recht da, Person außerhalb des Geltungsbereichs | **403** `Außerhalb deines Geltungsbereichs` |
 | gesperrte Abrechnungsperiode | **409** mit Klartextgrund |
-| Benutzerlimit der Lizenz erreicht | **402** |
 
 Der Unterschied zwischen 401 und 403 ist Absicht: „nicht angemeldet" und
 „angemeldet, aber nicht berechtigt" sind verschiedene Dinge.
@@ -763,7 +734,6 @@ Der Unterschied zwischen 401 und 403 ist Absicht: „nicht angemeldet" und
 | `GET /api/users/{id}/excel` | eigene Person frei, sonst `Time.View` |
 | `POST /api/vacations` | eigene Person `Own.Vacation.Request`, sonst `Vacation.Manage` |
 | `POST /api/vacations/{id}/status` | `Vacation.Manage` |
-| `GET /api/license` | `System.Settings` |
 | `GET /api/me/export` | nur die eigene Person |
 | `POST /admin/compliance/{id}/acknowledge` und `/exception` | `Time.Compliance.Manage` – `Time.View` genügt nicht |
 
@@ -832,100 +802,25 @@ personenbezogenes Datum, das die Anwendung sonst nirgends festhält) und
 niemals Passwörter, PINs oder Tokens. Lesende Zugriffe auf **fremde** Zeitdaten
 erzeugen zusätzlich einen Eintrag im Zugriffsprotokoll.
 
-## Lizenzierung
+## Betrieb ohne Lizenzserver
 
-Die Anwendung kann sich gegen den **Erfassung-Lizenzserver** aktivieren
-(eigenes Repository
-[`joni123467/Erfassung_Lizenzserver`](https://github.com/joni123467/Erfassung_Lizenzserver)).
-Die Aktivierung ist einmalig, die Prüfung läuft danach **offline**.
+Seit 0.23.0 benötigt Erfassung keine Aktivierung und keinen Lizenzserver.
+Aufträge, Firmen und Standorte, Urlaub, Auswertungen, Terminals und
+Kalenderfeeds sind Bestandteil der Anwendung. Es gibt kein lizenzbedingtes
+Benutzerlimit. Anmeldung, Rollen, Gruppenzuständigkeiten und Freigaben gelten
+weiterhin unverändert.
 
-> Administration → System → **Lizenz**
+Die Lizenzverwaltung, Lizenz-API, Prüfschlüssel, Lizenzprotokollierung und
+regelmäßigen Serverabfragen entfallen vollständig. Alte Umgebungsvariablen
+`ERFASSUNG_LICENSE_*` und eine vorhandene `config/license.json` haben keine
+Wirkung mehr. Die Datei kann nach dem Update entfernt werden; das Update
+löscht keine bestehenden Dateien oder Geschäftsdaten. Alte Sicherungen
+bleiben nutzbar; darin enthaltene Lizenzdateien werden nicht zurückgespielt.
 
-### Ablauf
-
-1. **Deployment-ID** – beim ersten Start erzeugt die Anwendung eine dauerhafte
-   Zufallskennung (`erfassung-<32 Hexzeichen>`) in `config/license.json`. Sie
-   enthält **keine** Hardwaremerkmale, **keine** personenbezogenen Daten und
-   nicht den Hostnamen. Solange das `config`-Volume mitwandert, überlebt sie
-   einen Serverumzug – die Lizenz muss dann nicht erneut aktiviert werden.
-2. **Aktivieren** – Adresse des Lizenzservers und Aktivierungsschlüssel
-   eintragen. Die Anwendung ruft `POST /v1/activations` auf und erhält ein
-   Ed25519-signiertes Lizenzdokument.
-3. **Offline prüfen** – bei jedem Start und jeder Statusabfrage werden
-   Schemaversion, Signatur, Produktkennung, Deployment-ID und Ablaufdatum
-   geprüft. Der Lizenzserver muss dafür nicht erreichbar sein.
-
-„Erneut prüfen“ holt jederzeit ein frisches Dokument – nötig nach einer
-Verlängerung oder Erweiterung. Der Aufruf ist idempotent und verbraucht keinen
-weiteren Aktivierungsplatz. „Lizenz entfernen“ gibt den Platz beim Lizenzserver
-frei, damit eine andere Installation aktiviert werden kann.
-
-### Was durchgesetzt wird
-
-| Zustand | Wirkung |
-|---------|---------|
-| **Nicht lizenziert** | Keine neuen Benutzer, kein zubuchbarer Baustein. Die Basis bleibt offen. |
-| **Lizenziert** | Neue Benutzer nur bis `max_users` (`0` = unbegrenzt); freigeschaltet ist, was das Dokument nennt. Ab 30 Tagen vor Ablauf erscheint eine Warnung. |
-| **Abgelaufen / ungültig** | Keine neuen Benutzer, kein zubuchbarer Baustein. Stempeln, eigene Zeitübersicht, vorhandene Benutzer und Sicherungen bleiben uneingeschränkt nutzbar. |
-
-Über die Oberfläche wird die Grenze mit Klartextmeldung abgewiesen, über
-`POST /api/users` mit **HTTP 402**. Bestehende Benutzer werden nie gesperrt
-oder gelöscht. `GET /api/license` liefert den Status als JSON (nur mit
-`System.Settings`, ohne Schlüssel und ohne Signatur).
-
-### Umgang mit dem Aktivierungsschlüssel
-
-Der Schlüssel liegt in `config/license.json`, damit die Lizenz ohne erneute
-Eingabe nachgeprüft werden kann. Abgesichert ist er so:
-
-- Dateirechte **0600**,
-- in der Oberfläche nur maskiert (`••••-1234`),
-- in `license.log` und allen anderen Protokollen ebenfalls nur maskiert,
-- **nicht** im Einstellungsexport (`/admin/system/settings/export`),
-- **nicht** in `GET /api/license`.
-
-Wer ihn gar nicht speichern will, entfernt nach der Aktivierung das Feld
-`activation_key` aus `config/license.json`. Die Lizenz bleibt gültig; nur
-„Erneut prüfen“ verlangt dann wieder eine Eingabe.
-
-### Prüfschlüssel
-
-Der Lizenzserver signiert das Lizenzdokument mit seinem **privaten** Schlüssel,
-Erfassung prüft es mit dem **öffentlichen**. Dieser wird **automatisch bei der
-ersten Aktivierung übernommen** (`GET /v1/instance/public-key`) – zu kopieren
-ist nichts.
-
-Danach ist er je `key_id` unveränderlich: Weist sich derselbe Server später mit
-einem anderen Schlüssel aus, bricht die Aktivierung ab, ohne etwas zu
-überschreiben. Eine echte Rotation läuft über eine neue `key_id` und wird
-ergänzt.
-
-Auf der Lizenzseite steht ein **Fingerprint** (`SHA256:…`), der auch im
-Lizenzserver unter „Instanz" erscheint. Wer möchte, gleicht ihn ab.
-
-Wer den Schlüssel fest verdrahten will – dann ist auch der erste Kontakt
-abgesichert –, trägt das PEM in `app/licensing_keys.py` ein:
-
-```python
-EMBEDDED_PUBLIC_KEYS = {
-    "k1": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
-}
-```
-
-Ein so eingebetteter Schlüssel hat Vorrang. Für Entwicklung und Tests lässt
-sich die Zuordnung über `ERFASSUNG_LICENSE_PUBLIC_KEYS` (JSON
-`{"key_id": "<PEM>"}`) überschreiben.
-
-### Grenze des Kopierschutzes
-
-Die einmalige Aktivierung verhindert weitere **reguläre** Aktivierungen, aber
-**nicht** das vollständige Klonen einer bereits aktivierten Installation: Wer
-`config`- und `data`-Volume kopiert, erhält eine zweite laufende Installation
-mit demselben Lizenzdokument. Das System ist damit **kein** vollständiger
-Kopierschutz. Weitere Restrisiken – Widerruf wirkt erst bei der nächsten
-Prüfung, die Ablaufprüfung nutzt die lokale Uhr, und wer den Quellcode ändert,
-kann die Prüfung entfernen – stehen in
-[`docs/RELEASE_NOTES_0.11.0.md`](docs/RELEASE_NOTES_0.11.0.md).
+Für diese Zeiterfassung kann der bisherige separate Lizenzserver nach dem
+Update außer Betrieb genommen werden, sofern ihn keine älteren Installationen
+mehr benötigen. Das Update der Zeiterfassung verändert dessen eigenes
+Repository oder Deployment nicht.
 
 ## Einsatzort (Remote / vor Ort / Standort)
 
@@ -1004,8 +899,7 @@ unterschieben.
 
 Ohne gepflegte Standorte bleibt alles beim gewohnten Umschalter. Ein
 unbekannter oder geschlossener Standort wird beim Stempeln verworfen und gilt
-als „vor Ort" – abgewiesen wird nichts. Standorte gehören zum Lizenzbaustein
-`orders`.
+als „vor Ort" – abgewiesen wird nichts.
 
 Stellen:
 
@@ -1424,7 +1318,7 @@ Persönliche und Team-iCalendar-Feeds enthalten ausschließlich genehmigte
 Abwesenheiten. Teamfeeds benötigen auch nach ihrer Erstellung weiterhin das
 Teamkalenderrecht. Token werden zufällig erzeugt, nur einmal angezeigt, in der
 Datenbank ausschließlich als SHA-256-Hash gespeichert und können jederzeit
-widerrufen werden. `calendar_sync` setzt den Lizenzbaustein `vacation` voraus.
+widerrufen werden.
 
 Unter *Administration → Benutzer → Person* können Arbeitszeitpläne mit einem
 Gültigkeitsbeginn und eigenen Sollstunden für Montag bis Sonntag angelegt
@@ -1546,128 +1440,6 @@ an. Die Gutschrift erscheint getrennt ausgewiesen in Dashboard, Wochen- und
 Tagesansicht, eigenen Buchungen, Admin- und Benutzerauswertung, PDF- und
 Excel-Export sowie im Offline-Snapshot der Stempel-App.
 
-## Funktionsbausteine
-
-Eine Lizenz schaltet Bereiche frei. **Immer enthalten** und nie gesperrt:
-
-- Stempeln (Arbeitszeit, Pausen, Kommentare)
-- eigene Zeitübersicht und eigene Buchungen
-- Benutzer-, Gruppen- und Rollenverwaltung
-- Sicherung und Wiederherstellung
-- Systemeinstellungen, Logs, Datenbankverwaltung
-
-Zubuchbar sind fünf Bausteine:
-
-| Baustein | Schaltet frei |
-|---|---|
-| `orders` | Aufträge, Firmen, Standorte, auftragsbezogenes Stempeln |
-| `vacation` | Urlaubsanträge, Urlaubskonten, Urlaubsfreigaben |
-| `reports` | PDF-/Excel-Exporte, Benutzer- und Team-Auswertungen |
-| `terminals` | RFID-Terminals und Geräte-Synchronisation |
-| `calendar_sync` | widerrufbare persönliche und Team-iCalendar-Feeds |
-
-`calendar_sync` setzt `vacation` voraus: Ohne den Urlaubsbaustein gibt es
-nichts zu synchronisieren, und der Baustein bleibt wirkungslos, selbst wenn er
-im Lizenzdokument steht.
-
-> **Serverseitig zu ergänzen.** Die Anwendung kennt `calendar_sync` seit
-> 0.20.3 und setzt ihn vollständig durch. Freigeschaltet wird er aber nur,
-> wenn der **Lizenzserver** ihn in der Liste `features` des signierten
-> Lizenzdokuments ausliefert. Solange das nicht geschieht, ist die Karte
-> „Kalender abonnieren" für alle Installationen unsichtbar und der
-> ICS-Endpunkt gesperrt – ohne Fehlermeldung, wie es sich für einen nicht
-> gebuchten Baustein gehört.
-
-Eine Lizenz ohne jeden Baustein ist damit eine reine **Stempel-Lizenz** – und
-genau so viel kann eine Installation ohne Lizenz auch.
-
-Gesperrte Bereiche verschwinden aus der Navigation; wer die Adresse direkt
-aufruft, landet mit einem Hinweis auf dem Dashboard. Die API antwortet mit
-**HTTP 402**. Abgesichert ist das über eine Middleware, nicht Route für Route –
-so kann kein Endpunkt versehentlich offen bleiben.
-
-Das gilt nicht nur für die Administration: Ohne `vacation` verschwinden der
-Urlaubsreiter unter „Buchungen“, die Urlaubsübersicht auf dem Dashboard sowie
-Reiter und Antragsformular der Mobilansicht. Auch `GET /mobile/sync-data`
-liefert dann keine Urlaubsdaten und meldet `request_vacations: false`, damit
-die Offline-Shell einen gesperrten Antrag nicht in die Warteschlange stellt.
-
-Ohne `orders` entfällt der gesamte Auftragsteil: keine Firmenauswahl im
-Dashboard, kein „Auftrag starten" in der Stempel-App, keine Firmenliste in der
-Synchronisation. `start_company` und ein Nachtrag mit Firma werden auch
-serverseitig abgewiesen.
-
-| Aktion | Ohne `orders` |
-|---|---|
-| Arbeitszeit starten/beenden, Pausen, Kommentare | offen |
-| Auftrag starten | abgewiesen |
-| Firma bei einem Nachtrag angeben | abgewiesen |
-| **Auftrag beenden** | **offen** |
-
-„Auftrag beenden" bleibt bewusst offen: Läuft eine Lizenz mitten im Auftrag
-aus, muss sich die laufende Buchung schließen lassen – sonst hinge sie fest.
-
-> **Ohne gültige Lizenz ist kein zubuchbarer Baustein nutzbar** – das gilt für
-> „nicht lizenziert“ genauso wie für „abgelaufen“ und „ungültig“. Freischalten
-> kann nur das Lizenzdokument.
-
-Was dabei **nicht** gesperrt wird, steht oben unter „Immer enthalten“. Der
-Grund ist nicht Kulanz: Wer nicht stempeln kann, verliert Arbeitszeit, die
-sich nicht nachholen lässt, und wer nicht sichern kann, verliert sie
-endgültig. Eine Lizenzfrage darf keine Daten kosten – und niemanden aus seinen
-eigenen Daten aussperren.
-
-### Regelmäßige Prüfung
-
-Die Installation fragt beim Lizenzserver nach (`POST /v1/activations/state`)
-und bekommt dabei ein frisch signiertes Dokument. Änderungen an Benutzerzahl,
-Laufzeit oder Bausteinen wirken damit **ohne Zutun des Kunden**:
-
-| Auslöser | Wirkt |
-|---|---|
-| Knopf „Lizenz aktualisieren“ | sofort |
-| Neustart des Containers | sofort |
-| selbsttätige Nachfrage | spätestens nach einer Stunde |
-
-Das Intervall lässt sich über `ERFASSUNG_LICENSE_CHECK_MINUTES` einstellen
-(Standard 60, Untergrenze 5). Den Zeitpunkt des letzten Kontakts zeigt die
-Lizenzseite.
-
-**„Lizenz aktualisieren“** holt den Stand sofort und nennt in der Rückmeldung,
-was sich geändert hat – etwa „Benutzer 5 → 25; neu: Urlaubsplanung“.
-**„Neu aktivieren“** wiederholt die vollständige Aktivierung, etwa nach einem
-Wechsel des Lizenzservers. Beides ist idempotent und verbraucht keinen
-weiteren Aktivierungsplatz.
-
-### Wenn der Lizenzserver ausfällt
-
-**Nichts passiert.** Eine Störung, ein Netzausfall oder ein abgeschalteter
-Server lassen die gespeicherte Lizenz unverändert weiterlaufen – die Prüfung
-ist ohnehin offline. Der Vorfall landet in `license.log`, sonst merkt niemand
-etwas. Nur eine *ausdrückliche* Sperrmeldung des Servers ändert etwas.
-
-Das gilt für jeden Weg gleichermaßen: stündliche Nachfrage, Prüfung beim
-Start und „Lizenz aktualisieren“ können nichts wegnehmen. Auch aus 24
-erfolglosen Versuchen am Tag wird keine Sperre; die Lizenz bleibt in vollem
-Umfang gültig, bis sie abläuft.
-
-### Wenn eine Lizenz gesperrt wird
-
-Meldet der Server `suspended`, `revoked` oder `expired`, beginnt eine
-**Übergangsfrist von 14 Tagen**:
-
-| Zeitraum | Wirkung |
-|---|---|
-| Tag 0–14 | Deutlicher Hinweis mit Restfrist auf jeder Administrationsseite. Alles funktioniert weiter. |
-| ab Tag 15 | Aufträge, Urlaubsplanung, Auswertungen und Terminals sind gesperrt. |
-| immer | Stempeln, eigene Zeitübersicht, Benutzerverwaltung und Sicherungen bleiben offen. |
-
-Gibt der Herausgeber die Lizenz wieder frei, endet die Frist bei der nächsten
-Nachfrage sofort – oder direkt über „Erneut prüfen“.
-
-Dass Stempeln nie gesperrt wird, ist Absicht: Eine Lizenzfrage darf keine
-Arbeitszeitdaten kosten.
-
 ## Auswertungen & Exporte
 
 | Auswertung | Aufruf | Formate |
@@ -1760,7 +1532,7 @@ Start wird daraus die Konfiguration erzeugt, persistiert, getestet und migriert.
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.4
+    image: ghcr.io/joni123467/erfassung:0.23.0
     container_name: erfassung
     restart: unless-stopped
     depends_on: [postgres]
@@ -1795,7 +1567,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.4
+    image: ghcr.io/joni123467/erfassung:0.23.0
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mariadb]
@@ -1831,7 +1603,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.4
+    image: ghcr.io/joni123467/erfassung:0.23.0
     container_name: erfassung
     restart: unless-stopped
     depends_on: [mysql]
@@ -1867,7 +1639,7 @@ services:
 ```yaml
 services:
   erfassung:
-    image: ghcr.io/joni123467/erfassung:0.22.4
+    image: ghcr.io/joni123467/erfassung:0.23.0
     container_name: erfassung
     restart: unless-stopped
     ports:
@@ -1951,8 +1723,8 @@ Optional zusätzlich:
 
 ## Was du selbst anpassen musst
 
-- Bei eigenen Forks den Owner im Image-Namen (`ghcr.io/joni123467/erfassung:0.22.4`)
-- optional Image-Name/Tag (`erfassung`, `0.22.4`, `latest`)
+- Bei eigenen Forks den Owner im Image-Namen (`ghcr.io/joni123467/erfassung:0.23.0`)
+- optional Image-Name/Tag (`erfassung`, `0.23.0`, `latest`)
 - Volume-Hostpfade (`./data`, `./logs`, `./config`)
 - ggf. zusätzliche Umgebungsvariablen (z. B. für DB/Integrationen)
 

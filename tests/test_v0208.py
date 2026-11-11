@@ -28,7 +28,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import licensed_env
 
 ROOT = Path(__file__).resolve().parent.parent
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -49,7 +48,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -190,8 +188,8 @@ def _second_person() -> int:
 
 
 def test_version_is_0208(client):
-    assert client.app.version == "0.22.4"
-    assert client.get("/health").json()["version"] == "0.22.4"
+    assert client.app.version == "0.23.0"
+    assert client.get("/health").json()["version"] == "0.23.0"
 
 
 # ── 1. Buchungen: das Feld ist da ─────────────────────────────────────────

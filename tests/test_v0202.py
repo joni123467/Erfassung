@@ -24,8 +24,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import licensed_env
-
 
 def _fresh_app(tmp_path, monkeypatch):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -42,7 +40,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -161,12 +158,12 @@ def _report(year: int, reference: date, user_id: int | None = None) -> dict:
 
 
 def test_version_is_0202(client):
-    assert client.app.version == "0.22.4"
-    assert client.get("/health").json()["version"] == "0.22.4"
+    assert client.app.version == "0.23.0"
+    assert client.get("/health").json()["version"] == "0.23.0"
 
 
 def test_service_worker_carries_the_version(client):
-    assert "0.22.4" in client.get("/sw.js").text
+    assert "0.23.0" in client.get("/sw.js").text
 
 
 # ── 1. Nachtarbeitsgrenze: mehr als zwei Stunden ──────────────────────────

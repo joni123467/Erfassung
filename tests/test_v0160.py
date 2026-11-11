@@ -26,8 +26,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import licensed_env
-
 
 def _fresh_app(tmp_path, monkeypatch):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -44,7 +42,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -252,8 +249,8 @@ def _self_entry_payload(**overrides) -> dict:
 
 
 def test_version_is_0160(client):
-    assert client.app.version == "0.22.4"
-    assert client.get("/health").json()["version"] == "0.22.4"
+    assert client.app.version == "0.23.0"
+    assert client.get("/health").json()["version"] == "0.23.0"
 
 
 # ── 1. Selbstbedienungsrechte ─────────────────────────────────────────────

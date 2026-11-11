@@ -1,6 +1,6 @@
 """Real bookkeeping regressions for the new interface, not prototype arithmetic.
 
-The shared fixture boots a fresh database and activates a signed test license.
+The shared fixture boots a fresh database without activation.
 Assertions cover persisted minutes, attribution and immutable before/after
 history; UI text and implementation details are deliberately not the oracle.
 """

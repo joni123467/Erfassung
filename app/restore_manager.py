@@ -107,7 +107,7 @@ def _restore_mysql(archive_path: Path) -> None:
 # Backup archiviert sein, werden aber nicht ungeprüft aktiviert.
 _RESTORABLE_CONFIG_FILES = frozenset({
     "system.json", "logging.json", "backup.json", "retention.json",
-    "license.json", "timemoto.json",
+    "timemoto.json",
 })
 
 
@@ -136,20 +136,7 @@ def _restore_config(archive_path: Path) -> int:
             with archive.open(member) as src, target.open("wb") as dst:
                 shutil.copyfileobj(src, dst)
             restored += 1
-    _harden_restored_secrets()
     return restored
-
-
-def _harden_restored_secrets() -> None:
-    """Dateirechte der Lizenzdatei nach dem Auspacken wieder verengen.
-
-    ``license.json`` enthält den Aktivierungsschlüssel und wird von
-    :func:`app.licensing.save_config` mit 0600 geschrieben. Beim Auspacken
-    eines Archivs gehen diese Rechte verloren (ab 0.11.0).
-    """
-    from . import licensing
-
-    licensing.harden_config_permissions()
 
 
 def validate_restore(archive_path: Path) -> tuple[bool, str, dict]:

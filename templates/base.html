@@ -54,9 +54,7 @@
         <span class="navigation-caption">Mein Bereich</span>
         {{ navigation_link('/dashboard', 'Übersicht', 'M4 5h16v16H4z M8 3v4 M16 3v4 M4 10h16 M8 14h3 M8 17h6', request.url.path == '/dashboard') }}
         {{ navigation_link('/records', 'Meine Zeiten', 'M6 3h12v18H6z M9 8h6 M9 12h6 M9 16h4', request.url.path.startswith('/records') and not request.url.path.startswith('/records/vacation')) }}
-        {% if has_license_feature('vacation') %}
         {{ navigation_link('/records/vacations', 'Urlaub', 'M3 14a9 9 0 0 1 18 0H3 M12 5v16 M12 2v1 M3 5l2 2 M21 5l-2 2', request.url.path.startswith('/records/vacation')) }}
-        {% endif %}
         {{ navigation_link('/account', 'Mein Konto', 'M8 7a4 4 0 1 0 8 0a4 4 0 1 0-8 0 M4 22v-3a8 8 0 0 1 16 0v3', request.url.path.startswith('/account')) }}
         {% if has_admin_access(user) %}
         <span class="navigation-caption navigation-caption--organization">Organisation</span>

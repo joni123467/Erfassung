@@ -17,8 +17,6 @@ from pathlib import Path
 
 import pytest
 
-import licensed_env
-
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
@@ -35,7 +33,6 @@ def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import app.main as main
 
-    licensed_env.activate()
 
     with TestClient(main.app) as test_client:
         from app import crud, database, security
@@ -124,7 +121,7 @@ def test_backup_archive_has_metadata(client):
     login(client)
     archive = _create_and_run_local_job(client)
     meta = backup_manager.read_metadata(archive)
-    assert meta and meta["app_version"] == "0.22.4"
+    assert meta and meta["app_version"] == "0.23.0"
     assert meta["database_type"] == "sqlite"
     assert "database" in meta["contents"]
 

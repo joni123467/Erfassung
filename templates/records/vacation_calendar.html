@@ -57,10 +57,10 @@
   </div>
 </section>
 <script>document.querySelector('.calendar-toolbar input[name="month"]').addEventListener('change', function () { this.form.submit(); });</script>
-{% if can_sync %}<section class="card feed-management"><h2>Kalender abonnieren</h2><p>Nur genehmigte Abwesenheiten werden exportiert. Die geheime Adresse wird nur einmal angezeigt und verlässt Erfassung nicht.</p>
+<section class="card feed-management"><h2>Kalender abonnieren</h2><p>Nur genehmigte Abwesenheiten werden exportiert. Die geheime Adresse wird nur einmal angezeigt und verlässt Erfassung nicht.</p>
 {% if feed_url %}<label>Neue Feed-Adresse<input readonly value="{{ feed_url }}" onclick="this.select()"></label>{% endif %}
 <form method="post" action="/records/vacations/calendar/feed"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><label>Umfang <select name="scope"><option value="self">Mein Kalender</option>{% if can_team_feed %}<option value="team">Mein Team</option>{% endif %}</select></label><button class="button primary">Feed-Adresse erzeugen</button></form>
-{% if feeds %}<ul class="feed-list">{% for feed in feeds %}<li><span>{{ 'Team' if feed.scope == 'team' else 'Persönlich' }} · {{ feed.created_at }}</span><form class="inline-form" method="post" action="/records/vacations/calendar/feed/{{ feed.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><button class="button danger small">Widerrufen</button></form></li>{% endfor %}</ul>{% endif %}</section>{% endif %}
+{% if feeds %}<ul class="feed-list">{% for feed in feeds %}<li><span>{{ 'Team' if feed.scope == 'team' else 'Persönlich' }} · {{ feed.created_at }}</span><form class="inline-form" method="post" action="/records/vacations/calendar/feed/{{ feed.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ get_csrf_token(request) }}"><button class="button danger small">Widerrufen</button></form></li>{% endfor %}</ul>{% endif %}</section>
 
 </div>
 {% endblock %}

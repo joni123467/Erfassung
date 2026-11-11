@@ -24,8 +24,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import licensed_env
-
 
 def _fresh_app(tmp_path, monkeypatch):
     monkeypatch.setenv("ERFASSUNG_CONFIG_DIR", str(tmp_path / "config"))
@@ -42,7 +40,6 @@ def _fresh_app(tmp_path, monkeypatch):
         del sys.modules[name]
     import app.main as main
 
-    licensed_env.activate()
     return main
 
 
@@ -141,8 +138,8 @@ def _picker(html: str) -> str:
 
 
 def test_version_is_0201(client):
-    assert client.app.version == "0.22.4"
-    assert client.get("/health").json()["version"] == "0.22.4"
+    assert client.app.version == "0.23.0"
+    assert client.get("/health").json()["version"] == "0.23.0"
 
 
 # ── 1. „Remote" steht wieder zur Wahl ─────────────────────────────────────
@@ -326,7 +323,7 @@ def test_met_sunday_minimum_is_green(client):
     html = client.get("/admin/compliance").text
     marker = html.index("Sonntagsminimum erfüllt")
     span = html.rfind("<span", 0, marker)
-    assert "license-state--valid" in html[span:marker]
+    assert "status-badge--success" in html[span:marker]
 
 
 def test_unreachable_sunday_minimum_stays_red(client):
@@ -335,7 +332,7 @@ def test_unreachable_sunday_minimum_stays_red(client):
 
     template = pathlib.Path("templates/admin/compliance.html").read_text(encoding="utf-8")
     block = template[template.index("sunday_rule_impossible"):]
-    assert "license-state--invalid" in block[:400]
+    assert "status-badge--danger" in block[:400]
 
 
 # ── 7. Systemeinstellungen setzen sich nicht mehr zurück ──────────────────

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
-from test_v0209 import client, main, _login, _csrf  # existing isolated licensed fixture
+from test_v0209 import client, main, _login, _csrf  # existing isolated fixture
 
 
 def event(client, action='start_work', ident='offline-1', days=7, **extra):

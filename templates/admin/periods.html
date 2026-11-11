@@ -36,7 +36,7 @@
                         <small>{{ period.period_start.strftime('%d.%m.%Y') }} – {{ period.period_end.strftime('%d.%m.%Y') }}</small>
                     </td>
                     <td>
-                        <span class="license-state {{ 'license-state--valid' if period.status == 'locked' else '' }}">
+                        <span class="status-badge {{ 'status-badge--success' if period.status == 'locked' else '' }}">
                             {{ status_label(period.status) }}
                         </span>
                         {% if period.note %}<br><small class="text-muted">{{ period.note }}</small>{% endif %}
